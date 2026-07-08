@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.Cambium" parent="Theme.Material3.Dark.NoActionBar">
+        <item name="android:windowBackground">@color/background</item>
+        <item name="colorPrimary">@color/accent</item>
+        <item name="colorOnPrimary">@color/background</item>
+        <item name="colorSurface">@color/surface</item>
+        <item name="colorOnSurface">@color/on_background</item>
+        <item name="android:textColorPrimary">@color/on_background</item>
+        <item name="android:textColorSecondary">@color/on_background_muted</item>
+        <item name="fontFamily">monospace</item>
+        <item name="android:fontFamily">monospace</item>
+    </style>
+
+    <style name="Theme.Cambium.Dialog">
+        <item name="android:windowIsTranslucent">false</item>
+        <item name="android:windowNoTitle">true</item>
+    </style>
+</resources>

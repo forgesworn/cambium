@@ -1,0 +1,157 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/background"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="24dp">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:fontFamily="monospace"
+            android:text="@string/app_name"
+            android:textColor="@color/on_background"
+            android:textSize="24sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/statusValue"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:layout_marginBottom="24dp"
+            android:fontFamily="monospace"
+            android:textColor="@color/on_background_muted"
+            tools:text="Not paired" />
+
+        <!-- Unpaired state: paste a bunker:// URI from Sapwood -->
+        <LinearLayout
+            android:id="@+id/pairingSection"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="12dp"
+                android:fontFamily="monospace"
+                android:text="@string/pair_hint"
+                android:textColor="@color/on_background_muted" />
+
+            <EditText
+                android:id="@+id/bunkerInput"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:autofillHints=""
+                android:fontFamily="monospace"
+                android:hint="@string/pair_input_hint"
+                android:inputType="textUri"
+                android:textColor="@color/on_background"
+                android:textColorHint="@color/on_background_muted" />
+
+            <TextView
+                android:id="@+id/pairingError"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:fontFamily="monospace"
+                android:textColor="@color/danger"
+                android:visibility="gone"
+                tools:text="Signer public key must be 64 hex characters"
+                tools:visibility="visible" />
+
+            <Button
+                android:id="@+id/pairButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:fontFamily="monospace"
+                android:text="@string/pair_button" />
+
+            <LinearLayout
+                android:id="@+id/pairingProgress"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:visibility="gone"
+                tools:visibility="visible">
+
+                <ProgressBar
+                    android:layout_width="20dp"
+                    android:layout_height="20dp"
+                    android:layout_marginEnd="12dp"
+                    android:indeterminateTint="@color/accent" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="monospace"
+                    android:text="@string/pairing_in_progress"
+                    android:textColor="@color/on_background_muted" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- Paired state: connection details -->
+        <LinearLayout
+            android:id="@+id/pairedSection"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:visibility="gone"
+            tools:visibility="visible">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:fontFamily="monospace"
+                android:text="@string/signer_label"
+                android:textColor="@color/on_background_muted" />
+
+            <TextView
+                android:id="@+id/signerValue"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="16dp"
+                android:fontFamily="monospace"
+                android:textColor="@color/on_background"
+                android:textIsSelectable="true"
+                tools:text="npub1exampleexampleexampleexampleexampleexampleexampleexamplex" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:fontFamily="monospace"
+                android:text="@string/relays_label"
+                android:textColor="@color/on_background_muted" />
+
+            <TextView
+                android:id="@+id/relaysValue"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="24dp"
+                android:fontFamily="monospace"
+                android:textColor="@color/on_background"
+                tools:text="wss://relay.example" />
+
+            <Button
+                android:id="@+id/unpairButton"
+                style="@style/Widget.Material3.Button.OutlinedButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:fontFamily="monospace"
+                android:text="@string/unpair_button"
+                android:textColor="@color/danger" />
+        </LinearLayout>
+
+    </LinearLayout>
+</ScrollView>

@@ -1,0 +1,53 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="nostrsigner" />
+        </intent>
+    </queries>
+
+    <application
+        android:name=".CambiumApplication"
+        android:allowBackup="false"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:theme="@style/Theme.Cambium"
+        android:supportsRtl="true">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:theme="@style/Theme.Cambium">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <activity
+            android:name=".nip55.SignerActivity"
+            android:exported="true"
+            android:launchMode="singleTop"
+            android:excludeFromRecents="true"
+            android:theme="@style/Theme.Cambium.Dialog">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="nostrsigner" />
+            </intent-filter>
+        </activity>
+
+        <provider
+            android:name=".nip55.SignerProvider"
+            android:authorities="dev.forgesworn.cambium.GET_PUBLIC_KEY;dev.forgesworn.cambium.SIGN_EVENT;dev.forgesworn.cambium.NIP04_ENCRYPT;dev.forgesworn.cambium.NIP44_ENCRYPT;dev.forgesworn.cambium.NIP04_DECRYPT;dev.forgesworn.cambium.NIP44_DECRYPT"
+            android:exported="true" />
+
+    </application>
+
+</manifest>

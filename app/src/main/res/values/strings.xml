@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Cambium</string>
+
+    <string name="status_unpaired">Not paired</string>
+    <string name="status_paired">Paired</string>
+
+    <string name="pair_hint">Paste the bunker:// URI shown by Sapwood\'s Connect an app flow.</string>
+    <string name="pair_input_hint">bunker://…</string>
+    <string name="pair_button">Pair</string>
+    <string name="pairing_in_progress">Connecting to your signer…</string>
+    <string name="pairing_failed">Pairing failed: %1$s</string>
+
+    <string name="signer_label">Signer</string>
+    <string name="relays_label">Relays</string>
+    <string name="unpair_button">Unpair</string>
+    <string name="unpair_confirm_title">Unpair this signer?</string>
+    <string name="unpair_confirm_body">Cambium will forget this Heartwood. Apps using it for signing will stop working until you pair again.</string>
+
+    <string name="approval_title">Signing request</string>
+    <string name="approval_app_label">App</string>
+    <string name="approval_method_label">Request</string>
+    <string name="approval_kind_label">Event kind</string>
+    <string name="approval_approve">Approve</string>
+    <string name="approval_decline">Decline</string>
+    <string name="approval_forwarding">Asking your signer…</string>
+    <string name="approval_remember_app">Remember this app</string>
+
+    <string name="error_not_paired">Cambium is not paired with a signer.</string>
+    <string name="error_timeout">The signer did not respond in time.</string>
+    <string name="error_relay">Could not reach the relay.</string>
+    <string name="error_generic">Something went wrong: %1$s</string>
+
+    <string name="method_get_public_key">get_public_key</string>
+    <string name="method_sign_event">sign_event</string>
+    <string name="method_nip04_encrypt">nip04_encrypt</string>
+    <string name="method_nip04_decrypt">nip04_decrypt</string>
+    <string name="method_nip44_encrypt">nip44_encrypt</string>
+    <string name="method_nip44_decrypt">nip44_decrypt</string>
+</resources>

@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Cambium: the growth ring between bark and wood. -->
+    <path
+        android:pathData="M54,20 C70,20 82,36 82,54 C82,72 70,88 54,88"
+        android:strokeColor="#6FBF8B"
+        android:strokeWidth="6"
+        android:fillColor="#00000000"
+        android:strokeLineCap="round" />
+    <path
+        android:pathData="M54,34 C64,34 70,44 70,54 C70,64 64,74 54,74"
+        android:strokeColor="#6FBF8B"
+        android:strokeWidth="6"
+        android:fillColor="#00000000"
+        android:strokeLineCap="round" />
+    <path
+        android:pathData="M45,54 a5,5 0 1,0 -10,0 a5,5 0 1,0 10,0"
+        android:fillColor="#6FBF8B" />
+</vector>
