@@ -34,6 +34,7 @@
             android:exported="true"
             android:launchMode="singleTop"
             android:excludeFromRecents="true"
+            android:taskAffinity=""
             android:theme="@style/Theme.Cambium.Dialog">
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
@@ -45,7 +46,7 @@
 
         <provider
             android:name=".nip55.SignerProvider"
-            android:authorities="dev.forgesworn.cambium.GET_PUBLIC_KEY;dev.forgesworn.cambium.SIGN_EVENT;dev.forgesworn.cambium.NIP04_ENCRYPT;dev.forgesworn.cambium.NIP44_ENCRYPT;dev.forgesworn.cambium.NIP04_DECRYPT;dev.forgesworn.cambium.NIP44_DECRYPT"
+            android:authorities="dev.forgesworn.cambium.GET_PUBLIC_KEY;dev.forgesworn.cambium.SIGN_EVENT;dev.forgesworn.cambium.NIP04_ENCRYPT;dev.forgesworn.cambium.NIP44_ENCRYPT;dev.forgesworn.cambium.NIP04_DECRYPT;dev.forgesworn.cambium.NIP44_DECRYPT;dev.forgesworn.cambium.PING"
             android:exported="true" />
 
     </application>

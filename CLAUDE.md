@@ -39,13 +39,19 @@ Amethyst / Primal / Voyage ...
 - `nip55/Nip55Request.kt` -- pure Kotlin parser from a plain `RawSignerIntent` data class to a
   sealed `Nip55Request`. JVM-testable; the actual `android.content.Intent` mapping is a single
   private extension function in `SignerActivity.kt`.
-- `nip55/SignerActivity.kt` -- exported activity handling `nostrsigner:` intents: approval sheet,
-  forwards to `HeartwoodClient`, answers `get_public_key` from the pairing record directly (no
-  relay round trip needed once paired).
-- `nip55/SignerProvider.kt` -- exported content provider, the NIP-55 "silent" path. Only ever
-  answers `get_public_key` (from local state, for already-approved callers); everything else
-  returns `null` so the client falls back to the intent. A provider `query()` runs on the
-  caller's binder thread and must never block on a relay round trip.
+- `nip55/SignerActivity.kt` -- exported, translucent/modal activity (see `Theme.Cambium.Dialog`)
+  handling `nostrsigner:` intents: approval sheet, forwards to `HeartwoodClient`, answers
+  `get_public_key` from the pairing record directly (no relay round trip needed once paired).
+  `singleTop` with `onNewIntent` handling, since a client can fire a second request before the
+  user dismisses the first (e.g. `sign_event` right after `get_public_key`).
+- `nip55/SignerProvider.kt` -- exported content provider, the NIP-55 "silent" path. Matches real
+  Amber/Primal behaviour rather than a literal reading of the NIP-55 text: `get_public_key` is
+  declared for discovery but always answers `null` here (both real implementations force login
+  through the intent); `PING` is the only authority answered directly, and only for an
+  already-approved caller. Everything else returns `null` so the client falls back to the intent.
+  A provider `query()` runs on the caller's binder thread and must never block on a relay round
+  trip. See the TODO in that file for the planned M4 upgrade (forwarding SIGN_EVENT/NIP04/NIP44
+  through the provider) and the argument/column contract that upgrade needs.
 - `MainActivity.kt` -- pairing status screen: paste a bunker URI, see connection details, unpair.
 
 ## Conventions
@@ -63,5 +69,11 @@ Amethyst / Primal / Voyage ...
 - QR pairing (paste-only for now).
 - A keep-warm foreground service for the relay connection (each request currently opens its own
   short-lived `NostrConnect` session).
-- Richer per-app permissions (kind-level allow/deny); v1 is a single per-package allow set.
+- Richer per-app permissions (kind-level allow/deny); v1 is a single per-package allow set. There
+  is also no persistent per-app *denial* yet -- declining a request just doesn't approve it, it
+  doesn't block future requests from showing the approval sheet again.
 - Multi-signer support (v1 pairs exactly one Heartwood).
+- `SignerProvider` forwarding SIGN_EVENT/NIP04/NIP44 to Heartwood (currently intent-only) -- see
+  the TODO in `nip55/SignerProvider.kt`.
+- NIP-55 single-intent batch requests (the `results` JSON-array response) -- currently each
+  intent is handled individually.

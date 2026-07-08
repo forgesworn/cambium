@@ -13,7 +13,13 @@
     </style>
 
     <style name="Theme.Cambium.Dialog">
-        <item name="android:windowIsTranslucent">false</item>
+        <!-- Translucent + dimmed: the approval sheet should read as an overlay on top of the
+             calling app, not a full task switch (matches Amber's and Primal's presentation). -->
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
         <item name="android:windowNoTitle">true</item>
+        <item name="android:windowIsFloating">false</item>
+        <item name="android:backgroundDimEnabled">true</item>
+        <item name="android:backgroundDimAmount">0.6</item>
     </style>
 </resources>

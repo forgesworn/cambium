@@ -22,8 +22,10 @@ private const val EXTRA_TYPE = "type"
 private const val EXTRA_ID = "id"
 private const val EXTRA_CURRENT_USER = "current_user"
 private const val EXTRA_PUBKEY = "pubkey"
+private const val EXTRA_PUBKEY_ALT = "pubKey" // some clients (and older Amber versions) send this casing
 private const val EXTRA_RESULT = "result"
 private const val EXTRA_EVENT = "event"
+private const val EXTRA_SIGNATURE = "signature" // legacy Amber extra: raw hex sig, duplicating `result`/`event`
 private const val EXTRA_PACKAGE = "package"
 private const val EXTRA_REJECTED = "rejected"
 
@@ -31,6 +33,11 @@ private const val EXTRA_REJECTED = "rejected"
  * Handles `nostrsigner:` intents from Amber-compatible clients (Amethyst, Primal, Voyage, ...).
  * Every request that is not a locally-answerable `get_public_key` is forwarded to the paired
  * Heartwood over NIP-46; nothing here ever sees a private key.
+ *
+ * `singleTop`: a client can fire a second request (e.g. `sign_event` right after
+ * `get_public_key`) before the user has dismissed this activity, which arrives via
+ * [onNewIntent] rather than a new instance. Each intent is handled sequentially in full; true
+ * single-intent batch requests (NIP-55's `results` JSON-array response) are not implemented yet.
  */
 class SignerActivity : AppCompatActivity() {
 
@@ -43,6 +50,18 @@ class SignerActivity : AppCompatActivity() {
         binding = ActivitySignerApprovalBinding.inflate(layoutInflater)
         setContentView(binding.root)
         pairingStore = PairingStore(this)
+        handleIncomingIntent(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleIncomingIntent(intent)
+    }
+
+    private fun handleIncomingIntent(intent: Intent) {
+        binding.decisionGroup.isVisible = false
+        binding.progressGroup.isVisible = false
 
         val raw = intent.toRawSignerIntent()
         val parsed = Nip55Request.from(raw)
@@ -140,6 +159,9 @@ class SignerActivity : AppCompatActivity() {
             putExtra(EXTRA_ID, request.id)
             if (request is Nip55Request.SignEvent) {
                 putExtra(EXTRA_EVENT, value)
+                // Legacy Amber compat: some clients still read the bare hex signature here
+                // instead of pulling `sig` out of the event JSON in `result`/`event`.
+                putExtra(EXTRA_SIGNATURE, extractSignatureHex(value) ?: value)
             }
             if (isPublicKeyRequest) {
                 putExtra(EXTRA_PACKAGE, packageName)
@@ -183,6 +205,10 @@ class SignerActivity : AppCompatActivity() {
     private fun extractKind(eventJson: String): Int? = runCatching {
         JSONObject(eventJson).getInt("kind")
     }.getOrNull()
+
+    private fun extractSignatureHex(eventJson: String): String? = runCatching {
+        JSONObject(eventJson).getString("sig")
+    }.getOrNull()
 }
 
 /** The only place an `android.content.Intent` is read; everything past this is plain Kotlin. */
@@ -191,5 +217,5 @@ private fun Intent.toRawSignerIntent(): RawSignerIntent = RawSignerIntent(
     type = getStringExtra(EXTRA_TYPE),
     id = getStringExtra(EXTRA_ID),
     currentUser = getStringExtra(EXTRA_CURRENT_USER),
-    pubkey = getStringExtra(EXTRA_PUBKEY),
+    pubkey = getStringExtra(EXTRA_PUBKEY) ?: getStringExtra(EXTRA_PUBKEY_ALT),
 )
