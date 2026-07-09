@@ -1,15 +1,24 @@
 package dev.forgesworn.cambium
 
+import android.Manifest
 import android.app.AlertDialog
+import android.content.pm.PackageManager
 import android.os.Bundle
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
 import androidx.core.view.isVisible
 import androidx.lifecycle.lifecycleScope
+import com.journeyapps.barcodescanner.ScanContract
+import com.journeyapps.barcodescanner.ScanIntentResult
+import com.journeyapps.barcodescanner.ScanOptions
 import dev.forgesworn.cambium.databinding.ActivityMainBinding
 import dev.forgesworn.cambium.pairing.BunkerUri
 import dev.forgesworn.cambium.pairing.BunkerUriParser
 import dev.forgesworn.cambium.pairing.BunkerUriResult
 import dev.forgesworn.cambium.pairing.PairingStore
+import dev.forgesworn.cambium.pairing.QrPairingScan
+import dev.forgesworn.cambium.pairing.QrScanResult
 import dev.forgesworn.cambium.signer.HeartwoodClient
 import dev.forgesworn.cambium.signer.HeartwoodError
 import dev.forgesworn.cambium.signer.HeartwoodResult
@@ -19,13 +28,22 @@ import dev.forgesworn.cambium.signer.npubDisplay
 import kotlinx.coroutines.launch
 
 /**
- * Status screen: paired or not, paste-a-bunker-URI pairing flow, and connection details once
- * paired. QR scanning is a later milestone (see design doc M-something) -- paste only for now.
+ * Status screen: paired or not, scan-or-paste-a-bunker-URI pairing flow, and connection details
+ * once paired.
  */
 class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
     private lateinit var pairingStore: PairingStore
+
+    // Registered as fields (not inside onCreate) per the ActivityResult contract: this must
+    // happen before the activity reaches STARTED, and works even though `binding` -- referenced
+    // only inside these callbacks, which fire well after onCreate -- isn't ready yet here.
+    private val scanLauncher = registerForActivityResult(ScanContract()) { result -> onScanResult(result) }
+
+    private val cameraPermissionLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) launchScanner() else binding.cameraHint.isVisible = true
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -34,6 +52,7 @@ class MainActivity : AppCompatActivity() {
         pairingStore = PairingStore(this)
 
         binding.pairButton.setOnClickListener { onPairClicked() }
+        binding.scanButton.setOnClickListener { onScanClicked() }
         binding.unpairButton.setOnClickListener { onUnpairClicked() }
 
         render()
@@ -60,10 +79,44 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun onPairClicked() {
+        binding.cameraHint.isVisible = false
         val raw = binding.bunkerInput.text?.toString().orEmpty()
         when (val parsed = BunkerUriParser.parse(raw)) {
             is BunkerUriResult.Invalid -> showPairingError(parsed.reason)
             is BunkerUriResult.Valid -> connectAndSave(parsed.uri)
+        }
+    }
+
+    private fun onScanClicked() {
+        binding.cameraHint.isVisible = false
+        binding.pairingError.isVisible = false
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+            launchScanner()
+        } else {
+            cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+        }
+    }
+
+    private fun launchScanner() {
+        val options = ScanOptions().apply {
+            setDesiredBarcodeFormats(ScanOptions.QR_CODE)
+            setPrompt(getString(R.string.qr_scan_prompt))
+            setBeepEnabled(false)
+            setOrientationLocked(true)
+        }
+        scanLauncher.launch(options)
+    }
+
+    private fun onScanResult(result: ScanIntentResult) {
+        when (val evaluated = QrPairingScan.evaluate(result.contents)) {
+            is QrScanResult.Accepted -> {
+                binding.pairingError.isVisible = false
+                binding.bunkerInput.setText(evaluated.uri.toUriString())
+                // One tap total: scanning a valid QR pairs immediately, no separate Pair press.
+                connectAndSave(evaluated.uri)
+            }
+            is QrScanResult.Rejected -> showPairingError(evaluated.message)
+            QrScanResult.Cancelled -> Unit
         }
     }
 

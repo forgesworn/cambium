@@ -37,9 +37,11 @@ Amethyst / Primal / Voyage ...
 
 1. Install Cambium.
 2. In [Sapwood](../sapwood) (desktop or phone handoff): Apps -> Connect an app -> name it (e.g.
-   "Cambium on my phone") -> it shows a `bunker://` URI.
-3. In Cambium: paste that URI and press Pair. Cambium connects to your Heartwood over the relays
-   in the URI, confirms the handshake, and stores the pairing.
+   "Cambium on my phone") -> it shows a `bunker://` URI as a QR code (and as text).
+3. In Cambium: tap Scan QR and point the camera at it, or paste the URI text and press Pair.
+   A successful scan pairs immediately, no separate Pair tap needed. Either way, Cambium connects
+   to your Heartwood over the relays in the URI, confirms the handshake, and stores the pairing.
+   The camera is optional -- pasting works without it, on any device.
 4. In any Amber-compatible app: choose "login with external signer" and pick Cambium. Approve the
    request the first time; Cambium remembers that app afterwards. Every signature still comes from
    your hardware signer, gated by its own policy and physical button, not from this phone.
@@ -52,7 +54,7 @@ request goes out to Heartwood and back.
 Requires Android SDK (`sdk.dir` in `local.properties`) and JDK 21.
 
 ```bash
-./gradlew :app:testDebugUnitTest   # unit tests (pairing parser, NIP-55 request parsing)
+./gradlew :app:testDebugUnitTest   # unit tests (pairing parser, QR scan validation, NIP-55 request parsing)
 ./gradlew :app:assembleDebug       # debug APK -> app/build/outputs/apk/debug/
 ```
 
@@ -64,10 +66,10 @@ Install directly with an attached device:
 
 ## Status
 
-Foundation scaffold: pairing, NIP-46 client, NIP-55 intent handling (`get_public_key`,
-`sign_event`, `nip04`/`nip44` encrypt/decrypt) and the silent content-provider path for
-`get_public_key`. QR pairing, a keep-warm relay session, and richer per-app permissions are
-later milestones.
+Pairing (scan or paste), NIP-46 client with a shared kept-warm session, NIP-55 intent handling
+(`get_public_key`, `sign_event`, `nip04`/`nip44` encrypt/decrypt), and a silent content-provider
+path that forwards most of those methods to Heartwood without a visible popup for already-approved
+apps. Richer per-app permissions and multi-signer support are later milestones.
 
 ## Licence
 

@@ -100,7 +100,22 @@ Amethyst / Primal / Voyage ...
 - `nip55/EventJson.kt` -- tiny shared helpers (`extractEventKind`, `extractEventSignatureHex`) used
   by both `SignerActivity` (approval sheet, legacy `signature` extra) and `SignerProvider` (the
   `signature` cursor column for forwarded `SIGN_EVENT`).
-- `MainActivity.kt` -- pairing status screen: paste a bunker URI, see connection details, unpair.
+- `pairing/QrPairingScan.kt` -- pure Kotlin (no Android, no zxing), same JVM-testable pattern as
+  `BunkerUri.kt`: turns a raw scan result string into `Accepted`/`Rejected`/`Cancelled`. `null`
+  (zxing's cancelled-scan result) maps to `Cancelled` (no error shown); a `nostrconnect://` link
+  gets a distinct rejection message, since that is the client-initiated direction Sapwood's
+  bunker-URI QR never produces and Cambium never consumes.
+- `MainActivity.kt` -- pairing status screen: scan a QR (via `zxing-android-embedded`'s
+  `ScanContract`/`ScanOptions` ActivityResult API -- QR-only, no beep, orientation locked, prompt
+  in our tone) or paste the bunker URI text, see connection details, unpair. A successful scan
+  pairs immediately (fills the field and calls the same `connectAndSave` path as pressing Pair,
+  so it is one tap total). `CAMERA` is a runtime permission requested only on the Scan QR tap;
+  denial shows a static inline hint that pasting still works and is never re-prompted
+  automatically -- the system's own permission dialog already refuses to reappear after a user
+  denies twice, so there is no custom "don't ask again" tracking needed on top of that. The
+  library's own `CaptureActivity` is pulled in entirely via manifest merger (not exported --
+  it declares no intent filter, so it defaults closed) and is pure Java (`com.google.zxing:core`),
+  no Google Play services, matching the GrapheneOS target.
 
 ## Conventions
 
@@ -114,7 +129,6 @@ Amethyst / Primal / Voyage ...
 
 ## Known gaps (tracked, not yet built)
 
-- QR pairing (paste-only for now).
 - A foreground service to keep the process (and so `HeartwoodSession`) alive proactively; today
   the session is kept warm only while the process happens to be running, not deliberately kept
   alive in the background.
