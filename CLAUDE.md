@@ -108,6 +108,15 @@ Amethyst / Primal / Voyage ...
   `permissions` extra (see `nip55/RequestedPermissions.kt`) as a summary line with a note that
   Heartwood's own `ClientPolicy` is the actual authority -- display only, Cambium does not
   pre-authorise anything from this list.
+
+  `silentBackPressBlock`, a no-op `OnBackPressedCallback`, is enabled only for the two silent
+  forwarding windows (`handle`, `handleDecryptZapEvent`, only when `silent`) and reset to disabled
+  at the top of every `handleIncomingIntent` call. A stray back-press finishing the activity
+  mid-request would not stop the underlying call -- it keeps running on `HeartwoodSession`'s
+  worker regardless -- but `setResult`/`finish()` need a live activity to deliver the outcome to,
+  so a lost activity means a silently lost result. The visible Approve/Decline sheet's back-press
+  behaviour (same as Decline, Android's default) is unchanged, since the callback is never enabled
+  on that path.
 - `nip55/SignerProvider.kt` -- exported content provider, the NIP-55 "silent" path. A live test
   showed Amethyst queries this provider for *every* operation once an app is approved, not just
   get_public_key, and can burst around ten concurrent queries while the user is typing (drafts

@@ -3,6 +3,7 @@ package dev.forgesworn.cambium.nip55
 import android.content.Intent
 import android.os.Bundle
 import android.widget.Toast
+import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.isVisible
 import androidx.lifecycle.lifecycleScope
@@ -50,6 +51,15 @@ private const val EXTRA_REJECTED = "rejected"
  * [onNewIntent], since switching from a visible theme to an invisible one after the window already
  * exists is unreliable.
  *
+ * While a silent request is actually in flight against Heartwood, [silentBackPressBlock] makes
+ * back-press a no-op: a stray back-press finishing this activity mid-request would still let the
+ * underlying job complete on [HeartwoodSession]'s worker (nothing there depends on this activity
+ * being alive), but the *result* would never make it back to the calling app, since `setResult`
+ * only means anything if this activity is still around to call it. Enabled only for the two
+ * forwarding windows (`handle`, `handleDecryptZapEvent`) and only when [silent]; the visible
+ * Approve/Decline sheet's back-press behaviour (back = same as Decline, Android's default) is
+ * unchanged.
+ *
  * `singleTop`: a client can fire a second request (e.g. `sign_event` right after
  * `get_public_key`) before the user has dismissed this activity, which arrives via
  * [onNewIntent] rather than a new instance. Each intent is handled sequentially in full; true
@@ -63,8 +73,14 @@ class SignerActivity : AppCompatActivity() {
     private var silent = false
     private var permissionState: AppPermissionState? = null
 
+    /** See the class doc comment. Disabled outside the two silent forwarding windows. */
+    private val silentBackPressBlock = object : OnBackPressedCallback(false) {
+        override fun handleOnBackPressed() = Unit
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        onBackPressedDispatcher.addCallback(this, silentBackPressBlock)
         pairingStore = PairingStore(this)
 
         val callingPkg = callingPackage
@@ -91,6 +107,11 @@ class SignerActivity : AppCompatActivity() {
     }
 
     private fun handleIncomingIntent(intent: Intent) {
+        // A stray back-press must only ever be blocked while a forwarding call is actually in
+        // flight, never across a whole activity lifetime -- reset before working out what this
+        // intent even is.
+        silentBackPressBlock.isEnabled = false
+
         if (!silent) {
             binding.decisionGroup.isVisible = false
             binding.denyAlwaysLink.isVisible = false
@@ -175,7 +196,11 @@ class SignerActivity : AppCompatActivity() {
             return
         }
 
-        if (!silent) binding.progressGroup.isVisible = true
+        if (!silent) {
+            binding.progressGroup.isVisible = true
+        } else {
+            silentBackPressBlock.isEnabled = true
+        }
         lifecycleScope.launch {
             val result = HeartwoodSession.withClient(pairing, cacheableFor(request)) { client ->
                 when (request) {
@@ -225,7 +250,11 @@ class SignerActivity : AppCompatActivity() {
             is ZapDecodeResult.Forward -> decoded
         }
 
-        if (!silent) binding.progressGroup.isVisible = true
+        if (!silent) {
+            binding.progressGroup.isVisible = true
+        } else {
+            silentBackPressBlock.isEnabled = true
+        }
         lifecycleScope.launch {
             // Keyed on the anon tag itself (the actual encrypted material), not the wrapper
             // event's id/sig, so re-requesting the same zap under a re-serialised wrapper still hits.
