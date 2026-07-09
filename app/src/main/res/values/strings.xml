@@ -20,6 +20,14 @@
     <string name="unpair_confirm_title">Unpair this signer?</string>
     <string name="unpair_confirm_body">Cambium will forget this Heartwood. Apps using it for signing will stop working until you pair again.</string>
 
+    <string name="keep_alive_toggle_title">Keep connection warm</string>
+    <string name="keep_alive_toggle_body">Runs a background service so signing stays fast. Uses a small amount of battery. Off by default.</string>
+    <string name="keep_alive_channel_name">Signer connection</string>
+    <string name="keep_alive_channel_description">Shows while Cambium keeps the connection to your Heartwood warm in the background.</string>
+    <string name="keep_alive_notification_title">Cambium</string>
+    <string name="keep_alive_notification_text">Keeping the connection to your signer warm.</string>
+    <string name="notification_permission_denied">Notification access was declined. The connection can still be kept warm without one, but Android may stop the background service sooner.</string>
+
     <string name="approval_title">Signing request</string>
     <string name="approval_app_label">App</string>
     <string name="approval_method_label">Request</string>

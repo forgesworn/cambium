@@ -3,6 +3,10 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <!-- Camera is for QR pairing convenience only: pasting the bunker link works without it,
          so camera-less devices (and anyone who declines the permission) can still pair. -->
@@ -55,6 +59,28 @@
             android:name=".nip55.SignerProvider"
             android:authorities="dev.forgesworn.cambium.GET_PUBLIC_KEY;dev.forgesworn.cambium.SIGN_EVENT;dev.forgesworn.cambium.NIP04_ENCRYPT;dev.forgesworn.cambium.NIP44_ENCRYPT;dev.forgesworn.cambium.NIP04_DECRYPT;dev.forgesworn.cambium.NIP44_DECRYPT;dev.forgesworn.cambium.PING;dev.forgesworn.cambium.DECRYPT_ZAP_EVENT"
             android:exported="true" />
+
+        <service
+            android:name=".service.HeartwoodKeepAliveService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Keep the NIP-46 connection to the paired Heartwood signer warm for faster responses" />
+        </service>
+
+        <!-- BOOT_COMPLETED is a protected broadcast: only the system can send it, so this is safe
+             to export. BootReceiver itself checks the keep-warm toggle and pairing before doing
+             anything. -->
+        <receiver
+            android:name=".service.BootReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
 
     </application>
 

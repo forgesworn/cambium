@@ -156,7 +156,26 @@ Amethyst / Primal / Voyage ...
   denies twice, so there is no custom "don't ask again" tracking needed on top of that. The
   library's own `CaptureActivity` is pulled in entirely via manifest merger (not exported --
   it declares no intent filter, so it defaults closed) and is pure Java (`com.google.zxing:core`),
-  no Google Play services, matching the GrapheneOS target.
+  no Google Play services, matching the GrapheneOS target. Also hosts the "Keep connection warm"
+  toggle -- see `service/HeartwoodKeepAliveService.kt` -- requesting `POST_NOTIFICATIONS` on API 33+
+  only when the toggle is switched on, with the same permanent-decline-shows-a-static-hint pattern
+  as the camera permission.
+- `service/HeartwoodKeepAliveService.kt` -- optional, off-by-default foreground service that keeps
+  the process (and so `HeartwoodSession`'s warm `NostrConnect`) alive between requests, closing the
+  previously-tracked "only warm while the process happens to be running" gap. Pings Heartwood every
+  4 minutes via `HeartwoodSession.withClient(pairing) { it.getPublicKey() }` -- a read-only,
+  always-safe operation Heartwood answers without a physical button; rust-nostr's client bindings
+  have no lower-level "ping" primitive to call instead (checked directly against the AAR with
+  `javap`: neither `NostrConnect` nor `NostrConnectInterface` declare one). `targetSdk` 35 requires
+  an explicit `foregroundServiceType`; there is no built-in type for "hold a NIP-46 connection
+  open", so this follows Amber's own `ConnectivityService` (verified against its actual source,
+  `greenart7c3/Amber` `service/ConnectivityService.kt` and manifest): `specialUse`, declared in the
+  manifest with a `PROPERTY_SPECIAL_USE_FGS_SUBTYPE` description and passed explicitly to
+  `ServiceCompat.startForeground` on API 34+, where the type argument became mandatory. Low-
+  importance, non-badged notification channel; the toggle and its state live in `PairingStore`
+  (`isKeepAliveEnabled`/`setKeepAliveEnabled`), not the service, so `MainActivity` and
+  `service/BootReceiver.kt` (restarts the service after a reboot, gated on both the toggle and
+  still being paired) agree on state without talking to each other directly.
 
 ## Conventions
 
@@ -170,9 +189,6 @@ Amethyst / Primal / Voyage ...
 
 ## Known gaps (tracked, not yet built)
 
-- A foreground service to keep the process (and so `HeartwoodSession`) alive proactively; today
-  the session is kept warm only while the process happens to be running, not deliberately kept
-  alive in the background.
 - Richer per-app permissions (kind-level allow/deny); v1 is a single per-package allow set. There
   is also no persistent per-app *denial* yet -- declining a request just doesn't approve it, it
   doesn't block future requests from showing the approval sheet again. `SignerProvider` therefore

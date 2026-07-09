@@ -100,6 +100,15 @@ class PairingStore(context: Context) {
 
     private fun approvedPackages(): Set<String> = prefs.getStringSet(KEY_ALLOWED_PACKAGES, emptySet()) ?: emptySet()
 
+    /** Persisted alongside the pairing, not tied to any one activity/service instance -- read by
+     * [dev.forgesworn.cambium.service.HeartwoodKeepAliveService], [dev.forgesworn.cambium.service.BootReceiver]
+     * and `MainActivity`'s toggle. Defaults to off: this is an opt-in battery trade-off. */
+    fun isKeepAliveEnabled(): Boolean = prefs.getBoolean(KEY_KEEP_ALIVE_ENABLED, false)
+
+    fun setKeepAliveEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_KEEP_ALIVE_ENABLED, enabled).apply()
+    }
+
     private companion object {
         const val PREFS_NAME = "cambium_pairing"
         const val KEY_SIGNER_PUBKEY = "signer_pubkey_hex"
@@ -108,6 +117,7 @@ class PairingStore(context: Context) {
         const val KEY_CLIENT_SECRET = "client_secret_key_hex"
         const val KEY_CLIENT_PUBKEY = "client_public_key_hex"
         const val KEY_ALLOWED_PACKAGES = "allowed_packages"
+        const val KEY_KEEP_ALIVE_ENABLED = "keep_alive_enabled"
         const val RELAY_DELIMITER = "\n"
     }
 }

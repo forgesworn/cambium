@@ -3,6 +3,7 @@ package dev.forgesworn.cambium
 import android.Manifest
 import android.app.AlertDialog
 import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
@@ -19,6 +20,7 @@ import dev.forgesworn.cambium.pairing.BunkerUriResult
 import dev.forgesworn.cambium.pairing.PairingStore
 import dev.forgesworn.cambium.pairing.QrPairingScan
 import dev.forgesworn.cambium.pairing.QrScanResult
+import dev.forgesworn.cambium.service.HeartwoodKeepAliveService
 import dev.forgesworn.cambium.signer.HeartwoodClient
 import dev.forgesworn.cambium.signer.HeartwoodError
 import dev.forgesworn.cambium.signer.HeartwoodResult
@@ -43,6 +45,15 @@ class MainActivity : AppCompatActivity() {
 
     private val cameraPermissionLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) launchScanner() else binding.cameraHint.isVisible = true
+    }
+
+    private val notificationPermissionLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) {
+            setKeepAliveEnabled(true)
+        } else {
+            binding.notificationHint.isVisible = true
+            setKeepAliveToggleChecked(false)
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -75,6 +86,39 @@ class MainActivity : AppCompatActivity() {
             binding.pairedSection.isVisible = true
             binding.signerValue.text = npubDisplay(pairing.signerPubkeyHex)
             binding.relaysValue.text = pairing.relays.joinToString("\n")
+            setKeepAliveToggleChecked(pairingStore.isKeepAliveEnabled())
+        }
+    }
+
+    /** Sets the switch's checked state without re-triggering [onKeepAliveToggled]. */
+    private fun setKeepAliveToggleChecked(checked: Boolean) {
+        binding.keepAliveToggle.setOnCheckedChangeListener(null)
+        binding.keepAliveToggle.isChecked = checked
+        binding.keepAliveToggle.setOnCheckedChangeListener { _, isChecked -> onKeepAliveToggled(isChecked) }
+    }
+
+    private fun onKeepAliveToggled(enabled: Boolean) {
+        binding.notificationHint.isVisible = false
+        if (!enabled) {
+            setKeepAliveEnabled(false)
+            return
+        }
+
+        val needsNotificationPermission = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        if (needsNotificationPermission) {
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        } else {
+            setKeepAliveEnabled(true)
+        }
+    }
+
+    private fun setKeepAliveEnabled(enabled: Boolean) {
+        pairingStore.setKeepAliveEnabled(enabled)
+        if (enabled) {
+            HeartwoodKeepAliveService.start(this)
+        } else {
+            HeartwoodKeepAliveService.stop(this)
         }
     }
 
@@ -159,6 +203,7 @@ class MainActivity : AppCompatActivity() {
             .setMessage(R.string.unpair_confirm_body)
             .setPositiveButton(R.string.unpair_button) { _, _ ->
                 pairingStore.clear()
+                HeartwoodKeepAliveService.stop(this)
                 lifecycleScope.launch { HeartwoodSession.shutdown() }
                 render()
             }

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Status-bar notification icon: a simple white silhouette (the system masks/tints it), echoing
+     the launcher icon's growth-ring motif at a smaller, single-stroke scale. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:pathData="M54,20 C70,20 82,36 82,54 C82,72 70,88 54,88"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="12"
+        android:fillColor="#00000000"
+        android:strokeLineCap="round" />
+</vector>
