@@ -1,7 +1,11 @@
 package dev.forgesworn.cambium.signer
 
+import dev.forgesworn.cambium.pairing.BunkerUri
+import dev.forgesworn.cambium.pairing.Pairing
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import rust.nostr.sdk.Keys
@@ -144,3 +148,74 @@ object ClientKeys {
 fun npubDisplay(pubkeyHex: String): String = runCatching {
     PublicKey.parse(pubkeyHex).toBech32()
 }.getOrElse { "${pubkeyHex.take(8)}…${pubkeyHex.takeLast(8)}" }
+
+/**
+ * Application-scoped, lazily-connected Heartwood session, shared by [dev.forgesworn.cambium.MainActivity]
+ * (after pairing), [dev.forgesworn.cambium.nip55.SignerActivity] and
+ * [dev.forgesworn.cambium.nip55.SignerProvider]. A live test against a real device showed building a
+ * fresh `NostrConnect` (and its relay pool) per request cost multiple seconds each; this object
+ * holds exactly one connected client for the process and reuses it. Guarded by a mutex since the
+ * content provider and the activity can both call in from different threads at once.
+ */
+object HeartwoodSession {
+    private val mutex = Mutex()
+    private var client: RustNostrHeartwoodClient? = null
+    private var connectedSignerPubkey: String? = null
+
+    /**
+     * Runs [operation] against a connected client for [pairing], reconnecting first if the held
+     * session is missing or paired to a different signer. If [operation] itself fails, reconnects
+     * once and retries before surfacing the failure -- covers a relay dropping the connection
+     * between requests.
+     */
+    suspend fun withClient(
+        pairing: Pairing,
+        operation: suspend (HeartwoodClient) -> HeartwoodResult<String>,
+    ): HeartwoodResult<String> = mutex.withLock {
+        val cachedClient = client
+        val connected = if (cachedClient != null && connectedSignerPubkey == pairing.signerPubkeyHex) {
+            HeartwoodResult.Success(cachedClient)
+        } else {
+            reconnectLocked(pairing)
+        }
+
+        val active = when (connected) {
+            is HeartwoodResult.Success -> connected.value
+            is HeartwoodResult.Failure -> return@withLock connected
+        }
+
+        val result = operation(active)
+        if (result is HeartwoodResult.Success) return@withLock result
+
+        val retried = when (val reconnected = reconnectLocked(pairing)) {
+            is HeartwoodResult.Success -> reconnected.value
+            is HeartwoodResult.Failure -> return@withLock result
+        }
+        operation(retried)
+    }
+
+    /** Drops the held session. Call on unpair, and after persisting a freshly-tested pairing. */
+    suspend fun shutdown() = mutex.withLock {
+        client?.disconnect()
+        client = null
+        connectedSignerPubkey = null
+    }
+
+    /** Must only be called while holding [mutex]. */
+    private suspend fun reconnectLocked(pairing: Pairing): HeartwoodResult<HeartwoodClient> {
+        client?.disconnect()
+        client = null
+        connectedSignerPubkey = null
+
+        val fresh = RustNostrHeartwoodClient()
+        val bunkerUri = BunkerUri(pairing.signerPubkeyHex, pairing.relays, pairing.secret).toUriString()
+        return when (val connected = fresh.connect(bunkerUri, pairing.clientSecretKeyHex)) {
+            is HeartwoodResult.Success -> {
+                client = fresh
+                connectedSignerPubkey = pairing.signerPubkeyHex
+                HeartwoodResult.Success(fresh)
+            }
+            is HeartwoodResult.Failure -> connected
+        }
+    }
+}

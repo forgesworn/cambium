@@ -8,15 +8,12 @@ import androidx.core.view.isVisible
 import androidx.lifecycle.lifecycleScope
 import dev.forgesworn.cambium.R
 import dev.forgesworn.cambium.databinding.ActivitySignerApprovalBinding
-import dev.forgesworn.cambium.pairing.BunkerUri
 import dev.forgesworn.cambium.pairing.Pairing
 import dev.forgesworn.cambium.pairing.PairingStore
-import dev.forgesworn.cambium.signer.HeartwoodClient
 import dev.forgesworn.cambium.signer.HeartwoodError
 import dev.forgesworn.cambium.signer.HeartwoodResult
-import dev.forgesworn.cambium.signer.RustNostrHeartwoodClient
+import dev.forgesworn.cambium.signer.HeartwoodSession
 import kotlinx.coroutines.launch
-import org.json.JSONObject
 
 private const val EXTRA_TYPE = "type"
 private const val EXTRA_ID = "id"
@@ -87,10 +84,10 @@ class SignerActivity : AppCompatActivity() {
     }
 
     private fun showApprovalSheet(pairing: Pairing, request: Nip55Request, callingPkg: String?) {
-        binding.appValue.text = callingPkg ?: "unknown caller"
+        binding.appValue.text = callingPkg?.let(::resolveCallerDisplayName) ?: "unknown caller"
         binding.methodValue.text = methodLabel(request)
 
-        val kind = (request as? Nip55Request.SignEvent)?.let { extractKind(it.eventJson) }
+        val kind = (request as? Nip55Request.SignEvent)?.let { extractEventKind(it.eventJson) }
         binding.kindRow.isVisible = kind != null
         if (kind != null) {
             binding.kindValue.text = kind.toString()
@@ -120,27 +117,16 @@ class SignerActivity : AppCompatActivity() {
 
         binding.progressGroup.isVisible = true
         lifecycleScope.launch {
-            val client: HeartwoodClient = RustNostrHeartwoodClient()
-            val bunkerUri = BunkerUri(pairing.signerPubkeyHex, pairing.relays, pairing.secret).toUriString()
-
-            when (val connected = client.connect(bunkerUri, pairing.clientSecretKeyHex)) {
-                is HeartwoodResult.Failure -> {
-                    showErrorAndReject(request.id, connected.error)
-                    client.disconnect()
-                    return@launch
+            val result = HeartwoodSession.withClient(pairing) { client ->
+                when (request) {
+                    is Nip55Request.SignEvent -> client.signEvent(request.eventJson)
+                    is Nip55Request.Nip04Encrypt -> client.nip04Encrypt(request.pubkeyHex, request.plaintext)
+                    is Nip55Request.Nip04Decrypt -> client.nip04Decrypt(request.pubkeyHex, request.ciphertext)
+                    is Nip55Request.Nip44Encrypt -> client.nip44Encrypt(request.pubkeyHex, request.plaintext)
+                    is Nip55Request.Nip44Decrypt -> client.nip44Decrypt(request.pubkeyHex, request.ciphertext)
+                    is Nip55Request.GetPublicKey -> error("handled above without a relay round trip")
                 }
-                is HeartwoodResult.Success -> Unit
             }
-
-            val result = when (request) {
-                is Nip55Request.SignEvent -> client.signEvent(request.eventJson)
-                is Nip55Request.Nip04Encrypt -> client.nip04Encrypt(request.pubkeyHex, request.plaintext)
-                is Nip55Request.Nip04Decrypt -> client.nip04Decrypt(request.pubkeyHex, request.ciphertext)
-                is Nip55Request.Nip44Encrypt -> client.nip44Encrypt(request.pubkeyHex, request.plaintext)
-                is Nip55Request.Nip44Decrypt -> client.nip44Decrypt(request.pubkeyHex, request.ciphertext)
-                is Nip55Request.GetPublicKey -> error("handled above without a relay round trip")
-            }
-            client.disconnect()
 
             when (result) {
                 is HeartwoodResult.Success -> respondSuccess(
@@ -161,7 +147,7 @@ class SignerActivity : AppCompatActivity() {
                 putExtra(EXTRA_EVENT, value)
                 // Legacy Amber compat: some clients still read the bare hex signature here
                 // instead of pulling `sig` out of the event JSON in `result`/`event`.
-                putExtra(EXTRA_SIGNATURE, extractSignatureHex(value) ?: value)
+                putExtra(EXTRA_SIGNATURE, extractEventSignatureHex(value) ?: value)
             }
             if (isPublicKeyRequest) {
                 putExtra(EXTRA_PACKAGE, packageName)
@@ -202,13 +188,16 @@ class SignerActivity : AppCompatActivity() {
         }
     )
 
-    private fun extractKind(eventJson: String): Int? = runCatching {
-        JSONObject(eventJson).getInt("kind")
-    }.getOrNull()
-
-    private fun extractSignatureHex(eventJson: String): String? = runCatching {
-        JSONObject(eventJson).getString("sig")
-    }.getOrNull()
+    /**
+     * The calling package's human-readable label, for the approval sheet. Falls back to the raw
+     * package string on any failure -- a live test against a real device showed this can throw
+     * (package-visibility restrictions blocked the label lookup even though [getCallingPackage]
+     * itself resolved fine), and the app line must never render blank.
+     */
+    private fun resolveCallerDisplayName(callingPkg: String): String = runCatching {
+        val appInfo = packageManager.getApplicationInfo(callingPkg, 0)
+        packageManager.getApplicationLabel(appInfo).toString()
+    }.getOrDefault(callingPkg)
 }
 
 /** The only place an `android.content.Intent` is read; everything past this is plain Kotlin. */

@@ -13,6 +13,7 @@ import dev.forgesworn.cambium.pairing.PairingStore
 import dev.forgesworn.cambium.signer.HeartwoodClient
 import dev.forgesworn.cambium.signer.HeartwoodError
 import dev.forgesworn.cambium.signer.HeartwoodResult
+import dev.forgesworn.cambium.signer.HeartwoodSession
 import dev.forgesworn.cambium.signer.RustNostrHeartwoodClient
 import dev.forgesworn.cambium.signer.npubDisplay
 import kotlinx.coroutines.launch
@@ -76,6 +77,8 @@ class MainActivity : AppCompatActivity() {
         val clientKeys = pairingStore.ensureClientKeys()
 
         lifecycleScope.launch {
+            // A disposable client, deliberately not the shared HeartwoodSession: this is a
+            // one-off validation of a URI the user just pasted, before anything is persisted.
             val client: HeartwoodClient = RustNostrHeartwoodClient()
             val result = client.connect(bunkerUri.toUriString(), clientKeys.secretKeyHex)
             client.disconnect()
@@ -86,6 +89,9 @@ class MainActivity : AppCompatActivity() {
             when (result) {
                 is HeartwoodResult.Success -> {
                     pairingStore.save(bunkerUri)
+                    // Discard any session held for a previous pairing so the next real request
+                    // reconnects fresh against what was just saved.
+                    HeartwoodSession.shutdown()
                     binding.bunkerInput.text?.clear()
                     render()
                 }
@@ -100,6 +106,7 @@ class MainActivity : AppCompatActivity() {
             .setMessage(R.string.unpair_confirm_body)
             .setPositiveButton(R.string.unpair_button) { _, _ ->
                 pairingStore.clear()
+                lifecycleScope.launch { HeartwoodSession.shutdown() }
                 render()
             }
             .setNegativeButton(android.R.string.cancel, null)

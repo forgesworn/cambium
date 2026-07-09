@@ -33,9 +33,14 @@ Amethyst / Primal / Voyage ...
 - `signer/HeartwoodClient.kt` -- **the only file that imports `rust.nostr.sdk`**. Wraps
   `NostrConnect` (rust-nostr's NIP-46 client) behind the `HeartwoodClient` interface so the
   implementation can be swapped or faked without touching pairing storage or the NIP-55 surface.
-  Also hosts `ClientKeys` (ephemeral keypair generation) and `npubDisplay` for the same reason:
-  they are rust-nostr operations, so everything else calls into this file instead of importing
-  `rust.nostr.sdk` directly.
+  Also hosts `ClientKeys` (ephemeral keypair generation), `npubDisplay`, and `HeartwoodSession` for
+  the same reason: they are rust-nostr operations, so everything else calls into this file instead
+  of importing `rust.nostr.sdk` directly. `HeartwoodSession` is the one application-scoped,
+  mutex-guarded, kept-warm `NostrConnect` session shared by `SignerActivity` and `SignerProvider`
+  -- a live test against a real device showed a fresh session per request cost multiple seconds
+  each. `MainActivity`'s pairing test deliberately uses its own disposable client instead (a
+  one-off validation before anything is persisted), then calls `HeartwoodSession.shutdown()` after
+  saving so the next real request reconnects against the pairing that was just confirmed.
 - `nip55/Nip55Request.kt` -- pure Kotlin parser from a plain `RawSignerIntent` data class to a
   sealed `Nip55Request`. JVM-testable; the actual `android.content.Intent` mapping is a single
   private extension function in `SignerActivity.kt`.
@@ -44,14 +49,22 @@ Amethyst / Primal / Voyage ...
   `get_public_key` from the pairing record directly (no relay round trip needed once paired).
   `singleTop` with `onNewIntent` handling, since a client can fire a second request before the
   user dismisses the first (e.g. `sign_event` right after `get_public_key`).
-- `nip55/SignerProvider.kt` -- exported content provider, the NIP-55 "silent" path. Matches real
-  Amber/Primal behaviour rather than a literal reading of the NIP-55 text: `get_public_key` is
-  declared for discovery but always answers `null` here (both real implementations force login
-  through the intent); `PING` is the only authority answered directly, and only for an
-  already-approved caller. Everything else returns `null` so the client falls back to the intent.
-  A provider `query()` runs on the caller's binder thread and must never block on a relay round
-  trip. See the TODO in that file for the planned M4 upgrade (forwarding SIGN_EVENT/NIP04/NIP44
-  through the provider) and the argument/column contract that upgrade needs.
+- `nip55/SignerProvider.kt` -- exported content provider, the NIP-55 "silent" path. A live test
+  showed Amethyst queries this provider for *every* operation once an app is approved, not just
+  get_public_key, so `SIGN_EVENT`, `NIP04_ENCRYPT`/`DECRYPT`, and `NIP44_ENCRYPT`/`DECRYPT` forward
+  to the shared `HeartwoodSession` synchronously inside `query()` (via `runBlocking`, capped at
+  15s) for already-approved callers -- acceptable because these clients call `query()` from a
+  background thread. `get_public_key` is still declared for discovery but always answers `null`:
+  both Amber and Primal force login through the visible intent rather than the silent path.
+  `DECRYPT_ZAP_EVENT` is declared (its absence spammed provider-discovery errors on every zap in
+  Amethyst's feed) but always answers `null` -- Amber's implementation unwraps a zap request event
+  embedded in a zap receipt rather than doing a plain nip44_decrypt, and Cambium does not implement
+  that (known gap below). `PING` answers directly for an approved, paired caller. Every other case
+  returns `null` so the client falls back to the intent, and the caller is always taken from
+  `getCallingPackage`, never from query arguments.
+- `nip55/EventJson.kt` -- tiny shared helpers (`extractEventKind`, `extractEventSignatureHex`) used
+  by both `SignerActivity` (approval sheet, legacy `signature` extra) and `SignerProvider` (the
+  `signature` cursor column for forwarded `SIGN_EVENT`).
 - `MainActivity.kt` -- pairing status screen: paste a bunker URI, see connection details, unpair.
 
 ## Conventions
@@ -67,13 +80,16 @@ Amethyst / Primal / Voyage ...
 ## Known gaps (tracked, not yet built)
 
 - QR pairing (paste-only for now).
-- A keep-warm foreground service for the relay connection (each request currently opens its own
-  short-lived `NostrConnect` session).
+- A foreground service to keep the process (and so `HeartwoodSession`) alive proactively; today
+  the session is kept warm only while the process happens to be running, not deliberately kept
+  alive in the background.
 - Richer per-app permissions (kind-level allow/deny); v1 is a single per-package allow set. There
   is also no persistent per-app *denial* yet -- declining a request just doesn't approve it, it
-  doesn't block future requests from showing the approval sheet again.
+  doesn't block future requests from showing the approval sheet again. `SignerProvider` therefore
+  cannot yet distinguish "not yet approved" from "permanently rejected"; both are `null`.
+- `DECRYPT_ZAP_EVENT` is not implemented (see `SignerProvider`'s class doc) -- Amber's zap-request
+  unwrapping is different from a plain nip44_decrypt and hasn't been built.
 - Multi-signer support (v1 pairs exactly one Heartwood).
-- `SignerProvider` forwarding SIGN_EVENT/NIP04/NIP44 to Heartwood (currently intent-only) -- see
-  the TODO in `nip55/SignerProvider.kt`.
 - NIP-55 single-intent batch requests (the `results` JSON-array response) -- currently each
-  intent is handled individually.
+  intent is handled individually, though `SignerActivity` does handle multiple *separate* intents
+  arriving in sequence via `onNewIntent`.
