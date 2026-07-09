@@ -3,17 +3,20 @@ package dev.forgesworn.cambium.signer
 import java.security.MessageDigest
 
 /**
- * Identifies a decrypt call for caching purposes. Only the two decrypt methods are cacheable:
- * decryption is deterministic (the same ciphertext and counterparty always resolve the same way),
- * unlike encryption (nonce freshness means the same plaintext must never reuse a cached
- * ciphertext) or signing (must always go to Heartwood).
+ * Identifies a decrypt call for caching purposes. Only decrypt methods are cacheable: decryption
+ * is deterministic (the same ciphertext and counterparty always resolve the same way), unlike
+ * encryption (nonce freshness means the same plaintext must never reuse a cached ciphertext) or
+ * signing (must always go to Heartwood). [Method.ZAP] is `decrypt_zap_event`'s own namespace --
+ * see [dev.forgesworn.cambium.nip57.PrivateZap] -- kept distinct from [Method.NIP04] even though
+ * it forwards as a nip04_decrypt underneath, since the cached value there is a *validated* kind
+ * 9733 event, not just an arbitrary nip04 plaintext.
  */
 data class CacheableDecrypt(
     val method: Method,
     val otherPubkeyHex: String,
     val payload: String,
 ) {
-    enum class Method { NIP04, NIP44 }
+    enum class Method { NIP04, NIP44, ZAP }
 }
 
 sealed interface CachedOutcome {

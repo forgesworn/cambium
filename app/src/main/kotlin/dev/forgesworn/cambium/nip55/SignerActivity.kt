@@ -8,6 +8,8 @@ import androidx.core.view.isVisible
 import androidx.lifecycle.lifecycleScope
 import dev.forgesworn.cambium.R
 import dev.forgesworn.cambium.databinding.ActivitySignerApprovalBinding
+import dev.forgesworn.cambium.nip57.PrivateZap
+import dev.forgesworn.cambium.nip57.ZapDecodeResult
 import dev.forgesworn.cambium.pairing.Pairing
 import dev.forgesworn.cambium.pairing.PairingStore
 import dev.forgesworn.cambium.signer.CacheableDecrypt
@@ -147,6 +149,11 @@ class SignerActivity : AppCompatActivity() {
             return
         }
 
+        if (request is Nip55Request.DecryptZapEvent) {
+            handleDecryptZapEvent(pairing, request)
+            return
+        }
+
         if (!silent) binding.progressGroup.isVisible = true
         lifecycleScope.launch {
             val result = HeartwoodSession.withClient(pairing, cacheableFor(request)) { client ->
@@ -157,6 +164,7 @@ class SignerActivity : AppCompatActivity() {
                     is Nip55Request.Nip44Encrypt -> client.nip44Encrypt(request.pubkeyHex, request.plaintext)
                     is Nip55Request.Nip44Decrypt -> client.nip44Decrypt(request.pubkeyHex, request.ciphertext)
                     is Nip55Request.GetPublicKey -> error("handled above without a relay round trip")
+                    is Nip55Request.DecryptZapEvent -> error("handled separately, see handleDecryptZapEvent")
                 }
             }
 
@@ -166,6 +174,48 @@ class SignerActivity : AppCompatActivity() {
                     result.value,
                     isPublicKeyRequest = false,
                 )
+                is HeartwoodResult.Failure -> showErrorAndReject(request.id, result.error)
+            }
+        }
+    }
+
+    /**
+     * `decrypt_zap_event`: [PrivateZap.decodeAnonTag] runs locally first (no relay call) to turn
+     * the zap request's `anon` tag into an ordinary nip04_decrypt call. A public zap (no `anon`
+     * tag) or a malformed one is rejected immediately -- there is nothing Heartwood could do with
+     * either. On a successful decrypt, [PrivateZap.isValidPrivateZapEvent] checks the plaintext is
+     * actually a kind 9733 event before it is handed back; a plaintext that fails that check is
+     * treated as a decrypt failure using the same "decryption failed" wording the firmware uses,
+     * so it is picked up by the existing deterministic-failure/caching logic without any special
+     * casing here.
+     */
+    private fun handleDecryptZapEvent(pairing: Pairing, request: Nip55Request.DecryptZapEvent) {
+        val decoded = PrivateZap.decodeAnonTag(request.eventJson)
+        val forward = when (decoded) {
+            is ZapDecodeResult.NotPrivate, is ZapDecodeResult.Malformed -> {
+                rejectAndFinish(request.id)
+                return
+            }
+            is ZapDecodeResult.Forward -> decoded
+        }
+
+        if (!silent) binding.progressGroup.isVisible = true
+        lifecycleScope.launch {
+            val cacheable = CacheableDecrypt(CacheableDecrypt.Method.ZAP, forward.counterpartyPubkeyHex, request.eventJson)
+            val result = HeartwoodSession.withClient(pairing, cacheable) { client ->
+                when (val decrypted = client.nip04Decrypt(forward.counterpartyPubkeyHex, forward.nip04Payload)) {
+                    is HeartwoodResult.Success ->
+                        if (PrivateZap.isValidPrivateZapEvent(decrypted.value)) {
+                            decrypted
+                        } else {
+                            HeartwoodResult.Failure(HeartwoodError.Protocol("decryption failed: not a kind 9733 event"))
+                        }
+                    is HeartwoodResult.Failure -> decrypted
+                }
+            }
+
+            when (result) {
+                is HeartwoodResult.Success -> respondSuccess(request, result.value, isPublicKeyRequest = false)
                 is HeartwoodResult.Failure -> showErrorAndReject(request.id, result.error)
             }
         }
@@ -221,10 +271,14 @@ class SignerActivity : AppCompatActivity() {
             is Nip55Request.Nip04Decrypt -> R.string.method_nip04_decrypt
             is Nip55Request.Nip44Encrypt -> R.string.method_nip44_encrypt
             is Nip55Request.Nip44Decrypt -> R.string.method_nip44_decrypt
+            is Nip55Request.DecryptZapEvent -> R.string.method_decrypt_zap_event
         }
     )
 
-    /** `null` for anything but the two decrypt methods -- see [CacheableDecrypt]. */
+    /** `null` for anything but the two plain decrypt methods -- see [CacheableDecrypt].
+     * `DecryptZapEvent` builds its own [CacheableDecrypt] in [handleDecryptZapEvent] instead,
+     * since its key needs the pubkey [PrivateZap] derives from the event, not one from the
+     * request itself. */
     private fun cacheableFor(request: Nip55Request): CacheableDecrypt? = when (request) {
         is Nip55Request.Nip04Decrypt -> CacheableDecrypt(CacheableDecrypt.Method.NIP04, request.pubkeyHex, request.ciphertext)
         is Nip55Request.Nip44Decrypt -> CacheableDecrypt(CacheableDecrypt.Method.NIP44, request.pubkeyHex, request.ciphertext)

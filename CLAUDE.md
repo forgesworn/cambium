@@ -102,26 +102,42 @@ Amethyst / Primal / Voyage ...
   class doc) for already-approved callers -- acceptable because these clients call `query()` from
   a background thread. `get_public_key` is still declared for discovery but always answers `null`:
   both Amber and Primal force login through the visible intent rather than the silent path.
-  `DECRYPT_ZAP_EVENT` is declared (its absence spammed provider-discovery errors on every zap in
-  Amethyst's feed) but always answers `null` -- Amber's implementation unwraps a zap request event
-  embedded in a zap receipt rather than doing a plain nip44_decrypt, and Cambium does not implement
-  that (known gap below). `PING` answers directly for an approved, paired caller.
+  `DECRYPT_ZAP_EVENT` decodes the DIP-03 "private zap" `anon` tag locally (see `nip57/PrivateZap.kt`
+  below) and forwards the result as an ordinary nip04_decrypt; a public zap (no `anon` tag) or a
+  malformed one answers `rejected` immediately, no relay round trip. `PING` answers directly for an
+  approved, paired caller.
 
   `SIGN_EVENT` declines NIP-37 draft events (kind 31234) immediately, without forwarding or
   joining the queue: Amethyst auto-saves a draft roughly every 2s while typing, which floods a
   1-2s hardware round trip and buries real requests behind it. An explicit policy refusal from
   Heartwood (error text containing "unauthorised"/"unauthorized"/"not allowed"/"refused"/"denied")
-  or a deterministic decrypt failure (see `DecryptCache.kt`'s `isDeterministicDecryptFailure`)
-  answers a `rejected` cursor rather than `null`, so a client stops re-escalating a blocked or
-  unrecoverable request to the visible flow every couple of seconds. Both are answered with a
-  distinct `rejected` cursor column that clients should treat as terminal (no intent fallback).
-  `NIP04_DECRYPT`/`NIP44_DECRYPT` results are cached by `HeartwoodSession` before admission control
-  -- see its class doc. Everything else that cannot be answered here -- an unapproved/unpaired
-  caller, a missing argument, the worker queue being full, a timeout, or any other failure --
-  returns `null` so the client falls back to the intent. The caller is always taken from
-  `getCallingPackage`, never from query arguments. Diagnostic logging (tag `CambiumProvider`)
-  covers every refusal path and timing for each forward, added during live-device debugging and
-  kept deliberately.
+  or a deterministic decrypt failure (see `DecryptCache.kt`'s `isDeterministicDecryptFailure`, also
+  used for an invalid decrypted zap -- see below) answers a `rejected` cursor rather than `null`,
+  so a client stops re-escalating a blocked or unrecoverable request to the visible flow every
+  couple of seconds. All three are answered with a distinct `rejected` cursor column that clients
+  should treat as terminal (no intent fallback). `NIP04_DECRYPT`/`NIP44_DECRYPT` results, and
+  `DECRYPT_ZAP_EVENT`'s under its own `CacheableDecrypt.Method.ZAP` namespace, are cached by
+  `HeartwoodSession` before admission control -- see its class doc. Everything else that cannot be
+  answered here -- an unapproved/unpaired caller, a missing argument, the worker queue being full,
+  a timeout, or any other failure -- returns `null` so the client falls back to the intent. The
+  caller is always taken from `getCallingPackage`, never from query arguments. Diagnostic logging
+  (tag `CambiumProvider`) covers every refusal path and timing for each forward, added during
+  live-device debugging and kept deliberately.
+- `nip57/Bech32.kt` -- pure Kotlin BIP-173 bech32 encode/decode, deliberately without the spec's
+  90-character length recommendation (which exists for Bitcoin-address readability, not
+  cryptographic reasons) -- DIP-03's private-zap `anon` tag payload routinely exceeds it. Tested
+  against the real bech32 strings in DIP-03's own worked example, not just round-tripped against
+  its own `encode()`.
+- `nip57/PrivateZap.kt` -- decodes DIP-03's "private zap" `anon` tag (a de facto convention, not in
+  the core NIP-57 spec, which explicitly defers zap privacy to "future work") into a plain
+  nip04_decrypt call, and validates the decrypted plaintext is a kind 9733 event. Pure Kotlin (uses
+  `kotlinx.serialization.json`, already a dependency, rather than `org.json`, to stay consistent
+  with the rest of the JVM-testable modules and avoid depending on AGP's unit-test Android stubs
+  behaving like the real implementation). **Sender**-side private-zap decoding (recognising your
+  own anonymous zaps by regenerating the ephemeral key via `sha256(privkey + noteId + createdAt)`)
+  is a known, permanent limitation, not a gap to close later: it needs the raw private key fed
+  directly into a hash function, which NIP-46 remote signing has no operation for and Heartwood
+  will never expose. Only the recipient path is implemented.
 - `nip55/EventJson.kt` -- tiny shared helpers (`extractEventKind`, `extractEventSignatureHex`) used
   by both `SignerActivity` (approval sheet, legacy `signature` extra) and `SignerProvider` (the
   `signature` cursor column for forwarded `SIGN_EVENT`).
@@ -161,10 +177,11 @@ Amethyst / Primal / Voyage ...
   is also no persistent per-app *denial* yet -- declining a request just doesn't approve it, it
   doesn't block future requests from showing the approval sheet again. `SignerProvider` therefore
   cannot yet distinguish "not yet approved" from "permanently rejected"; both are `null`.
-- `DECRYPT_ZAP_EVENT` is not implemented (see `SignerProvider`'s class doc) -- Amber's zap-request
-  unwrapping is different from a plain nip44_decrypt and hasn't been built. Because it isn't
-  recognised as a method in `Nip55Request` either, a zap that falls through to the intent path
-  gets auto-rejected rather than shown to the user -- fixing that also needs the zap-unwrap logic.
+- `decrypt_zap_event` only implements the recipient path (decoding a private zap sent *to* the
+  paired identity). The sender path -- recognising your own anonymous zaps by regenerating the
+  ephemeral key -- needs the raw private key hashed directly, which is permanently impossible over
+  NIP-46 (see `nip57/PrivateZap.kt`'s class doc), not a gap that will be closed later. The
+  decrypted plaintext is checked for `"kind": 9733` but its signature is not verified.
 - The decrypt cache (`DecryptCache`) has no eviction on staleness beyond LRU size, and no
   per-pairing partitioning -- unpairing clears it entirely via `HeartwoodSession.shutdown()`, but
   re-pairing with a *different* signer inside the same process would need the same clear (already

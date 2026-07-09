@@ -57,6 +57,15 @@ sealed interface Nip55Request {
         val ciphertext: String,
     ) : Nip55Request
 
+    /** [eventJson] is a kind-9734 zap request; see [dev.forgesworn.cambium.nip57.PrivateZap]. No
+     * `pubkey` extra -- unlike the crypto methods, the counterparty is derived from the event
+     * itself, not passed separately. */
+    data class DecryptZapEvent(
+        override val id: String?,
+        override val currentUser: String?,
+        val eventJson: String,
+    ) : Nip55Request
+
     companion object {
         const val TYPE_GET_PUBLIC_KEY = "get_public_key"
         const val TYPE_SIGN_EVENT = "sign_event"
@@ -64,6 +73,7 @@ sealed interface Nip55Request {
         const val TYPE_NIP04_DECRYPT = "nip04_decrypt"
         const val TYPE_NIP44_ENCRYPT = "nip44_encrypt"
         const val TYPE_NIP44_DECRYPT = "nip44_decrypt"
+        const val TYPE_DECRYPT_ZAP_EVENT = "decrypt_zap_event"
 
         /** Null when [raw]'s `type` is unrecognised or a required field (payload/pubkey) is missing. */
         fun from(raw: RawSignerIntent): Nip55Request? {
@@ -88,6 +98,10 @@ sealed interface Nip55Request {
 
                 TYPE_NIP44_DECRYPT -> cryptoRequest(raw) { pubkey, payload ->
                     Nip44Decrypt(raw.id, raw.currentUser, pubkey, payload)
+                }
+
+                TYPE_DECRYPT_ZAP_EVENT -> raw.payload?.takeIf { it.isNotBlank() }?.let { eventJson ->
+                    DecryptZapEvent(raw.id, raw.currentUser, eventJson)
                 }
 
                 else -> null

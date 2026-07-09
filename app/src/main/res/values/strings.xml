@@ -40,4 +40,5 @@
     <string name="method_nip04_decrypt">nip04_decrypt</string>
     <string name="method_nip44_encrypt">nip44_encrypt</string>
     <string name="method_nip44_decrypt">nip44_decrypt</string>
+    <string name="method_decrypt_zap_event">decrypt_zap_event</string>
 </resources>

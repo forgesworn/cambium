@@ -76,7 +76,22 @@ class Nip55RequestTest {
 
     @Test
     fun `unknown method type returns null`() {
-        assertNull(Nip55Request.from(raw(type = "decrypt_zap_event", payload = "x")))
+        assertNull(Nip55Request.from(raw(type = "some_future_method", payload = "x")))
+    }
+
+    @Test
+    fun `parses decrypt_zap_event with the zap request json as payload and no pubkey needed`() {
+        val eventJson = """{"kind":9734,"pubkey":"abc","tags":[["anon","x"]]}"""
+        val request = Nip55Request.from(raw(type = "decrypt_zap_event", payload = eventJson, pubkey = null))
+
+        val parsed = assertIs<Nip55Request.DecryptZapEvent>(request)
+        assertEquals(eventJson, parsed.eventJson)
+    }
+
+    @Test
+    fun `decrypt_zap_event without a payload is rejected`() {
+        assertNull(Nip55Request.from(raw(type = "decrypt_zap_event", payload = null)))
+        assertNull(Nip55Request.from(raw(type = "decrypt_zap_event", payload = "  ")))
     }
 
     @Test

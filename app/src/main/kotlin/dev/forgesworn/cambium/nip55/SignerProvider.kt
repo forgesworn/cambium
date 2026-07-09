@@ -7,6 +7,8 @@ import android.database.MatrixCursor
 import android.net.Uri
 import android.os.SystemClock
 import android.util.Log
+import dev.forgesworn.cambium.nip57.PrivateZap
+import dev.forgesworn.cambium.nip57.ZapDecodeResult
 import dev.forgesworn.cambium.pairing.Pairing
 import dev.forgesworn.cambium.pairing.PairingStore
 import dev.forgesworn.cambium.signer.CacheableDecrypt
@@ -33,11 +35,11 @@ import kotlinx.coroutines.runBlocking
  * Primal force login through the visible intent rather than the silent path, and Cambium matches
  * that rather than the more permissive reading of the NIP-55 text.
  *
- * `DECRYPT_ZAP_EVENT` is declared (its absence spammed "Failed to find provider info" errors on
- * every zap in Amethyst's feed) but always answers `null`. Amber implements this as its own
- * decode: unwrapping the zap request event embedded in a zap receipt and decrypting fields inside
- * it, not a plain nip44_decrypt of the payload against the other-party pubkey. Doing that naively
- * would decrypt the wrong thing, so this MVP does not implement it (known gap, see CLAUDE.md).
+ * `DECRYPT_ZAP_EVENT` decodes the DIP-03 "private zap" `anon` tag locally (see
+ * [dev.forgesworn.cambium.nip57.PrivateZap]) and forwards the result as an ordinary
+ * nip04_decrypt. A public zap (no `anon` tag) or a malformed one answers `rejected` immediately,
+ * without a relay round trip. Declaring this authority also silenced "Failed to find provider
+ * info" errors Amethyst logged on every zap when it was undeclared.
  *
  * `PING` answers directly for an already-approved, paired caller ("pong"), so a client can cheaply
  * check "is Cambium here and willing to talk to me" without a relay round trip.
@@ -111,8 +113,9 @@ class SignerProvider : ContentProvider() {
             client.nip44Decrypt(otherPubkey, payload)
         }
 
+        DECRYPT_ZAP_EVENT_AUTHORITY -> queryDecryptZapEvent(projection)
+
         // GET_PUBLIC_KEY: always the intent (see class doc).
-        // DECRYPT_ZAP_EVENT: declared to silence discovery errors; not implemented (see class doc).
         else -> null
     }
 
@@ -144,6 +147,54 @@ class SignerProvider : ContentProvider() {
             includeEventAndSignature = true,
             cacheable = null, // signs are never cached
         ) { client, p, _ -> client.signEvent(p) }
+    }
+
+    /**
+     * `decrypt_zap_event`: [PrivateZap.decodeAnonTag] runs locally first (no relay call, no queue
+     * slot) to turn the zap request's `anon` tag into an ordinary nip04_decrypt call. A public zap
+     * (no `anon` tag) or a malformed one answers `rejected` immediately -- both are deterministic,
+     * local problems that a relay round trip cannot fix. On a successful decrypt,
+     * [PrivateZap.isValidPrivateZapEvent] checks the plaintext is actually a kind 9733 event; a
+     * plaintext that fails that check is turned into a failure using the same "decryption failed"
+     * wording the firmware uses, so it flows through the existing deterministic-failure/caching
+     * logic in [forward] without any special casing there.
+     */
+    private fun queryDecryptZapEvent(projection: Array<out String>?): Cursor? {
+        val caller = resolveApprovedCaller() ?: return null
+        val pairing = requirePairing(caller) ?: return null
+        val eventJson = requirePayload(caller, projection) ?: return null
+
+        return when (val decoded = PrivateZap.decodeAnonTag(eventJson)) {
+            is ZapDecodeResult.NotPrivate -> {
+                Log.i(TAG, "silent decrypt_zap_event from $caller declined: public zap (no anon tag)")
+                rejectedCursor()
+            }
+            is ZapDecodeResult.Malformed -> {
+                Log.i(TAG, "silent decrypt_zap_event from $caller declined: ${decoded.reason}")
+                rejectedCursor()
+            }
+            is ZapDecodeResult.Forward -> {
+                val cacheable = CacheableDecrypt(CacheableDecrypt.Method.ZAP, decoded.counterpartyPubkeyHex, eventJson)
+                forward(
+                    caller,
+                    pairing,
+                    decoded.nip04Payload,
+                    decoded.counterpartyPubkeyHex,
+                    includeEventAndSignature = false,
+                    cacheable,
+                ) { client, payload, otherPubkey ->
+                    when (val decrypted = client.nip04Decrypt(otherPubkey, payload)) {
+                        is HeartwoodResult.Success ->
+                            if (PrivateZap.isValidPrivateZapEvent(decrypted.value)) {
+                                decrypted
+                            } else {
+                                HeartwoodResult.Failure(HeartwoodError.Protocol("decryption failed: not a kind 9733 event"))
+                            }
+                        is HeartwoodResult.Failure -> decrypted
+                    }
+                }
+            }
+        }
     }
 
     /**

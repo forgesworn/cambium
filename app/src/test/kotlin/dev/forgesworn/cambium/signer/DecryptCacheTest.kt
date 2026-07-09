@@ -46,6 +46,15 @@ class DecryptCacheTest {
     }
 
     @Test
+    fun `zap and nip04 are separate cache namespaces even for identical payload and pubkey`() {
+        val cache = DecryptCache()
+        val pubkey = "a".repeat(64)
+        cache.putSuccess(CacheableDecrypt(CacheableDecrypt.Method.NIP04, pubkey, "same"), "nip04-plaintext")
+
+        assertNull(cache.get(CacheableDecrypt(CacheableDecrypt.Method.ZAP, pubkey, "same")))
+    }
+
+    @Test
     fun `evicts the least recently used entry once over capacity`() {
         val cache = DecryptCache(maxEntries = 2)
         cache.putSuccess(request(payload = "one"), "plain-one")
