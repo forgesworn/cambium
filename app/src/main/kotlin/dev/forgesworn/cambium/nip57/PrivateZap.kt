@@ -78,7 +78,12 @@ object PrivateZap {
         val pubkey = runCatching { event["pubkey"]?.jsonPrimitive?.content }.getOrNull()
             ?: return ZapDecodeResult.Malformed("event has no pubkey")
 
-        val tags = event["tags"]?.jsonArray ?: return ZapDecodeResult.NoAnonTag
+        // `tags` present but not an array must not throw out of this function: this line is
+        // reached with attacker-controlled JSON via the exported provider, and nothing above
+        // this layer catches.
+        val tags = runCatching { event["tags"]?.jsonArray }
+            .getOrElse { return ZapDecodeResult.Malformed("tags is not an array") }
+            ?: return ZapDecodeResult.NoAnonTag
         val anonValue = runCatching {
             tags.asSequence()
                 .mapNotNull { it as? JsonArray }

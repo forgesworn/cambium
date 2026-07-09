@@ -109,6 +109,15 @@ class PrivateZapTest {
     }
 
     @Test
+    fun `a tags field that is not an array is malformed, not an exception`() {
+        val objectTags = """{"kind":9734,"pubkey":"${"a".repeat(64)}","tags":{"anon":"x"}}"""
+        assertIs<ZapDecodeResult.Malformed>(PrivateZap.decodeAnonTag(objectTags))
+
+        val stringTags = """{"kind":9734,"pubkey":"${"a".repeat(64)}","tags":"anon"}"""
+        assertIs<ZapDecodeResult.Malformed>(PrivateZap.decodeAnonTag(stringTags))
+    }
+
+    @Test
     fun `an anon tag without an underscore separator is malformed`() {
         val noUnderscore = """{"kind":9734,"pubkey":"${"a".repeat(64)}","tags":[["anon","pzap1nopeiv1nope"]]}"""
         assertIs<ZapDecodeResult.MalformedAnon>(PrivateZap.decodeAnonTag(noUnderscore))

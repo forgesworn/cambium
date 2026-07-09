@@ -32,9 +32,11 @@ import kotlinx.coroutines.runBlocking
  * cancel an in-flight rust-nostr call, which is suspected to have wedged the whole process once
  * under load.
  *
- * `GET_PUBLIC_KEY` is still declared for discovery but always answers `null`: both Amber and
- * Primal force login through the visible intent rather than the silent path, and Cambium matches
- * that rather than the more permissive reading of the NIP-55 text.
+ * `GET_PUBLIC_KEY` is still declared for discovery but answers `null` for anyone the user has
+ * not denied: both Amber and Primal force login through the visible intent rather than the
+ * silent path, and Cambium matches that rather than the more permissive reading of the NIP-55
+ * text. A *denied* caller gets the terminal `rejected` answer even here, so a blocked app's
+ * login probe cannot keep bouncing through the invisible intent path.
  *
  * `DECRYPT_ZAP_EVENT` decodes the DIP-03 "private zap" `anon` tag locally (see
  * [dev.forgesworn.cambium.nip57.PrivateZap]) and forwards the result as an ordinary
@@ -117,7 +119,12 @@ class SignerProvider : ContentProvider() {
 
         DECRYPT_ZAP_EVENT_AUTHORITY -> queryDecryptZapEvent(projection)
 
-        // GET_PUBLIC_KEY: always the intent (see class doc).
+        // GET_PUBLIC_KEY: an approved (or not-yet-decided) caller always gets `null` -- login
+        // goes through the visible intent, see the class doc -- but a *denied* caller still gets
+        // the terminal `rejected` answer here, like every other authority, so a blocked app's
+        // login probe cannot keep bouncing through the invisible intent path.
+        GET_PUBLIC_KEY_AUTHORITY -> withApprovedCaller { null }
+
         else -> null
     }
 

@@ -123,8 +123,9 @@ Amethyst / Primal / Voyage ...
   plus decrypts). `SIGN_EVENT`, `NIP04_ENCRYPT`/`DECRYPT`, and `NIP44_ENCRYPT`/`DECRYPT` forward to
   `HeartwoodSession.trySilent` (admission-controlled, capped at 15s -- see `HeartwoodSession`'s
   class doc) for already-approved callers -- acceptable because these clients call `query()` from
-  a background thread. `get_public_key` is still declared for discovery but always answers `null`:
-  both Amber and Primal force login through the visible intent rather than the silent path.
+  a background thread. `get_public_key` is still declared for discovery but answers `null` for anyone
+  the user has not denied (a denied caller gets the terminal `rejected` even here): both Amber
+  and Primal force login through the visible intent rather than the silent path.
   `DECRYPT_ZAP_EVENT` decodes the DIP-03 "private zap" `anon` tag locally (see `nip57/PrivateZap.kt`
   below) and forwards the result as an ordinary nip04_decrypt; a public zap (no `anon` tag) or a
   malformed one answers `rejected` immediately, no relay round trip. `PING` answers directly for an
