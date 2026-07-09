@@ -13,7 +13,15 @@ class Nip55RequestTest {
         id: String? = "req-1",
         currentUser: String? = "abc123",
         pubkey: String? = null,
-    ) = RawSignerIntent(payload = payload, type = type, id = id, currentUser = currentUser, pubkey = pubkey)
+        permissions: String? = null,
+    ) = RawSignerIntent(
+        payload = payload,
+        type = type,
+        id = id,
+        currentUser = currentUser,
+        pubkey = pubkey,
+        permissions = permissions,
+    )
 
     @Test
     fun `parses get_public_key with no payload required`() {
@@ -22,6 +30,19 @@ class Nip55RequestTest {
         val parsed = assertIs<Nip55Request.GetPublicKey>(request)
         assertEquals("req-1", parsed.id)
         assertEquals("abc123", parsed.currentUser)
+        assertEquals(emptyList(), parsed.permissions)
+    }
+
+    @Test
+    fun `parses get_public_key's permissions extra when present`() {
+        val permissionsJson = """[{"type":"sign_event","kind":1},{"type":"nip44_decrypt"}]"""
+        val request = Nip55Request.from(raw(type = "get_public_key", permissions = permissionsJson))
+
+        val parsed = assertIs<Nip55Request.GetPublicKey>(request)
+        assertEquals(
+            listOf(RequestedPermission("sign_event", 1), RequestedPermission("nip44_decrypt", null)),
+            parsed.permissions,
+        )
     }
 
     @Test

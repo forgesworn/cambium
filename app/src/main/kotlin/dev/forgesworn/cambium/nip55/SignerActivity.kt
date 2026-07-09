@@ -8,8 +8,10 @@ import androidx.core.view.isVisible
 import androidx.lifecycle.lifecycleScope
 import dev.forgesworn.cambium.R
 import dev.forgesworn.cambium.databinding.ActivitySignerApprovalBinding
+import dev.forgesworn.cambium.displayNameFor
 import dev.forgesworn.cambium.nip57.PrivateZap
 import dev.forgesworn.cambium.nip57.ZapDecodeResult
+import dev.forgesworn.cambium.pairing.AppPermissionState
 import dev.forgesworn.cambium.pairing.Pairing
 import dev.forgesworn.cambium.pairing.PairingStore
 import dev.forgesworn.cambium.signer.CacheableDecrypt
@@ -23,6 +25,7 @@ private const val EXTRA_ID = "id"
 private const val EXTRA_CURRENT_USER = "current_user"
 private const val EXTRA_PUBKEY = "pubkey"
 private const val EXTRA_PUBKEY_ALT = "pubKey" // some clients (and older Amber versions) send this casing
+private const val EXTRA_PERMISSIONS = "permissions"
 private const val EXTRA_RESULT = "result"
 private const val EXTRA_EVENT = "event"
 private const val EXTRA_SIGNATURE = "signature" // legacy Amber extra: raw hex sig, duplicating `result`/`event`
@@ -36,17 +39,16 @@ private const val EXTRA_REJECTED = "rejected"
  *
  * Continued daily use showed the visible progress overlay appearing for *every* request that fell
  * through to the intent path, even for callers already approved -- popups regularly, not just on
- * first login. This activity is now [silent] for an already-approved caller: no content view, no
- * dim, a transparent [R.style.Theme_Cambium_Invisible] theme swapped in before any window setup,
- * just the request running on [HeartwoodSession]'s worker with a `setResult`/`finish()` at the
- * end -- at most a sub-second flash. The visible Approve/Decline sheet and the "asking your
- * signer" progress overlay exist only for the *first* approval of a calling app (matches Amber's
- * remembered-choice UX). [silent] is decided once, in `onCreate`, and reused for the lifetime of
- * this activity instance -- it is not re-evaluated in [onNewIntent], since switching from a
- * visible theme to an invisible one after the window already exists is unreliable. Deliberately no
- * custom back-press handling for the silent case either: the request keeps running on the worker
- * regardless of what happens to this activity (see [HeartwoodSession]), so there is nothing to
- * intercept.
+ * first login. This activity is now [silent] for a caller with a remembered choice, approved *or*
+ * denied: no content view, no dim, a transparent [R.style.Theme_Cambium_Invisible] theme swapped
+ * in before any window setup. An approved caller's request runs on [HeartwoodSession]'s worker
+ * with a `setResult`/`finish()` at the end; a denied caller is rejected immediately, with no
+ * Heartwood call at all -- either way, at most a sub-second flash. The visible Approve/Decline
+ * sheet and the "asking your signer" progress overlay exist only for a caller with no remembered
+ * choice yet (matches Amber's remembered-choice UX). [silent]/[permissionState] are decided once,
+ * in `onCreate`, and reused for the lifetime of this activity instance -- not re-evaluated in
+ * [onNewIntent], since switching from a visible theme to an invisible one after the window already
+ * exists is unreliable.
  *
  * `singleTop`: a client can fire a second request (e.g. `sign_event` right after
  * `get_public_key`) before the user has dismissed this activity, which arrives via
@@ -59,13 +61,15 @@ class SignerActivity : AppCompatActivity() {
     private lateinit var pairingStore: PairingStore
     private var request: Nip55Request? = null
     private var silent = false
+    private var permissionState: AppPermissionState? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         pairingStore = PairingStore(this)
 
         val callingPkg = callingPackage
-        silent = callingPkg != null && pairingStore.isApproved(callingPkg)
+        permissionState = callingPkg?.let(pairingStore::permissionState)
+        silent = permissionState != null
         if (silent) {
             // Must happen before setContentView (and there is no content view to set here) for
             // the transparent/non-dimmed theme to actually take effect on the window.
@@ -89,6 +93,7 @@ class SignerActivity : AppCompatActivity() {
     private fun handleIncomingIntent(intent: Intent) {
         if (!silent) {
             binding.decisionGroup.isVisible = false
+            binding.denyAlwaysLink.isVisible = false
             binding.progressGroup.isVisible = false
         }
 
@@ -107,15 +112,15 @@ class SignerActivity : AppCompatActivity() {
             return
         }
 
-        if (silent) {
-            handle(pairing, parsed)
-        } else {
-            showApprovalSheet(pairing, parsed, callingPackage)
+        when (permissionState) {
+            AppPermissionState.APPROVED -> handle(pairing, parsed)
+            AppPermissionState.DENIED -> rejectAndFinish(parsed.id)
+            null -> showApprovalSheet(pairing, parsed, callingPackage)
         }
     }
 
     private fun showApprovalSheet(pairing: Pairing, request: Nip55Request, callingPkg: String?) {
-        binding.appValue.text = callingPkg?.let(::resolveCallerDisplayName) ?: "unknown caller"
+        binding.appValue.text = callingPkg?.let(packageManager::displayNameFor) ?: "unknown caller"
         binding.methodValue.text = methodLabel(request)
 
         val kind = (request as? Nip55Request.SignEvent)?.let { extractEventKind(it.eventJson) }
@@ -124,7 +129,16 @@ class SignerActivity : AppCompatActivity() {
             binding.kindValue.text = kind.toString()
         }
 
+        // Display only, per NIP-55's optional get_public_key `permissions` extra: Heartwood's own
+        // ClientPolicy is what actually gates every request, this is not pre-authorisation.
+        val permissions = (request as? Nip55Request.GetPublicKey)?.permissions.orEmpty()
+        binding.permissionsRow.isVisible = permissions.isNotEmpty()
+        if (permissions.isNotEmpty()) {
+            binding.permissionsValue.text = summariseRequestedPermissions(permissions)
+        }
+
         binding.decisionGroup.isVisible = true
+        binding.denyAlwaysLink.isVisible = true
         binding.progressGroup.isVisible = false
 
         binding.approveButton.setOnClickListener {
@@ -134,6 +148,10 @@ class SignerActivity : AppCompatActivity() {
         binding.declineButton.setOnClickListener {
             rejectAndFinish(request.id)
         }
+        binding.denyAlwaysLink.setOnClickListener {
+            callingPkg?.let { pairingStore.deny(it) }
+            rejectAndFinish(request.id)
+        }
     }
 
     /**
@@ -141,7 +159,10 @@ class SignerActivity : AppCompatActivity() {
      * approved right now (visible, the user just tapped Approve on the sheet).
      */
     private fun handle(pairing: Pairing, request: Nip55Request) {
-        if (!silent) binding.decisionGroup.isVisible = false
+        if (!silent) {
+            binding.decisionGroup.isVisible = false
+            binding.denyAlwaysLink.isVisible = false
+        }
 
         if (request is Nip55Request.GetPublicKey) {
             // Answered from the pairing record: no relay round trip needed once paired.
@@ -292,16 +313,6 @@ class SignerActivity : AppCompatActivity() {
         else -> null
     }
 
-    /**
-     * The calling package's human-readable label, for the approval sheet. Falls back to the raw
-     * package string on any failure -- a live test against a real device showed this can throw
-     * (package-visibility restrictions blocked the label lookup even though [getCallingPackage]
-     * itself resolved fine), and the app line must never render blank.
-     */
-    private fun resolveCallerDisplayName(callingPkg: String): String = runCatching {
-        val appInfo = packageManager.getApplicationInfo(callingPkg, 0)
-        packageManager.getApplicationLabel(appInfo).toString()
-    }.getOrDefault(callingPkg)
 }
 
 /** The only place an `android.content.Intent` is read; everything past this is plain Kotlin. */
@@ -311,4 +322,5 @@ private fun Intent.toRawSignerIntent(): RawSignerIntent = RawSignerIntent(
     id = getStringExtra(EXTRA_ID),
     currentUser = getStringExtra(EXTRA_CURRENT_USER),
     pubkey = getStringExtra(EXTRA_PUBKEY) ?: getStringExtra(EXTRA_PUBKEY_ALT),
+    permissions = getStringExtra(EXTRA_PERMISSIONS),
 )

@@ -219,6 +219,32 @@
                 android:visibility="gone"
                 tools:visibility="visible" />
 
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:fontFamily="monospace"
+                android:text="@string/connected_apps_label"
+                android:textColor="@color/on_background_muted" />
+
+            <TextView
+                android:id="@+id/connectedAppsEmpty"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:fontFamily="monospace"
+                android:text="@string/connected_apps_empty"
+                android:textColor="@color/on_background_muted"
+                android:visibility="gone"
+                tools:visibility="visible" />
+
+            <LinearLayout
+                android:id="@+id/connectedAppsContainer"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="24dp"
+                android:orientation="vertical" />
+
             <Button
                 android:id="@+id/unpairButton"
                 style="@style/Widget.Material3.Button.OutlinedButton"

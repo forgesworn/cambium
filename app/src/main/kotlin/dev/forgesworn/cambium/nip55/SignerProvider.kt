@@ -9,6 +9,7 @@ import android.os.SystemClock
 import android.util.Log
 import dev.forgesworn.cambium.nip57.PrivateZap
 import dev.forgesworn.cambium.nip57.ZapDecodeResult
+import dev.forgesworn.cambium.pairing.AppPermissionState
 import dev.forgesworn.cambium.pairing.Pairing
 import dev.forgesworn.cambium.pairing.PairingStore
 import dev.forgesworn.cambium.signer.CacheableDecrypt
@@ -65,9 +66,10 @@ import kotlinx.coroutines.runBlocking
  * by [HeartwoodSession] itself -- see its class doc -- since Amethyst was observed re-requesting
  * the same decrypt repeatedly while browsing, including legacy content that will never decrypt.
  *
- * Known gap: an unapproved caller and a permanently-*rejected* caller (as opposed to a
- * policy-refused one, see above) both get `null` today ("try the intent"); there is no persistent
- * deny-list yet for the latter (see PairingStore).
+ * A caller with a *remembered* denial (see [PairingStore.deny], set from the approval sheet's
+ * "always deny" link) gets `rejected` immediately, for every authority, without ever resolving a
+ * pairing or touching the queue -- distinct from a caller with no remembered choice yet, who gets
+ * `null` ("try the intent", where they will see the approval sheet). See [resolveCaller].
  */
 class SignerProvider : ContentProvider() {
 
@@ -119,27 +121,21 @@ class SignerProvider : ContentProvider() {
         else -> null
     }
 
-    private fun queryPing(): Cursor? {
-        val caller = callingPackage ?: return null
-        if (!pairingStore.isApproved(caller)) return null
-        if (!pairingStore.isPaired()) return null
-
-        return MatrixCursor(arrayOf(COLUMN_RESULT)).apply {
-            addRow(arrayOf(PONG))
-        }
+    private fun queryPing(): Cursor? = withApprovedCaller {
+        if (!pairingStore.isPaired()) return@withApprovedCaller null
+        MatrixCursor(arrayOf(COLUMN_RESULT)).apply { addRow(arrayOf(PONG)) }
     }
 
-    private fun querySignEvent(projection: Array<out String>?): Cursor? {
-        val caller = resolveApprovedCaller() ?: return null
-        val pairing = requirePairing(caller) ?: return null
-        val payload = requirePayload(caller, projection) ?: return null
+    private fun querySignEvent(projection: Array<out String>?): Cursor? = withApprovedCaller { caller ->
+        val pairing = requirePairing(caller) ?: return@withApprovedCaller null
+        val payload = requirePayload(caller, projection) ?: return@withApprovedCaller null
 
         if (extractEventKind(payload) == NIP37_DRAFT_KIND) {
             Log.i(TAG, "silent sign_event from $caller declined: draft (kind $NIP37_DRAFT_KIND)")
-            return rejectedCursor()
+            return@withApprovedCaller rejectedCursor()
         }
 
-        return forward(
+        forward(
             caller,
             pairing,
             payload,
@@ -160,12 +156,11 @@ class SignerProvider : ContentProvider() {
      * "decryption failed" wording the firmware uses, so it flows through the existing
      * deterministic-failure/caching logic in [forward] without any special casing there.
      */
-    private fun queryDecryptZapEvent(projection: Array<out String>?): Cursor? {
-        val caller = resolveApprovedCaller() ?: return null
-        val pairing = requirePairing(caller) ?: return null
-        val eventJson = requirePayload(caller, projection) ?: return null
+    private fun queryDecryptZapEvent(projection: Array<out String>?): Cursor? = withApprovedCaller { caller ->
+        val pairing = requirePairing(caller) ?: return@withApprovedCaller null
+        val eventJson = requirePayload(caller, projection) ?: return@withApprovedCaller null
 
-        return when (val decoded = PrivateZap.decodeAnonTag(eventJson)) {
+        when (val decoded = PrivateZap.decodeAnonTag(eventJson)) {
             is ZapDecodeResult.Malformed -> {
                 Log.i(TAG, "silent decrypt_zap_event from $caller declined: ${decoded.reason}")
                 rejectedCursor()
@@ -220,33 +215,54 @@ class SignerProvider : ContentProvider() {
         requiresOtherPubkey: Boolean,
         cacheMethod: CacheableDecrypt.Method? = null,
         call: suspend (HeartwoodClient, payload: String, otherPubkey: String) -> HeartwoodResult<String>,
-    ): Cursor? {
-        val caller = resolveApprovedCaller() ?: return null
-        val pairing = requirePairing(caller) ?: return null
-        val payload = requirePayload(caller, projection) ?: return null
+    ): Cursor? = withApprovedCaller { caller ->
+        val pairing = requirePairing(caller) ?: return@withApprovedCaller null
+        val payload = requirePayload(caller, projection) ?: return@withApprovedCaller null
 
         val otherPubkey = projection?.getOrNull(1)?.takeIf { it.isNotBlank() }
         if (requiresOtherPubkey && otherPubkey == null) {
             Log.w(TAG, "silent query from $caller missing other-party pubkey")
-            return null
+            return@withApprovedCaller null
         }
 
         val cacheable = cacheMethod?.let { CacheableDecrypt(it, otherPubkey.orEmpty(), payload) }
-        return forward(caller, pairing, payload, otherPubkey.orEmpty(), includeEventAndSignature = false, cacheable, call)
+        forward(caller, pairing, payload, otherPubkey.orEmpty(), includeEventAndSignature = false, cacheable, call)
     }
 
-    private fun resolveApprovedCaller(): String? {
+    private sealed interface CallerResolution {
+        data class Approved(val packageName: String) : CallerResolution
+        data object Denied : CallerResolution
+        data object Unresolved : CallerResolution
+    }
+
+    private fun resolveCaller(): CallerResolution {
         val caller = callingPackage
         if (caller == null) {
             Log.w(TAG, "silent query refused: calling package unresolvable")
-            return null
+            return CallerResolution.Unresolved
         }
-        if (!pairingStore.isApproved(caller)) {
-            Log.i(TAG, "silent query from unapproved caller $caller; deferring to intent")
-            return null
+        return when (pairingStore.permissionState(caller)) {
+            AppPermissionState.APPROVED -> CallerResolution.Approved(caller)
+            AppPermissionState.DENIED -> {
+                Log.i(TAG, "silent query from denied caller $caller; answering rejected")
+                CallerResolution.Denied
+            }
+            null -> {
+                Log.i(TAG, "silent query from unapproved caller $caller; deferring to intent")
+                CallerResolution.Unresolved
+            }
         }
-        return caller
     }
+
+    /** Runs [block] for an approved caller; answers `rejected` immediately for a denied one
+     * (no [block] call at all); defers to the intent (`null`) for a caller with no remembered
+     * choice yet, or one that could not be resolved. */
+    private inline fun withApprovedCaller(block: (String) -> Cursor?): Cursor? =
+        when (val resolution = resolveCaller()) {
+            is CallerResolution.Approved -> block(resolution.packageName)
+            CallerResolution.Denied -> rejectedCursor()
+            CallerResolution.Unresolved -> null
+        }
 
     private fun requirePairing(caller: String): Pairing? {
         val pairing = pairingStore.current()

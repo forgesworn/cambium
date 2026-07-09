@@ -11,6 +11,8 @@ data class RawSignerIntent(
     val id: String?,
     val currentUser: String?,
     val pubkey: String?,
+    /** `get_public_key` only: the raw JSON `permissions` extra, if the client sent one. */
+    val permissions: String? = null,
 )
 
 /** One parsed NIP-55 request. See nips/55.md for the wire contract this mirrors. */
@@ -18,9 +20,12 @@ sealed interface Nip55Request {
     val id: String?
     val currentUser: String?
 
+    /** [permissions] is the client's optional pre-authorisation list (NIP-55's `permissions`
+     * extra), already parsed -- display-only, see [RequestedPermission]. */
     data class GetPublicKey(
         override val id: String?,
         override val currentUser: String?,
+        val permissions: List<RequestedPermission> = emptyList(),
     ) : Nip55Request
 
     data class SignEvent(
@@ -78,7 +83,7 @@ sealed interface Nip55Request {
         /** Null when [raw]'s `type` is unrecognised or a required field (payload/pubkey) is missing. */
         fun from(raw: RawSignerIntent): Nip55Request? {
             return when (raw.type?.lowercase()) {
-                TYPE_GET_PUBLIC_KEY -> GetPublicKey(raw.id, raw.currentUser)
+                TYPE_GET_PUBLIC_KEY -> GetPublicKey(raw.id, raw.currentUser, parseRequestedPermissions(raw.permissions))
 
                 TYPE_SIGN_EVENT -> raw.payload?.takeIf { it.isNotBlank() }?.let { eventJson ->
                     SignEvent(raw.id, raw.currentUser, eventJson)

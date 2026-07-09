@@ -32,10 +32,19 @@
     <string name="approval_app_label">App</string>
     <string name="approval_method_label">Request</string>
     <string name="approval_kind_label">Event kind</string>
+    <string name="approval_permissions_label">Requested</string>
+    <string name="approval_permissions_note">Heartwood\'s own policy still decides what actually gets signed.</string>
     <string name="approval_approve">Approve</string>
     <string name="approval_decline">Decline</string>
+    <string name="approval_deny_always">Always deny this app</string>
     <string name="approval_forwarding">Asking your signer…</string>
     <string name="approval_remember_app">Remember this app</string>
+
+    <string name="connected_apps_label">Connected apps</string>
+    <string name="connected_apps_empty">No apps yet.</string>
+    <string name="connected_apps_forget">Forget</string>
+    <string name="connected_apps_state_approved">Approved</string>
+    <string name="connected_apps_state_denied">Denied</string>
 
     <string name="error_not_paired">Cambium is not paired with a signer.</string>
     <string name="error_timeout">The signer did not respond in time.</string>

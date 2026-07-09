@@ -15,6 +15,11 @@ data class Pairing(
     val clientPublicKeyHex: String,
 )
 
+/** A calling app's remembered choice. Absence of any state (`null` from [PairingStore.permissionState])
+ * means "ask": the approval sheet has not been shown yet, or the user has not made a lasting
+ * choice. Approved and denied are mutually exclusive. */
+enum class AppPermissionState { APPROVED, DENIED }
+
 /**
  * Persists the single Heartwood pairing and the per-app approval set in Android
  * Keystore-backed EncryptedSharedPreferences. Cambium supports exactly one paired signer
@@ -90,15 +95,53 @@ class PairingStore(context: Context) {
         prefs.edit().clear().apply()
     }
 
-    /** Remembers that [packageName] may use the paired signer without asking again. */
+    /** Remembers that [packageName] may use the paired signer without asking again. Clears any
+     * previous denial -- approved and denied are mutually exclusive. */
     fun approve(packageName: String) {
-        val updated = approvedPackages() + packageName
-        prefs.edit().putStringSet(KEY_ALLOWED_PACKAGES, updated).apply()
+        prefs.edit()
+            .putStringSet(KEY_ALLOWED_PACKAGES, approvedPackages() + packageName)
+            .putStringSet(KEY_DENIED_PACKAGES, deniedPackages() - packageName)
+            .apply()
+    }
+
+    /** Remembers that [packageName] must never use the paired signer without asking again.
+     * Clears any previous approval. */
+    fun deny(packageName: String) {
+        prefs.edit()
+            .putStringSet(KEY_ALLOWED_PACKAGES, approvedPackages() - packageName)
+            .putStringSet(KEY_DENIED_PACKAGES, deniedPackages() + packageName)
+            .apply()
+    }
+
+    /** Forgets any remembered choice for [packageName]: back to "ask" next time. */
+    fun forget(packageName: String) {
+        prefs.edit()
+            .putStringSet(KEY_ALLOWED_PACKAGES, approvedPackages() - packageName)
+            .putStringSet(KEY_DENIED_PACKAGES, deniedPackages() - packageName)
+            .apply()
     }
 
     fun isApproved(packageName: String): Boolean = approvedPackages().contains(packageName)
 
+    fun isDenied(packageName: String): Boolean = deniedPackages().contains(packageName)
+
+    fun permissionState(packageName: String): AppPermissionState? = when {
+        approvedPackages().contains(packageName) -> AppPermissionState.APPROVED
+        deniedPackages().contains(packageName) -> AppPermissionState.DENIED
+        else -> null
+    }
+
+    /** All remembered choices, for the connected-apps list in `MainActivity`. */
+    fun allPermissionStates(): Map<String, AppPermissionState> =
+        approvedPackages().associateWith { AppPermissionState.APPROVED } +
+            deniedPackages().associateWith { AppPermissionState.DENIED }
+
     private fun approvedPackages(): Set<String> = prefs.getStringSet(KEY_ALLOWED_PACKAGES, emptySet()) ?: emptySet()
+
+    // KEY_ALLOWED_PACKAGES predates the tri-state model and already meant exactly "approved", so
+    // it is reused as-is -- an existing approved set needs no migration step, it is already
+    // correct under the new APPROVED/DENIED/ask model. KEY_DENIED_PACKAGES is new.
+    private fun deniedPackages(): Set<String> = prefs.getStringSet(KEY_DENIED_PACKAGES, emptySet()) ?: emptySet()
 
     /** Persisted alongside the pairing, not tied to any one activity/service instance -- read by
      * [dev.forgesworn.cambium.service.HeartwoodKeepAliveService], [dev.forgesworn.cambium.service.BootReceiver]
@@ -117,6 +160,7 @@ class PairingStore(context: Context) {
         const val KEY_CLIENT_SECRET = "client_secret_key_hex"
         const val KEY_CLIENT_PUBKEY = "client_public_key_hex"
         const val KEY_ALLOWED_PACKAGES = "allowed_packages"
+        const val KEY_DENIED_PACKAGES = "denied_packages"
         const val KEY_KEEP_ALIVE_ENABLED = "keep_alive_enabled"
         const val RELAY_DELIMITER = "\n"
     }

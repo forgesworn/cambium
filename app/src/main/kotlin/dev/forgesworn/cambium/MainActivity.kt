@@ -14,6 +14,8 @@ import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanIntentResult
 import com.journeyapps.barcodescanner.ScanOptions
 import dev.forgesworn.cambium.databinding.ActivityMainBinding
+import dev.forgesworn.cambium.databinding.ItemConnectedAppBinding
+import dev.forgesworn.cambium.pairing.AppPermissionState
 import dev.forgesworn.cambium.pairing.BunkerUri
 import dev.forgesworn.cambium.pairing.BunkerUriParser
 import dev.forgesworn.cambium.pairing.BunkerUriResult
@@ -87,6 +89,31 @@ class MainActivity : AppCompatActivity() {
             binding.signerValue.text = npubDisplay(pairing.signerPubkeyHex)
             binding.relaysValue.text = pairing.relays.joinToString("\n")
             setKeepAliveToggleChecked(pairingStore.isKeepAliveEnabled())
+            renderConnectedApps()
+        }
+    }
+
+    /** The approved/denied package list, with a "Forget" action per row that returns it to "ask". */
+    private fun renderConnectedApps() {
+        val states = pairingStore.allPermissionStates().toList().sortedBy { (packageName, _) -> packageName }
+
+        binding.connectedAppsEmpty.isVisible = states.isEmpty()
+        binding.connectedAppsContainer.removeAllViews()
+
+        for ((packageName, state) in states) {
+            val row = ItemConnectedAppBinding.inflate(layoutInflater, binding.connectedAppsContainer, false)
+            row.appPackageValue.text = packageManager.displayNameFor(packageName)
+            row.appStateValue.text = getString(
+                when (state) {
+                    AppPermissionState.APPROVED -> R.string.connected_apps_state_approved
+                    AppPermissionState.DENIED -> R.string.connected_apps_state_denied
+                }
+            )
+            row.forgetButton.setOnClickListener {
+                pairingStore.forget(packageName)
+                renderConnectedApps()
+            }
+            binding.connectedAppsContainer.addView(row.root)
         }
     }
 

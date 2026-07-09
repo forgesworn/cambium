@@ -28,8 +28,14 @@ Amethyst / Primal / Voyage ...
   rust-nostr ships native code per ABI and cannot load on a host JVM, so anything touching it is
   unusable in plain unit tests. This file stays JVM-testable so the parser can be exercised fast.
 - `pairing/PairingStore.kt` -- persists the single pairing (signer pubkey, relays, secret, our
-  ephemeral client key) and the per-app approval set in `EncryptedSharedPreferences`. Calls into
-  `signer.ClientKeys` for key generation rather than importing rust-nostr itself (see below).
+  ephemeral client key) and the per-app permission state in `EncryptedSharedPreferences`. Calls
+  into `signer.ClientKeys` for key generation rather than importing rust-nostr itself (see below).
+
+  Per-app state is a tri-state -- `AppPermissionState.APPROVED`/`DENIED`, or `null` meaning "ask"
+  -- backed by two independent `StringSet`s (`approve`/`deny` are mutually exclusive; `forget`
+  clears both, back to "ask"). The pre-existing approved set (`allowed_packages`) already meant
+  exactly "approved" before this model existed, so it needed no migration step -- only the new
+  `denied_packages` set is new. `allPermissionStates()` backs `MainActivity`'s connected-apps list.
 - `signer/HeartwoodClient.kt` -- **the only file that imports `rust.nostr.sdk`**. Wraps
   `NostrConnect` (rust-nostr's NIP-46 client) behind the `HeartwoodClient` interface so the
   implementation can be swapped or faked without touching pairing storage or the NIP-55 surface.
@@ -84,16 +90,24 @@ Amethyst / Primal / Voyage ...
   sealed `Nip55Request`. JVM-testable; the actual `android.content.Intent` mapping is a single
   private extension function in `SignerActivity.kt`.
 - `nip55/SignerActivity.kt` -- exported activity handling `nostrsigner:` intents. Genuinely
-  invisible for an already-approved caller: `Theme.Cambium.Invisible` is swapped in via `setTheme`
-  before any window setup, no content view is ever set, and the request just runs on
-  `HeartwoodSession`'s worker with a `setResult`/`finish()` at the end -- daily use showed the
-  translucent/dimmed `Theme.Cambium.Dialog` overlay (still used for the *first* approval of a
-  calling app) appearing on every subsequent request otherwise, not just at login. This
-  approved-or-not decision (`silent`) is made once in `onCreate` and reused for the instance's
+  invisible for a caller with *any* remembered choice, approved or denied: `Theme.Cambium.Invisible`
+  is swapped in via `setTheme` before any window setup, no content view is ever set. An approved
+  caller's request runs on `HeartwoodSession`'s worker with a `setResult`/`finish()` at the end; a
+  denied one is rejected immediately, no Heartwood call at all -- daily use showed the
+  translucent/dimmed `Theme.Cambium.Dialog` overlay (still used only for a caller with *no*
+  remembered choice yet) appearing on every subsequent request otherwise, not just at login. This
+  decision (`silent`/`permissionState`) is made once in `onCreate` and reused for the instance's
   lifetime, not re-evaluated in `onNewIntent`, since swapping a visible theme for an invisible one
   after the window already exists is unreliable. `singleTop` with `onNewIntent` handling, since a
   client can fire a second request before the user dismisses the first (e.g. `sign_event` right
   after `get_public_key`).
+
+  The approval sheet (shown only for "ask") has an "always deny this app" link below the normal
+  Approve/Decline buttons -- a deliberately secondary affordance so a permanent block needs its own
+  action, not an accidental extra tap on Decline. It also renders `get_public_key`'s optional
+  `permissions` extra (see `nip55/RequestedPermissions.kt`) as a summary line with a note that
+  Heartwood's own `ClientPolicy` is the actual authority -- display only, Cambium does not
+  pre-authorise anything from this list.
 - `nip55/SignerProvider.kt` -- exported content provider, the NIP-55 "silent" path. A live test
   showed Amethyst queries this provider for *every* operation once an app is approved, not just
   get_public_key, and can burst around ten concurrent queries while the user is typing (drafts
@@ -123,6 +137,16 @@ Amethyst / Primal / Voyage ...
   caller is always taken from `getCallingPackage`, never from query arguments. Diagnostic logging
   (tag `CambiumProvider`) covers every refusal path and timing for each forward, added during
   live-device debugging and kept deliberately.
+
+  A caller with a *remembered denial* gets `rejected` immediately, for every authority, without
+  ever resolving a pairing or touching the queue -- distinct from a caller with no remembered
+  choice yet (`null`, "try the intent", where they see the approval sheet). `resolveCaller`/
+  `withApprovedCaller` centralise this tri-state check so every `query*` method gets it uniformly.
+- `nip55/RequestedPermissions.kt` -- pure Kotlin parser for `get_public_key`'s optional
+  `permissions` extra (a JSON array of `{ "type": ..., "kind": ... }`) into a display summary for
+  the first-approval sheet. Cambium does not pre-authorise anything from this list; it is shown so
+  the user knows what was asked for, with a note that Heartwood's `ClientPolicy` remains the actual
+  authority.
 - `nip57/Bech32.kt` -- pure Kotlin BIP-173 bech32 encode/decode, deliberately without the spec's
   90-character length recommendation (which exists for Bitcoin-address readability, not
   cryptographic reasons) -- DIP-03's private-zap `anon` tag payload routinely exceeds it. Tested
@@ -159,7 +183,13 @@ Amethyst / Primal / Voyage ...
   no Google Play services, matching the GrapheneOS target. Also hosts the "Keep connection warm"
   toggle -- see `service/HeartwoodKeepAliveService.kt` -- requesting `POST_NOTIFICATIONS` on API 33+
   only when the toggle is switched on, with the same permanent-decline-shows-a-static-hint pattern
-  as the camera permission.
+  as the camera permission; and a connected-apps list (package, state, a "Forget" action that calls
+  `PairingStore.forget` -- back to "ask") built from `PairingStore.allPermissionStates()`, one
+  `item_connected_app.xml` row inflated per entry rather than a `RecyclerView`, since the list is
+  realistically tiny (a handful of paired Nostr clients).
+- `AndroidExtensions.kt` -- `PackageManager.displayNameFor(packageName)`, the app-label lookup
+  (falls back to the raw package string on any failure) shared by `SignerActivity`'s approval sheet
+  and `MainActivity`'s connected-apps list.
 - `service/HeartwoodKeepAliveService.kt` -- optional, off-by-default foreground service that keeps
   the process (and so `HeartwoodSession`'s warm `NostrConnect`) alive between requests, closing the
   previously-tracked "only warm while the process happens to be running" gap. Pings Heartwood every
@@ -189,10 +219,10 @@ Amethyst / Primal / Voyage ...
 
 ## Known gaps (tracked, not yet built)
 
-- Richer per-app permissions (kind-level allow/deny); v1 is a single per-package allow set. There
-  is also no persistent per-app *denial* yet -- declining a request just doesn't approve it, it
-  doesn't block future requests from showing the approval sheet again. `SignerProvider` therefore
-  cannot yet distinguish "not yet approved" from "permanently rejected"; both are `null`.
+- Richer per-app permissions are still kind-agnostic (a whole app is approved or denied, not
+  individual `kind`s or methods); v1's tri-state (`AppPermissionState`) covers the whole-app case.
+  The one-time "Decline" button on the approval sheet still does not remember anything -- only the
+  separate "always deny" link does; a plain Decline shows the sheet again next time.
 - `decrypt_zap_event` only implements the recipient path (decoding a private zap sent *to* the
   paired identity). The sender path -- recognising your own anonymous zaps by regenerating the
   ephemeral key -- needs the raw private key hashed directly, which is permanently impossible over

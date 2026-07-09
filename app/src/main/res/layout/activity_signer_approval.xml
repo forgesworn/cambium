@@ -103,6 +103,48 @@
     </LinearLayout>
 
     <LinearLayout
+        android:id="@+id/permissionsRow"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:orientation="vertical"
+        android:visibility="gone"
+        tools:visibility="visible">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:fontFamily="monospace"
+                android:text="@string/approval_permissions_label"
+                android:textColor="@color/on_background_muted" />
+
+            <TextView
+                android:id="@+id/permissionsValue"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="2"
+                android:fontFamily="monospace"
+                android:textColor="@color/on_background"
+                tools:text="sign_event (kind 1), nip44_decrypt" />
+        </LinearLayout>
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:fontFamily="monospace"
+            android:text="@string/approval_permissions_note"
+            android:textColor="@color/on_background_muted"
+            android:textSize="11sp" />
+    </LinearLayout>
+
+    <LinearLayout
         android:id="@+id/decisionGroup"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
@@ -128,6 +170,21 @@
             android:fontFamily="monospace"
             android:text="@string/approval_approve" />
     </LinearLayout>
+
+    <TextView
+        android:id="@+id/denyAlwaysLink"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center_horizontal"
+        android:layout_marginTop="12dp"
+        android:background="?attr/selectableItemBackground"
+        android:clickable="true"
+        android:focusable="true"
+        android:fontFamily="monospace"
+        android:padding="4dp"
+        android:text="@string/approval_deny_always"
+        android:textColor="@color/danger"
+        android:textSize="12sp" />
 
     <LinearLayout
         android:id="@+id/progressGroup"
