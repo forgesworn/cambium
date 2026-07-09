@@ -23,6 +23,11 @@ import java.util.Base64
  * event; [isValidPrivateZapEvent] is the minimal check that it actually is one (does not verify
  * its signature).
  *
+ * Deliberately no recipient-vs-sender pre-check: the paired identity's real key only succeeds at
+ * this ECDH when it is actually the recipient. If it is the sender instead, the decrypt just fails
+ * (an ordinary, correctly-cached deterministic failure -- see [isValidPrivateZapEvent]'s caller),
+ * which is simpler and no less correct than trying to detect that case up front.
+ *
  * Pure Kotlin: no Android, so this stays JVM-testable, matching BunkerUri.kt/QrPairingScan.kt/
  * DecryptCache.kt.
  *
@@ -32,20 +37,31 @@ import java.util.Base64
  * the raw private key bytes fed directly into a hash function -- not an operation NIP-46 remote
  * signing exposes (Heartwood only exposes get_public_key/sign_event/nip04/nip44, never the key
  * material itself), so it is impossible to do through Cambium regardless of implementation effort.
- * Only the recipient path above is implemented. See CLAUDE.md.
+ * Only the recipient path above is implemented. See CLAUDE.md and README.md.
  */
 sealed interface ZapDecodeResult {
     /** [counterpartyPubkeyHex] is the outer (ephemeral) event's own `pubkey` -- pass this as the
-     * nip04_decrypt counterparty. [nip04Payload] is ready to forward to nip04_decrypt as-is. */
-    data class Forward(val counterpartyPubkeyHex: String, val nip04Payload: String) : ZapDecodeResult
+     * nip04_decrypt counterparty. [nip04Payload] is ready to forward to nip04_decrypt as-is.
+     * [anonTagValue] is the raw, still-bech32-encoded `anon` tag content -- the natural cache key,
+     * since it is exactly the encrypted material, independent of the wrapper event's `id`/`sig`. */
+    data class Forward(
+        val counterpartyPubkeyHex: String,
+        val nip04Payload: String,
+        val anonTagValue: String,
+    ) : ZapDecodeResult
 
-    /** No `anon` tag: this is an ordinary public zap request, nothing to decrypt. Deterministic --
+    /** Structurally broken input: not valid JSON, or missing a `pubkey` field. Deterministic --
      * never worth a relay round trip. */
-    data object NotPrivate : ZapDecodeResult
-
-    /** Malformed input: bad JSON, missing `pubkey`, an `anon` tag that isn't `<bech32>_<bech32>`,
-     * or bech32 with a bad checksum. Also deterministic -- retrying via Heartwood cannot fix it. */
     data class Malformed(val reason: String) : ZapDecodeResult
+
+    /** Valid JSON, but not a kind-9734 zap request. */
+    data object NotAZapRequest : ZapDecodeResult
+
+    /** A kind-9734 request with no `anon` tag: an ordinary public zap, nothing to decrypt. */
+    data object NoAnonTag : ZapDecodeResult
+
+    /** An `anon` tag that isn't `<pzap-bech32>_<iv-bech32>`, or fails bech32 checksum/hrp. */
+    data class MalformedAnon(val reason: String) : ZapDecodeResult
 }
 
 object PrivateZap {
@@ -54,30 +70,35 @@ object PrivateZap {
         val event = runCatching { Json.parseToJsonElement(eventJson).jsonObject }
             .getOrElse { return ZapDecodeResult.Malformed("event is not valid JSON") }
 
+        val kind = runCatching { event["kind"]?.jsonPrimitive?.intOrNull }.getOrNull()
+        if (kind != ZAP_REQUEST_KIND) {
+            return ZapDecodeResult.NotAZapRequest
+        }
+
         val pubkey = runCatching { event["pubkey"]?.jsonPrimitive?.content }.getOrNull()
             ?: return ZapDecodeResult.Malformed("event has no pubkey")
 
-        val tags = event["tags"]?.jsonArray ?: return ZapDecodeResult.NotPrivate
+        val tags = event["tags"]?.jsonArray ?: return ZapDecodeResult.NoAnonTag
         val anonValue = runCatching {
             tags.asSequence()
                 .mapNotNull { it as? JsonArray }
                 .firstOrNull { tag -> tag.getOrNull(0)?.jsonPrimitive?.content == "anon" }
                 ?.getOrNull(1)?.jsonPrimitive?.content
-        }.getOrNull() ?: return ZapDecodeResult.NotPrivate
+        }.getOrNull() ?: return ZapDecodeResult.NoAnonTag
 
         val separator = anonValue.indexOf('_')
         if (separator <= 0 || separator == anonValue.length - 1) {
-            return ZapDecodeResult.Malformed("anon tag is not <pzap-bech32>_<iv-bech32>")
+            return ZapDecodeResult.MalformedAnon("anon tag is not <pzap-bech32>_<iv-bech32>")
         }
 
         val ciphertextBytes = Bech32.decode(anonValue.substring(0, separator), expectedHrp = "pzap")
-            .getOrElse { return ZapDecodeResult.Malformed("bad pzap bech32: ${it.message}") }
+            .getOrElse { return ZapDecodeResult.MalformedAnon("bad pzap bech32: ${it.message}") }
         val ivBytes = Bech32.decode(anonValue.substring(separator + 1), expectedHrp = "iv")
-            .getOrElse { return ZapDecodeResult.Malformed("bad iv bech32: ${it.message}") }
+            .getOrElse { return ZapDecodeResult.MalformedAnon("bad iv bech32: ${it.message}") }
 
         val encoder = Base64.getEncoder()
         val nip04Payload = "${encoder.encodeToString(ciphertextBytes)}?iv=${encoder.encodeToString(ivBytes)}"
-        return ZapDecodeResult.Forward(pubkey, nip04Payload)
+        return ZapDecodeResult.Forward(pubkey, nip04Payload, anonValue)
     }
 
     /** True when [plaintext] parses as JSON with `"kind": 9733` -- does not verify its signature. */
@@ -85,5 +106,6 @@ object PrivateZap {
         Json.parseToJsonElement(plaintext).jsonObject["kind"]?.jsonPrimitive?.intOrNull == PRIVATE_ZAP_KIND
     }.getOrDefault(false)
 
+    const val ZAP_REQUEST_KIND = 9734
     const val PRIVATE_ZAP_KIND = 9733
 }

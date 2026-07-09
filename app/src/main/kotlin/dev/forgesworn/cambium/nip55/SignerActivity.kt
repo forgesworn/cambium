@@ -181,18 +181,23 @@ class SignerActivity : AppCompatActivity() {
 
     /**
      * `decrypt_zap_event`: [PrivateZap.decodeAnonTag] runs locally first (no relay call) to turn
-     * the zap request's `anon` tag into an ordinary nip04_decrypt call. A public zap (no `anon`
-     * tag) or a malformed one is rejected immediately -- there is nothing Heartwood could do with
-     * either. On a successful decrypt, [PrivateZap.isValidPrivateZapEvent] checks the plaintext is
-     * actually a kind 9733 event before it is handed back; a plaintext that fails that check is
-     * treated as a decrypt failure using the same "decryption failed" wording the firmware uses,
-     * so it is picked up by the existing deterministic-failure/caching logic without any special
-     * casing here.
+     * the zap request's `anon` tag into an ordinary nip04_decrypt call. Anything that isn't a
+     * decryptable private zap -- wrong kind, no `anon` tag (an ordinary public zap), a malformed
+     * `anon` tag, or a structurally broken event -- is rejected immediately; there is nothing
+     * Heartwood could do with any of them. On a successful decrypt, [PrivateZap.isValidPrivateZapEvent]
+     * checks the plaintext is actually a kind 9733 event before it is handed back; a plaintext
+     * that fails that check is treated as a decrypt failure using the same "decryption failed"
+     * wording the firmware uses, so it is picked up by the existing deterministic-failure/caching
+     * logic without any special casing here.
      */
     private fun handleDecryptZapEvent(pairing: Pairing, request: Nip55Request.DecryptZapEvent) {
         val decoded = PrivateZap.decodeAnonTag(request.eventJson)
         val forward = when (decoded) {
-            is ZapDecodeResult.NotPrivate, is ZapDecodeResult.Malformed -> {
+            is ZapDecodeResult.Malformed,
+            is ZapDecodeResult.NotAZapRequest,
+            is ZapDecodeResult.NoAnonTag,
+            is ZapDecodeResult.MalformedAnon,
+            -> {
                 rejectAndFinish(request.id)
                 return
             }
@@ -201,7 +206,9 @@ class SignerActivity : AppCompatActivity() {
 
         if (!silent) binding.progressGroup.isVisible = true
         lifecycleScope.launch {
-            val cacheable = CacheableDecrypt(CacheableDecrypt.Method.ZAP, forward.counterpartyPubkeyHex, request.eventJson)
+            // Keyed on the anon tag itself (the actual encrypted material), not the wrapper
+            // event's id/sig, so re-requesting the same zap under a re-serialised wrapper still hits.
+            val cacheable = CacheableDecrypt(CacheableDecrypt.Method.ZAP, forward.counterpartyPubkeyHex, forward.anonTagValue)
             val result = HeartwoodSession.withClient(pairing, cacheable) { client ->
                 when (val decrypted = client.nip04Decrypt(forward.counterpartyPubkeyHex, forward.nip04Payload)) {
                     is HeartwoodResult.Success ->

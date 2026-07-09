@@ -151,13 +151,14 @@ class SignerProvider : ContentProvider() {
 
     /**
      * `decrypt_zap_event`: [PrivateZap.decodeAnonTag] runs locally first (no relay call, no queue
-     * slot) to turn the zap request's `anon` tag into an ordinary nip04_decrypt call. A public zap
-     * (no `anon` tag) or a malformed one answers `rejected` immediately -- both are deterministic,
-     * local problems that a relay round trip cannot fix. On a successful decrypt,
-     * [PrivateZap.isValidPrivateZapEvent] checks the plaintext is actually a kind 9733 event; a
-     * plaintext that fails that check is turned into a failure using the same "decryption failed"
-     * wording the firmware uses, so it flows through the existing deterministic-failure/caching
-     * logic in [forward] without any special casing there.
+     * slot) to turn the zap request's `anon` tag into an ordinary nip04_decrypt call. Anything
+     * that isn't a decryptable private zap -- wrong kind, no `anon` tag (an ordinary public zap),
+     * a malformed `anon` tag, or a structurally broken event -- answers `rejected` immediately;
+     * all are deterministic, local problems that a relay round trip cannot fix. On a successful
+     * decrypt, [PrivateZap.isValidPrivateZapEvent] checks the plaintext is actually a kind 9733
+     * event; a plaintext that fails that check is turned into a failure using the same
+     * "decryption failed" wording the firmware uses, so it flows through the existing
+     * deterministic-failure/caching logic in [forward] without any special casing there.
      */
     private fun queryDecryptZapEvent(projection: Array<out String>?): Cursor? {
         val caller = resolveApprovedCaller() ?: return null
@@ -165,16 +166,27 @@ class SignerProvider : ContentProvider() {
         val eventJson = requirePayload(caller, projection) ?: return null
 
         return when (val decoded = PrivateZap.decodeAnonTag(eventJson)) {
-            is ZapDecodeResult.NotPrivate -> {
-                Log.i(TAG, "silent decrypt_zap_event from $caller declined: public zap (no anon tag)")
-                rejectedCursor()
-            }
             is ZapDecodeResult.Malformed -> {
                 Log.i(TAG, "silent decrypt_zap_event from $caller declined: ${decoded.reason}")
                 rejectedCursor()
             }
+            is ZapDecodeResult.NotAZapRequest -> {
+                Log.i(TAG, "silent decrypt_zap_event from $caller declined: not a kind 9734 event")
+                rejectedCursor()
+            }
+            is ZapDecodeResult.NoAnonTag -> {
+                Log.i(TAG, "silent decrypt_zap_event from $caller declined: public zap (no anon tag)")
+                rejectedCursor()
+            }
+            is ZapDecodeResult.MalformedAnon -> {
+                Log.i(TAG, "silent decrypt_zap_event from $caller declined: ${decoded.reason}")
+                rejectedCursor()
+            }
             is ZapDecodeResult.Forward -> {
-                val cacheable = CacheableDecrypt(CacheableDecrypt.Method.ZAP, decoded.counterpartyPubkeyHex, eventJson)
+                // Keyed on the anon tag itself (the actual encrypted material), not the wrapper
+                // event's id/sig, so re-requesting the same zap under a re-serialised wrapper
+                // still hits.
+                val cacheable = CacheableDecrypt(CacheableDecrypt.Method.ZAP, decoded.counterpartyPubkeyHex, decoded.anonTagValue)
                 forward(
                     caller,
                     pairing,

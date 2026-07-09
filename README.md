@@ -69,9 +69,22 @@ Install directly with an attached device:
 ## Status
 
 Pairing (scan or paste), NIP-46 client with a shared kept-warm session, NIP-55 intent handling
-(`get_public_key`, `sign_event`, `nip04`/`nip44` encrypt/decrypt), and a silent content-provider
-path that forwards most of those methods to Heartwood without a visible popup for already-approved
-apps. Richer per-app permissions and multi-signer support are later milestones.
+(`get_public_key`, `sign_event`, `nip04`/`nip44` encrypt/decrypt, `decrypt_zap_event`), and a
+silent content-provider path that forwards most of those methods to Heartwood without a visible
+popup for already-approved apps. Richer per-app permissions and multi-signer support are later
+milestones.
+
+### Private zaps
+
+`decrypt_zap_event` decodes DIP-03 "private zaps" (a de facto convention used by Damus, Amethyst
+and Amber -- not part of the core NIP-57 spec, which explicitly defers zap privacy to future work)
+for the **recipient** of a private zap: Cambium unpacks the zap request's encrypted `anon` tag and
+asks Heartwood to decrypt it, the same as any other nip04_decrypt.
+
+*Viewing your own sent private zaps is not supported and never will be through Cambium.* DIP-03's
+sender-side path needs an ephemeral key derived as `sha256(your raw private key + note id +
+created_at)` -- that requires the raw private key itself, which a NIP-46 remote signer like
+Heartwood never exposes over the wire. Attempting it just fails as an ordinary decrypt error.
 
 ## Licence
 

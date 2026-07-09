@@ -13,6 +13,9 @@ class PrivateZapTest {
     // (https://github.com/damus-io/dips/blob/master/03.md, "Example Private Zap Request Event"
     // and "Example Private Zap Event") -- real production data, not invented test vectors.
 
+    private val privateZapAnonTagValue =
+        "pzap1n0pkup9fxc9w3yd2tvfr03shffrapfz8rtzu9kkq6v222jw5rgtp9myyh378gdtwptpnls8f0rv0v2dyapgt7sssu4263puepgshsj9g4u9y5lvfv9fsujlgvywsuejvftlfzcanu5fmnf2a3grlelwe8v0z4mdkyhr9mddxpswtvp7mtlc4acdys7740t0x5ej36qs5amfzwz5dpwlaf4gsl69lzhqdgc3hgt62xw4y8384a6zvsnf96l3ardkd2vkk6cm77p6v7ul3gwgjr7tra7uzpkvf4hncxp5qd75h6cdadf6n2d7edhc3dyyy7qpdka2mgqhvckhzhd2gcaux34jyw6qfk3nxhaaqs6pqkuy6z34wu2p2fvqqvg55eyqlrndjlgekm7xu08lqc3g0nje59uqu0adqerv2puypez3eck9xzupg4vxyfclk37qfqxra8nt4tk9ydc2tzhpnl4wpf7jf2nrkchknfnfgmezfyqe074dexe5mkxgw67j7zn8s24tae8tml747qnq0edw5jxsx6xfc4qhshf3man0s5duw6wm63ue8fese8c7hanqzphjna3g0ee4jgpwceqzk9jgrvf9rnkt89tkvh75qm65nvtqpud30vecwlqzdlu9fhcaj7jv89gpy32y2k828vsj7x8hmlq55rleeq23e062apenymv96tkvltv266ww6kly2q2t7k6z_iv189a0s9afn7ehz4gpeanueh56cv6t79qk"
+
     private val privateZapRequestEventJson = """
         {
           "id": "4ef9df0a6c7dd8b761145acc7055ae077df716bd8c374496d1f598c5b63bcd7a",
@@ -30,7 +33,7 @@ class PrivateZapTest {
             ],
             [
               "anon",
-              "pzap1n0pkup9fxc9w3yd2tvfr03shffrapfz8rtzu9kkq6v222jw5rgtp9myyh378gdtwptpnls8f0rv0v2dyapgt7sssu4263puepgshsj9g4u9y5lvfv9fsujlgvywsuejvftlfzcanu5fmnf2a3grlelwe8v0z4mdkyhr9mddxpswtvp7mtlc4acdys7740t0x5ej36qs5amfzwz5dpwlaf4gsl69lzhqdgc3hgt62xw4y8384a6zvsnf96l3ardkd2vkk6cm77p6v7ul3gwgjr7tra7uzpkvf4hncxp5qd75h6cdadf6n2d7edhc3dyyy7qpdka2mgqhvckhzhd2gcaux34jyw6qfk3nxhaaqs6pqkuy6z34wu2p2fvqqvg55eyqlrndjlgekm7xu08lqc3g0nje59uqu0adqerv2puypez3eck9xzupg4vxyfclk37qfqxra8nt4tk9ydc2tzhpnl4wpf7jf2nrkchknfnfgmezfyqe074dexe5mkxgw67j7zn8s24tae8tml747qnq0edw5jxsx6xfc4qhshf3man0s5duw6wm63ue8fese8c7hanqzphjna3g0ee4jgpwceqzk9jgrvf9rnkt89tkvh75qm65nvtqpud30vecwlqzdlu9fhcaj7jv89gpy32y2k828vsj7x8hmlq55rleeq23e062apenymv96tkvltv266ww6kly2q2t7k6z_iv189a0s9afn7ehz4gpeanueh56cv6t79qk"
+              "$privateZapAnonTagValue"
             ]
           ],
           "content": "",
@@ -61,6 +64,7 @@ class PrivateZapTest {
 
         val forward = assertIs<ZapDecodeResult.Forward>(result)
         assertEquals("79d4773fded68a3ea9a30f13e651ff83e150957dacb0c2f6038883d837e1b17b", forward.counterpartyPubkeyHex)
+        assertEquals(privateZapAnonTagValue, forward.anonTagValue)
 
         val (ciphertextB64, ivPart) = forward.nip04Payload.split("?iv=")
         val ciphertext = Base64.getDecoder().decode(ciphertextB64)
@@ -70,15 +74,27 @@ class PrivateZapTest {
     }
 
     @Test
-    fun `a request with no anon tag is not private`() {
-        val publicZap = """{"pubkey":"${"a".repeat(64)}","tags":[["p","${"b".repeat(64)}"]]}"""
-        assertIs<ZapDecodeResult.NotPrivate>(PrivateZap.decodeAnonTag(publicZap))
+    fun `a kind-9734 request with no anon tag has nothing to decrypt`() {
+        val publicZap = """{"kind":9734,"pubkey":"${"a".repeat(64)}","tags":[["p","${"b".repeat(64)}"]]}"""
+        assertIs<ZapDecodeResult.NoAnonTag>(PrivateZap.decodeAnonTag(publicZap))
     }
 
     @Test
-    fun `a request with no tags array at all is not private`() {
-        val noTags = """{"pubkey":"${"a".repeat(64)}"}"""
-        assertIs<ZapDecodeResult.NotPrivate>(PrivateZap.decodeAnonTag(noTags))
+    fun `a kind-9734 request with no tags array at all has nothing to decrypt`() {
+        val noTags = """{"kind":9734,"pubkey":"${"a".repeat(64)}"}"""
+        assertIs<ZapDecodeResult.NoAnonTag>(PrivateZap.decodeAnonTag(noTags))
+    }
+
+    @Test
+    fun `an event that is not kind 9734 is not a zap request, even with an anon-looking tag`() {
+        val wrongKind = """{"kind":1,"pubkey":"${"a".repeat(64)}","tags":[["anon","pzap1x_iv1x"]]}"""
+        assertIs<ZapDecodeResult.NotAZapRequest>(PrivateZap.decodeAnonTag(wrongKind))
+    }
+
+    @Test
+    fun `an event with no kind field at all is not a zap request`() {
+        val noKind = """{"pubkey":"${"a".repeat(64)}"}"""
+        assertIs<ZapDecodeResult.NotAZapRequest>(PrivateZap.decodeAnonTag(noKind))
     }
 
     @Test
@@ -87,21 +103,21 @@ class PrivateZapTest {
     }
 
     @Test
-    fun `missing pubkey is malformed`() {
-        val noPubkey = """{"tags":[["anon","pzap1x_iv1x"]]}"""
+    fun `a kind-9734 event missing pubkey is malformed`() {
+        val noPubkey = """{"kind":9734,"tags":[["anon","pzap1x_iv1x"]]}"""
         assertIs<ZapDecodeResult.Malformed>(PrivateZap.decodeAnonTag(noPubkey))
     }
 
     @Test
     fun `an anon tag without an underscore separator is malformed`() {
-        val noUnderscore = """{"pubkey":"${"a".repeat(64)}","tags":[["anon","pzap1nopeiv1nope"]]}"""
-        assertIs<ZapDecodeResult.Malformed>(PrivateZap.decodeAnonTag(noUnderscore))
+        val noUnderscore = """{"kind":9734,"pubkey":"${"a".repeat(64)}","tags":[["anon","pzap1nopeiv1nope"]]}"""
+        assertIs<ZapDecodeResult.MalformedAnon>(PrivateZap.decodeAnonTag(noUnderscore))
     }
 
     @Test
     fun `an anon tag with a corrupted bech32 checksum is malformed`() {
         val corruptedAnon = privateZapRequestEventJson.replace("v6t79qk", "v6t79qp")
-        assertIs<ZapDecodeResult.Malformed>(PrivateZap.decodeAnonTag(corruptedAnon))
+        assertIs<ZapDecodeResult.MalformedAnon>(PrivateZap.decodeAnonTag(corruptedAnon))
     }
 
     @Test
