@@ -1,7 +1,9 @@
 # Cambium
 
+[![GitHub Sponsors](https://img.shields.io/github/sponsors/TheCryptoDonkey?logo=githubsponsors&color=ea4aaa&label=Sponsor)](https://github.com/sponsors/TheCryptoDonkey)
+
 An Android [NIP-55](https://github.com/nostr-protocol/nips/blob/master/55.md) signer that holds
-no user keys. Every signing request is proxied to your [Heartwood](../heartwood-esp32) hardware
+no user keys. Every signing request is proxied to your [Heartwood](https://github.com/forgesworn/heartwood-esp32) hardware
 signer over [NIP-46](https://github.com/nostr-protocol/nips/blob/master/46.md) (Nostr relays).
 The name follows the tree: cambium is the living layer between bark and the wood.
 
