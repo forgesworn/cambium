@@ -1,7 +1,20 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.serialization)
+}
+
+// Release signing credentials live outside the repo entirely (see .gitignore's signing block):
+// a plain properties file (storeFile/storePassword/keyAlias/keyPassword), defaulting to
+// ~/keystores/cambium-release.credentials, overridable via CAMBIUM_SIGNING_PROPERTIES. When the
+// file is absent (CI, other machines), the release build type simply stays unsigned.
+val releaseSigning = Properties().apply {
+    val path = System.getenv("CAMBIUM_SIGNING_PROPERTIES")
+        ?: "${System.getProperty("user.home")}/keystores/cambium-release.credentials"
+    val file = File(path)
+    if (file.exists()) file.inputStream().use { load(it) }
 }
 
 android {
@@ -12,8 +25,8 @@ android {
         applicationId = "dev.forgesworn.cambium"
         minSdk = 27
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.2.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -22,10 +35,24 @@ android {
         }
     }
 
+    signingConfigs {
+        create("release") {
+            releaseSigning.getProperty("storeFile")?.let { path ->
+                storeFile = file(path)
+                storePassword = releaseSigning.getProperty("storePassword")
+                keyAlias = releaseSigning.getProperty("keyAlias")
+                keyPassword = releaseSigning.getProperty("keyPassword")
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            if (releaseSigning.getProperty("storeFile") != null) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
 

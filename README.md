@@ -51,6 +51,23 @@ Amethyst / Primal / Voyage ...
 Signing takes one relay round trip (roughly half a second to a couple of seconds) since every
 request goes out to Heartwood and back.
 
+## Install
+
+Grab the signed APK from [GitHub Releases](https://github.com/forgesworn/cambium/releases), or
+point [Obtainium](https://github.com/ImranR98/Obtainium) at this repository for automatic update
+tracking. Chrome is not needed; Cambium runs on any Android 8.1+ device, including GrapheneOS
+(no Google Play services, no Firebase, no analytics).
+
+Verify the APK signature with [AppVerifier](https://github.com/soupslurpr/AppVerifier) before
+installing:
+
+```
+dev.forgesworn.cambium
+9E:A1:88:EF:A9:01:5F:7E:7F:90:E1:88:8F:58:6F:52:7B:2A:0E:8A:6D:CD:B3:99:1E:41:FB:4F:14:EE:EF:C6
+```
+
+Releases before 0.2.0 were never published; the 0.2.0 key is the trust root.
+
 ## Build
 
 Requires Android SDK (`sdk.dir` in `local.properties`) and JDK 21.
