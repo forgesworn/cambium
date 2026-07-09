@@ -2,12 +2,17 @@ package dev.forgesworn.cambium.signer
 
 import dev.forgesworn.cambium.pairing.BunkerUri
 import dev.forgesworn.cambium.pairing.Pairing
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.TimeoutCancellationException
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import rust.nostr.sdk.Keys
 import rust.nostr.sdk.NostrConnect
 import rust.nostr.sdk.NostrConnectUri
@@ -17,6 +22,8 @@ import rust.nostr.sdk.RelayOptions
 import rust.nostr.sdk.SecretKey
 import rust.nostr.sdk.UnsignedEvent
 import java.time.Duration
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * This is the only file in Cambium that imports `rust.nostr.sdk`. Everything else talks to
@@ -79,16 +86,20 @@ class RustNostrHeartwoodClient : HeartwoodClient {
     private var session: NostrConnect? = null
 
     override suspend fun connect(bunkerUri: String, clientSecretKeyHex: String): HeartwoodResult<String> =
-        withTimeout(CALL_TIMEOUT_MILLIS) {
-            heartwoodCatch {
-                withContext(Dispatchers.IO) {
-                    val uri = NostrConnectUri.parse(bunkerUri)
-                    val keys = Keys(SecretKey.parse(clientSecretKeyHex))
-                    val client = NostrConnect(uri, keys, CALL_TIMEOUT, RelayOptions())
-                    session?.close()
-                    session = client
-                    client.getPublicKey().toHex()
-                }
+        heartwoodCatch {
+            // NonCancellable: a live test showed a `withTimeoutOrNull` cancelling a coroutine
+            // mid-FFI-call left the process wedged (native, no Java exception). rust-nostr's own
+            // NostrConnect constructor already takes a Duration bounding each relay round trip
+            // internally, so there is no need for a JVM-side timeout that could cancel this call
+            // out from under the native code -- see HeartwoodSession for where callers actually
+            // get bounded-wait behaviour instead.
+            withContext(NonCancellable + Dispatchers.IO) {
+                val uri = NostrConnectUri.parse(bunkerUri)
+                val keys = Keys(SecretKey.parse(clientSecretKeyHex))
+                val client = NostrConnect(uri, keys, CALL_TIMEOUT, RelayOptions())
+                session?.close()
+                session = client
+                client.getPublicKey().toHex()
             }
         }
 
@@ -120,13 +131,13 @@ class RustNostrHeartwoodClient : HeartwoodClient {
 
     private suspend fun withSession(block: suspend (NostrConnect) -> String): HeartwoodResult<String> {
         val client = session ?: return HeartwoodResult.Failure(HeartwoodError.NotConnected)
-        return withTimeout(CALL_TIMEOUT_MILLIS) {
-            heartwoodCatch { withContext(Dispatchers.IO) { block(client) } }
+        return heartwoodCatch {
+            // See the comment in connect(): never wrap a live FFI call in a JVM-cancellable timeout.
+            withContext(NonCancellable + Dispatchers.IO) { block(client) }
         }
     }
 
     private companion object {
-        const val CALL_TIMEOUT_MILLIS = 20_000L
         val CALL_TIMEOUT: Duration = Duration.ofSeconds(20)
     }
 }
@@ -150,59 +161,165 @@ fun npubDisplay(pubkeyHex: String): String = runCatching {
 }.getOrElse { "${pubkeyHex.take(8)}…${pubkeyHex.takeLast(8)}" }
 
 /**
- * Application-scoped, lazily-connected Heartwood session, shared by [dev.forgesworn.cambium.MainActivity]
- * (after pairing), [dev.forgesworn.cambium.nip55.SignerActivity] and
- * [dev.forgesworn.cambium.nip55.SignerProvider]. A live test against a real device showed building a
- * fresh `NostrConnect` (and its relay pool) per request cost multiple seconds each; this object
- * holds exactly one connected client for the process and reuses it. Guarded by a mutex since the
- * content provider and the activity can both call in from different threads at once.
+ * Application-scoped Heartwood session shared by [dev.forgesworn.cambium.nip55.SignerActivity]
+ * and [dev.forgesworn.cambium.nip55.SignerProvider]. Two problems surfaced in a live test against
+ * a real device under load (Amethyst bursting ~10 provider queries while the user typed a reply):
+ *
+ * 1. **Concurrency.** The previous mutex-guarded design still let a caller's own timeout
+ *    (`withTimeoutOrNull` in the content provider) cancel the *same coroutine* that was in the
+ *    middle of an FFI call, because the mutex only serialised entry into the critical section --
+ *    it did not stop the calling coroutine's own cancellation from reaching straight through it
+ *    into `operation(...)`. Two requests came back `Protocol(unauthorised)` (consistent with a
+ *    half-torn-down rust-nostr call), and the process died outright once (no Java exception --
+ *    suspected native wedge from a cancelled in-flight call).
+ * 2. **Queueing.** Everything shared one lock with no admission control, so a burst of silent
+ *    queries piled up behind a 1.5-2s relay round trip and the tail ones blew their timeout,
+ *    falling back to the visible intent -- a popup storm of its own, just delayed.
+ *
+ * The fix: every Heartwood call is handed to exactly one dedicated worker coroutine, running on
+ * its own single-thread dispatcher, in a [CoroutineScope] with no parent -- nothing a caller does
+ * can ever cancel work already handed to it. A caller gets its result via a [CompletableDeferred]
+ * and waits on that (a safe cancellation point: giving up just stops waiting, the queued job runs
+ * to completion regardless, which still warms the session for next time). [trySilent] additionally
+ * sheds load: if [MAX_QUEUED] calls are already queued or running, it refuses new silent-path work
+ * immediately instead of adding a fourth. [withClient] (the intent path) always queues -- the user
+ * is already looking at a progress overlay -- but shares the exact same worker, so a popup can
+ * never run concurrently with a silent-path call either.
  */
 object HeartwoodSession {
-    private val mutex = Mutex()
+    private const val MAX_QUEUED = 3
+    private const val SILENT_TIMEOUT_MILLIS = 15_000L
+    private const val INTENT_TIMEOUT_MILLIS = 20_000L
+
+    private val workerDispatcher = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "heartwood-worker").apply { isDaemon = true }
+    }.asCoroutineDispatcher()
+
+    // No parent job: nothing outside this object can cancel work already handed to the worker.
+    private val workerScope = CoroutineScope(SupervisorJob() + workerDispatcher)
+
     private var client: RustNostrHeartwoodClient? = null
     private var connectedSignerPubkey: String? = null
+    private val queueDepth = AtomicInteger(0)
+
+    private sealed interface Message {
+        data class Call(
+            val pairing: Pairing,
+            val operation: suspend (HeartwoodClient) -> HeartwoodResult<String>,
+            val deferred: CompletableDeferred<HeartwoodResult<String>>,
+        ) : Message
+
+        data class Shutdown(val deferred: CompletableDeferred<Unit>) : Message
+    }
+
+    private val inbox = Channel<Message>(capacity = Channel.UNLIMITED)
+
+    init {
+        workerScope.launch {
+            for (message in inbox) {
+                when (message) {
+                    is Message.Call -> {
+                        val result = runCatching { deliver(message.pairing, message.operation) }
+                            .getOrElse { e -> HeartwoodResult.Failure(HeartwoodError.Protocol(e.message ?: "worker error")) }
+                        queueDepth.decrementAndGet()
+                        message.deferred.complete(result)
+                    }
+                    is Message.Shutdown -> {
+                        client?.disconnect()
+                        client = null
+                        connectedSignerPubkey = null
+                        message.deferred.complete(Unit)
+                    }
+                }
+            }
+        }
+    }
 
     /**
-     * Runs [operation] against a connected client for [pairing], reconnecting first if the held
-     * session is missing or paired to a different signer. If [operation] itself fails, reconnects
-     * once and retries before surfacing the failure -- covers a relay dropping the connection
-     * between requests.
+     * Silent path ([dev.forgesworn.cambium.nip55.SignerProvider]'s `query()`): admission-controlled.
+     * Returns `null` immediately, without joining the queue, if [MAX_QUEUED] calls are already
+     * queued or running. A caller that gives up at its own timeout does not cancel the underlying
+     * job -- it keeps running on the worker regardless.
+     */
+    suspend fun trySilent(
+        pairing: Pairing,
+        operation: suspend (HeartwoodClient) -> HeartwoodResult<String>,
+    ): HeartwoodResult<String>? {
+        if (!reserveSlot()) return null
+        return submitAndAwait(pairing, SILENT_TIMEOUT_MILLIS, operation)
+    }
+
+    /**
+     * Intent path ([dev.forgesworn.cambium.nip55.SignerActivity]): always queues -- the user is
+     * already looking at a progress overlay -- but shares the same single worker as [trySilent],
+     * so it can never run concurrently with a silent-path call.
      */
     suspend fun withClient(
         pairing: Pairing,
         operation: suspend (HeartwoodClient) -> HeartwoodResult<String>,
-    ): HeartwoodResult<String> = mutex.withLock {
+    ): HeartwoodResult<String> {
+        queueDepth.incrementAndGet()
+        return submitAndAwait(pairing, INTENT_TIMEOUT_MILLIS, operation)
+            ?: HeartwoodResult.Failure(HeartwoodError.Timeout)
+    }
+
+    /** Drops the held session. Call on unpair, and after persisting a freshly-tested pairing. */
+    suspend fun shutdown() {
+        val deferred = CompletableDeferred<Unit>()
+        inbox.send(Message.Shutdown(deferred))
+        deferred.await()
+    }
+
+    private fun reserveSlot(): Boolean {
+        while (true) {
+            val current = queueDepth.get()
+            if (current >= MAX_QUEUED) return false
+            if (queueDepth.compareAndSet(current, current + 1)) return true
+        }
+    }
+
+    private suspend fun submitAndAwait(
+        pairing: Pairing,
+        timeoutMillis: Long,
+        operation: suspend (HeartwoodClient) -> HeartwoodResult<String>,
+    ): HeartwoodResult<String>? {
+        val deferred = CompletableDeferred<HeartwoodResult<String>>()
+        inbox.send(Message.Call(pairing, operation, deferred))
+        // Only this wait is cancellable -- the job itself runs on the worker regardless of
+        // whether we give up on it here (see the class doc for why that matters).
+        return withTimeoutOrNull(timeoutMillis) { deferred.await() }
+    }
+
+    /** Runs on the worker thread only: reconnects if the held session is missing/stale, then runs
+     * [operation], retrying once against a fresh connection if it fails. */
+    private suspend fun deliver(
+        pairing: Pairing,
+        operation: suspend (HeartwoodClient) -> HeartwoodResult<String>,
+    ): HeartwoodResult<String> {
         val cachedClient = client
         val connected = if (cachedClient != null && connectedSignerPubkey == pairing.signerPubkeyHex) {
             HeartwoodResult.Success(cachedClient)
         } else {
-            reconnectLocked(pairing)
+            reconnect(pairing)
         }
 
         val active = when (connected) {
             is HeartwoodResult.Success -> connected.value
-            is HeartwoodResult.Failure -> return@withLock connected
+            is HeartwoodResult.Failure -> return connected
         }
 
         val result = operation(active)
-        if (result is HeartwoodResult.Success) return@withLock result
+        if (result is HeartwoodResult.Success) return result
 
-        val retried = when (val reconnected = reconnectLocked(pairing)) {
+        val retried = when (val reconnected = reconnect(pairing)) {
             is HeartwoodResult.Success -> reconnected.value
-            is HeartwoodResult.Failure -> return@withLock result
+            is HeartwoodResult.Failure -> return result
         }
-        operation(retried)
+        return operation(retried)
     }
 
-    /** Drops the held session. Call on unpair, and after persisting a freshly-tested pairing. */
-    suspend fun shutdown() = mutex.withLock {
-        client?.disconnect()
-        client = null
-        connectedSignerPubkey = null
-    }
-
-    /** Must only be called while holding [mutex]. */
-    private suspend fun reconnectLocked(pairing: Pairing): HeartwoodResult<HeartwoodClient> {
+    /** Runs on the worker thread only. */
+    private suspend fun reconnect(pairing: Pairing): HeartwoodResult<HeartwoodClient> {
         client?.disconnect()
         client = null
         connectedSignerPubkey = null

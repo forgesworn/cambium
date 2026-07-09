@@ -5,45 +5,59 @@ import android.content.ContentValues
 import android.database.Cursor
 import android.database.MatrixCursor
 import android.net.Uri
+import android.os.SystemClock
+import android.util.Log
+import dev.forgesworn.cambium.pairing.Pairing
 import dev.forgesworn.cambium.pairing.PairingStore
 import dev.forgesworn.cambium.signer.HeartwoodClient
+import dev.forgesworn.cambium.signer.HeartwoodError
 import dev.forgesworn.cambium.signer.HeartwoodResult
 import dev.forgesworn.cambium.signer.HeartwoodSession
 import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * The NIP-55 "silent" path: clients query this content provider before falling back to the
- * visible [SignerActivity] intent. A live test against a real Heartwood showed that Amethyst
- * queries this provider for *every* operation once an app is approved, not just get_public_key --
- * the earlier "always null except get_public_key" MVP produced hundreds of visible signer popups,
- * one per operation. SIGN_EVENT, NIP04_*, and NIP44_* now forward to the paired Heartwood from
- * inside `query()`, blocking the caller's binder thread for up to [FORWARD_TIMEOUT_MILLIS] --
- * acceptable because NIP-55 clients call `query()` from a background thread, never the main one.
+ * visible [SignerActivity] intent. A live test against a real Heartwood showed Amethyst queries
+ * this provider for *every* operation once an app is approved, not just get_public_key, and can
+ * burst around ten concurrent queries while the user is typing a reply (drafts plus decrypts).
+ * SIGN_EVENT, NIP04_*, and NIP44_* forward to [HeartwoodSession]'s single admission-controlled
+ * worker from inside `query()` -- acceptable because these clients call `query()` from a
+ * background thread, never the main one. See [HeartwoodSession]'s class doc for why the request
+ * gate and no-cancellation rule exist: an earlier, simpler design let a caller's own timeout
+ * cancel an in-flight rust-nostr call, which is suspected to have wedged the whole process once
+ * under load.
  *
  * `GET_PUBLIC_KEY` is still declared for discovery but always answers `null`: both Amber and
  * Primal force login through the visible intent rather than the silent path, and Cambium matches
  * that rather than the more permissive reading of the NIP-55 text.
  *
- * `DECRYPT_ZAP_EVENT` is declared -- its absence spammed "Failed to find provider info" errors on
- * every zap in Amethyst's feed -- but always answers `null`. Amber implements this as its own
+ * `DECRYPT_ZAP_EVENT` is declared (its absence spammed "Failed to find provider info" errors on
+ * every zap in Amethyst's feed) but always answers `null`. Amber implements this as its own
  * decode: unwrapping the zap request event embedded in a zap receipt and decrypting fields inside
  * it, not a plain nip44_decrypt of the payload against the other-party pubkey. Doing that naively
- * would decrypt the wrong thing, so this MVP does not implement it (known gap, see CLAUDE.md);
- * declaring the authority only silences the discovery error and falls back to the intent, which
- * Cambium also does not yet handle as a distinct method (see [Nip55Request]).
+ * would decrypt the wrong thing, so this MVP does not implement it (known gap, see CLAUDE.md).
  *
  * `PING` answers directly for an already-approved, paired caller ("pong"), so a client can cheaply
  * check "is Cambium here and willing to talk to me" without a relay round trip.
  *
- * The caller is always taken from [getCallingPackage], never from query arguments -- a caller
- * cannot claim to be someone else by passing a different package name in. Forwarding arguments
- * arrive in the `projection` array as `[payload, otherPubkey, currentUser]` -- that is how Amber's
- * real clients pass them, despite the NIP-55 text describing `selectionArgs`.
+ * SIGN_EVENT additionally declines NIP-37 draft events (kind [NIP37_DRAFT_KIND]) immediately,
+ * without forwarding or even joining the queue: Amethyst auto-saves a draft roughly every 2s while
+ * the user types, and forwarding each one to a 1-2s hardware round trip is what buried real
+ * requests behind a flood of drafts in testing.
  *
- * Known gap: an unapproved caller and a permanently-*rejected* caller both get `null` today ("try
- * the intent"); there is no persistent deny-list yet to return a `rejected` cursor column for the
- * latter (see PairingStore).
+ * An explicit policy refusal from Heartwood (error text containing a refusal keyword -- see
+ * [REFUSAL_KEYWORDS]) answers a `rejected` cursor rather than `null`, so a client stops
+ * escalating a policy-blocked request to the visible flow every couple of seconds. Everything
+ * else that cannot be answered here -- an unapproved/unpaired caller, a missing argument, the
+ * worker queue being full, a timeout, or any other failure -- answers `null` (defer to the
+ * intent). The caller is always taken from [getCallingPackage], never from query arguments -- a
+ * caller cannot claim to be someone else by passing a different package name in. Forwarding
+ * arguments arrive in the `projection` array as `[payload, otherPubkey, currentUser]` -- that is
+ * how Amber's real clients pass them, despite the NIP-55 text describing `selectionArgs`.
+ *
+ * Known gap: an unapproved caller and a permanently-*rejected* caller (as opposed to a
+ * policy-refused one, see above) both get `null` today ("try the intent"); there is no persistent
+ * deny-list yet for the latter (see PairingStore).
  */
 class SignerProvider : ContentProvider() {
 
@@ -63,9 +77,7 @@ class SignerProvider : ContentProvider() {
     ): Cursor? = when (uri.authority) {
         PING_AUTHORITY -> queryPing()
 
-        SIGN_EVENT_AUTHORITY -> queryForward(projection, includeEventAndSignature = true) { client, payload, _ ->
-            client.signEvent(payload)
-        }
+        SIGN_EVENT_AUTHORITY -> querySignEvent(projection)
 
         NIP04_ENCRYPT_AUTHORITY -> queryForward(projection, requiresOtherPubkey = true) { client, payload, otherPubkey ->
             client.nip04Encrypt(otherPubkey, payload)
@@ -98,36 +110,121 @@ class SignerProvider : ContentProvider() {
         }
     }
 
+    private fun querySignEvent(projection: Array<out String>?): Cursor? {
+        val caller = resolveApprovedCaller() ?: return null
+        val pairing = requirePairing(caller) ?: return null
+        val payload = requirePayload(caller, projection) ?: return null
+
+        if (extractEventKind(payload) == NIP37_DRAFT_KIND) {
+            Log.i(TAG, "silent sign_event from $caller declined: draft (kind $NIP37_DRAFT_KIND)")
+            return rejectedCursor()
+        }
+
+        return forward(caller, pairing, payload, otherPubkey = "", includeEventAndSignature = true) { client, p, _ ->
+            client.signEvent(p)
+        }
+    }
+
     /**
-     * Forwards to the shared [HeartwoodSession], blocking this binder thread for up to
-     * [FORWARD_TIMEOUT_MILLIS]. Returns `null` (client falls back to the intent) for an
-     * unapproved/unpaired caller, a missing required argument, a timeout, or any
-     * [HeartwoodResult.Failure] -- this MVP does not distinguish those cases for the caller.
+     * Shared path for the four NIP04/NIP44 authorities: resolves the caller and pairing, requires
+     * a payload and (for these methods) an other-party pubkey, then forwards.
      */
     private fun queryForward(
         projection: Array<out String>?,
-        includeEventAndSignature: Boolean = false,
-        requiresOtherPubkey: Boolean = false,
+        requiresOtherPubkey: Boolean,
         call: suspend (HeartwoodClient, payload: String, otherPubkey: String) -> HeartwoodResult<String>,
     ): Cursor? {
-        val caller = callingPackage ?: return null
-        if (!pairingStore.isApproved(caller)) return null
-        val pairing = pairingStore.current() ?: return null
+        val caller = resolveApprovedCaller() ?: return null
+        val pairing = requirePairing(caller) ?: return null
+        val payload = requirePayload(caller, projection) ?: return null
 
-        val payload = projection?.getOrNull(0)?.takeIf { it.isNotBlank() } ?: return null
         val otherPubkey = projection?.getOrNull(1)?.takeIf { it.isNotBlank() }
-        if (requiresOtherPubkey && otherPubkey == null) return null
+        if (requiresOtherPubkey && otherPubkey == null) {
+            Log.w(TAG, "silent query from $caller missing other-party pubkey")
+            return null
+        }
 
+        return forward(caller, pairing, payload, otherPubkey.orEmpty(), includeEventAndSignature = false, call)
+    }
+
+    private fun resolveApprovedCaller(): String? {
+        val caller = callingPackage
+        if (caller == null) {
+            Log.w(TAG, "silent query refused: calling package unresolvable")
+            return null
+        }
+        if (!pairingStore.isApproved(caller)) {
+            Log.i(TAG, "silent query from unapproved caller $caller; deferring to intent")
+            return null
+        }
+        return caller
+    }
+
+    private fun requirePairing(caller: String): Pairing? {
+        val pairing = pairingStore.current()
+        if (pairing == null) {
+            Log.w(TAG, "silent query from $caller but no pairing stored")
+        }
+        return pairing
+    }
+
+    private fun requirePayload(caller: String, projection: Array<out String>?): String? {
+        val payload = projection?.getOrNull(0)?.takeIf { it.isNotBlank() }
+        if (payload == null) {
+            Log.w(TAG, "silent query from $caller with no payload")
+        }
+        return payload
+    }
+
+    /**
+     * Submits to [HeartwoodSession]'s admission-controlled worker and blocks this binder thread
+     * for the result. Returns `null` if the worker's queue is already full, the call times out, or
+     * fails for a reason other than an explicit policy refusal (see class doc).
+     */
+    private fun forward(
+        caller: String,
+        pairing: Pairing,
+        payload: String,
+        otherPubkey: String,
+        includeEventAndSignature: Boolean,
+        call: suspend (HeartwoodClient, String, String) -> HeartwoodResult<String>,
+    ): Cursor? {
+        val startedAt = SystemClock.elapsedRealtime()
         val result = runBlocking {
-            withTimeoutOrNull(FORWARD_TIMEOUT_MILLIS) {
-                HeartwoodSession.withClient(pairing) { client -> call(client, payload, otherPubkey.orEmpty()) }
-            }
-        } ?: return null
+            HeartwoodSession.trySilent(pairing) { client -> call(client, payload, otherPubkey) }
+        }
+        val elapsed = SystemClock.elapsedRealtime() - startedAt
+
+        if (result == null) {
+            Log.w(TAG, "silent forward for $caller refused (queue full) or timed out after ${elapsed}ms; deferring to intent")
+            return null
+        }
 
         return when (result) {
-            is HeartwoodResult.Failure -> null
-            is HeartwoodResult.Success -> buildResultCursor(result.value, includeEventAndSignature)
+            is HeartwoodResult.Success -> {
+                Log.i(TAG, "silent forward for $caller answered in ${elapsed}ms")
+                buildResultCursor(result.value, includeEventAndSignature)
+            }
+            is HeartwoodResult.Failure -> {
+                if (isPolicyRefusal(result.error)) {
+                    Log.i(TAG, "silent forward for $caller policy-refused after ${elapsed}ms (${result.error}); answering rejected")
+                    rejectedCursor()
+                } else {
+                    Log.w(TAG, "silent forward for $caller failed after ${elapsed}ms (${result.error}); deferring to intent")
+                    null
+                }
+            }
         }
+    }
+
+    private fun isPolicyRefusal(error: HeartwoodError): Boolean {
+        val message = (error as? HeartwoodError.Protocol)?.message ?: return false
+        val lower = message.lowercase()
+        return REFUSAL_KEYWORDS.any { it in lower }
+    }
+
+    private fun rejectedCursor(): Cursor = MatrixCursor(arrayOf(COLUMN_REJECTED)).apply {
+        addRow(arrayOf("true"))
     }
 
     private fun buildResultCursor(value: String, includeEventAndSignature: Boolean): Cursor {
@@ -153,11 +250,21 @@ class SignerProvider : ContentProvider() {
     ): Int = 0
 
     companion object {
+        private const val TAG = "CambiumProvider"
         private const val COLUMN_RESULT = "result"
         private const val COLUMN_EVENT = "event"
         private const val COLUMN_SIGNATURE = "signature"
+        private const val COLUMN_REJECTED = "rejected"
         private const val PONG = "pong"
-        private const val FORWARD_TIMEOUT_MILLIS = 15_000L
+
+        // NIP-37 draft events. Amethyst auto-saves a draft roughly every 2s while the user is
+        // typing a reply; forwarding each one to a 1-2s hardware round trip is what buried real
+        // requests behind a flood of drafts in testing. Declined silently and permanently --
+        // clients treat the `rejected` column as terminal, no intent fallback -- rather than
+        // forwarded. Hardcoded on for now; a settings toggle can replace this later.
+        private const val NIP37_DRAFT_KIND = 31234
+
+        private val REFUSAL_KEYWORDS = listOf("unauthorised", "unauthorized", "not allowed", "refused")
 
         const val GET_PUBLIC_KEY_AUTHORITY = "dev.forgesworn.cambium.GET_PUBLIC_KEY"
         const val PING_AUTHORITY = "dev.forgesworn.cambium.PING"

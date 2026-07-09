@@ -35,12 +35,35 @@ Amethyst / Primal / Voyage ...
   implementation can be swapped or faked without touching pairing storage or the NIP-55 surface.
   Also hosts `ClientKeys` (ephemeral keypair generation), `npubDisplay`, and `HeartwoodSession` for
   the same reason: they are rust-nostr operations, so everything else calls into this file instead
-  of importing `rust.nostr.sdk` directly. `HeartwoodSession` is the one application-scoped,
-  mutex-guarded, kept-warm `NostrConnect` session shared by `SignerActivity` and `SignerProvider`
-  -- a live test against a real device showed a fresh session per request cost multiple seconds
-  each. `MainActivity`'s pairing test deliberately uses its own disposable client instead (a
-  one-off validation before anything is persisted), then calls `HeartwoodSession.shutdown()` after
-  saving so the next real request reconnects against the pairing that was just confirmed.
+  of importing `rust.nostr.sdk` directly.
+
+  `HeartwoodSession` is the one application-scoped, kept-warm `NostrConnect` session shared by
+  `SignerActivity` and `SignerProvider` -- a live test against a real device showed a fresh
+  session per request cost multiple seconds each. Every call is handed to exactly one dedicated
+  worker coroutine on its own single-thread dispatcher, running in a `CoroutineScope` with no
+  parent, so nothing a caller does can ever cancel work already handed to it; a caller gets its
+  result via a `CompletableDeferred` and only ever cancels *its own wait* on that, never the
+  underlying job. This exists because of a second live-test finding: under a burst of ~10
+  concurrent provider queries (Amethyst querying while the user typed a reply), the earlier
+  mutex-guarded design still let a caller's own `withTimeoutOrNull` cancel the very coroutine that
+  was mid-FFI-call, since a mutex only serialises *entry*, not the calling coroutine's own
+  cancellation reaching through it. Two requests came back `Protocol(unauthorised)` (consistent
+  with a half-torn-down call) and the process died outright once with no Java exception --
+  suspected native wedge from a cancelled in-flight rust-nostr call, which is not documented as
+  cancellation-safe. `trySilent` (used by `SignerProvider`) additionally sheds load: if 3 calls are
+  already queued or running, a new silent-path request is refused immediately rather than joining
+  the queue. `RustNostrHeartwoodClient` itself also wraps every actual FFI call in
+  `withContext(NonCancellable + Dispatchers.IO)` as a second, independent line of defence, since
+  rust-nostr's own `NostrConnect` constructor already takes a `Duration` that bounds each relay
+  round trip internally -- there was never a need for a JVM-side timeout that could cancel the
+  call out from under the native code.
+
+  `MainActivity`'s pairing test deliberately uses its own disposable client instead of
+  `HeartwoodSession` (it is testing a URI that has not been saved yet, so there is no `Pairing` to
+  key a shared session on), then calls `HeartwoodSession.shutdown()` after saving so the next real
+  request reconnects against the pairing that was just confirmed. It is not routed through the
+  worker queue -- it is a single, foreground, user-initiated action that never overlaps with
+  itself -- but it does get the same `NonCancellable` protection as everything else.
 - `nip55/Nip55Request.kt` -- pure Kotlin parser from a plain `RawSignerIntent` data class to a
   sealed `Nip55Request`. JVM-testable; the actual `android.content.Intent` mapping is a single
   private extension function in `SignerActivity.kt`.
@@ -51,17 +74,29 @@ Amethyst / Primal / Voyage ...
   user dismisses the first (e.g. `sign_event` right after `get_public_key`).
 - `nip55/SignerProvider.kt` -- exported content provider, the NIP-55 "silent" path. A live test
   showed Amethyst queries this provider for *every* operation once an app is approved, not just
-  get_public_key, so `SIGN_EVENT`, `NIP04_ENCRYPT`/`DECRYPT`, and `NIP44_ENCRYPT`/`DECRYPT` forward
-  to the shared `HeartwoodSession` synchronously inside `query()` (via `runBlocking`, capped at
-  15s) for already-approved callers -- acceptable because these clients call `query()` from a
-  background thread. `get_public_key` is still declared for discovery but always answers `null`:
+  get_public_key, and can burst around ten concurrent queries while the user is typing (drafts
+  plus decrypts). `SIGN_EVENT`, `NIP04_ENCRYPT`/`DECRYPT`, and `NIP44_ENCRYPT`/`DECRYPT` forward to
+  `HeartwoodSession.trySilent` (admission-controlled, capped at 15s -- see `HeartwoodSession`'s
+  class doc) for already-approved callers -- acceptable because these clients call `query()` from
+  a background thread. `get_public_key` is still declared for discovery but always answers `null`:
   both Amber and Primal force login through the visible intent rather than the silent path.
   `DECRYPT_ZAP_EVENT` is declared (its absence spammed provider-discovery errors on every zap in
   Amethyst's feed) but always answers `null` -- Amber's implementation unwraps a zap request event
   embedded in a zap receipt rather than doing a plain nip44_decrypt, and Cambium does not implement
-  that (known gap below). `PING` answers directly for an approved, paired caller. Every other case
-  returns `null` so the client falls back to the intent, and the caller is always taken from
-  `getCallingPackage`, never from query arguments.
+  that (known gap below). `PING` answers directly for an approved, paired caller.
+
+  `SIGN_EVENT` declines NIP-37 draft events (kind 31234) immediately, without forwarding or
+  joining the queue: Amethyst auto-saves a draft roughly every 2s while typing, which floods a
+  1-2s hardware round trip and buries real requests behind it. An explicit policy refusal from
+  Heartwood (error text containing "unauthorised"/"unauthorized"/"not allowed"/"refused") answers
+  a `rejected` cursor rather than `null`, so a client stops re-escalating a policy-blocked request
+  to the visible flow every couple of seconds. Both of those are answered with a distinct
+  `rejected` cursor column that clients should treat as terminal (no intent fallback). Everything
+  else that cannot be answered here -- an unapproved/unpaired caller, a missing argument, the
+  worker queue being full, a timeout, or any other failure -- returns `null` so the client falls
+  back to the intent. The caller is always taken from `getCallingPackage`, never from query
+  arguments. Diagnostic logging (tag `CambiumProvider`) covers every refusal path and timing for
+  each forward, added during live-device debugging and kept deliberately.
 - `nip55/EventJson.kt` -- tiny shared helpers (`extractEventKind`, `extractEventSignatureHex`) used
   by both `SignerActivity` (approval sheet, legacy `signature` extra) and `SignerProvider` (the
   `signature` cursor column for forwarded `SIGN_EVENT`).
@@ -88,8 +123,18 @@ Amethyst / Primal / Voyage ...
   doesn't block future requests from showing the approval sheet again. `SignerProvider` therefore
   cannot yet distinguish "not yet approved" from "permanently rejected"; both are `null`.
 - `DECRYPT_ZAP_EVENT` is not implemented (see `SignerProvider`'s class doc) -- Amber's zap-request
-  unwrapping is different from a plain nip44_decrypt and hasn't been built.
+  unwrapping is different from a plain nip44_decrypt and hasn't been built. Because it isn't
+  recognised as a method in `Nip55Request` either, a zap that falls through to the intent path
+  gets auto-rejected rather than shown to the user -- fixing that also needs the zap-unwrap logic.
 - Multi-signer support (v1 pairs exactly one Heartwood).
 - NIP-55 single-intent batch requests (the `results` JSON-array response) -- currently each
   intent is handled individually, though `SignerActivity` does handle multiple *separate* intents
   arriving in sequence via `onNewIntent`.
+- The NIP-37 draft-decline (kind 31234) is a hardcoded constant in `SignerProvider`, not a user
+  setting; `HeartwoodSession`'s queue depth (3) and timeouts (15s silent, 20s intent) are likewise
+  hardcoded rather than configurable.
+- The suspected root cause of the one observed process death (concurrent + cancelled rust-nostr
+  calls corrupting native state) is a diagnosis from live-test symptoms, not a confirmed repro in
+  a controlled setting -- the single-worker gate and `NonCancellable` wrapping address every
+  mechanism that could produce it, but there is no automated test that reproduces the crash to
+  verify the fix against.
