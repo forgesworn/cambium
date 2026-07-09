@@ -264,7 +264,11 @@ class SignerProvider : ContentProvider() {
         // forwarded. Hardcoded on for now; a settings toggle can replace this later.
         private const val NIP37_DRAFT_KIND = 31234
 
-        private val REFUSAL_KEYWORDS = listOf("unauthorised", "unauthorized", "not allowed", "refused")
+        // Verified against firmware source (nip46_handler.rs): unbound clients and policy blocks
+        // answer "unauthorised"; a physical-button decline answers "user denied". A "timeout"
+        // (button not pressed in time) deliberately stays null: the visible retry gives the
+        // user another chance to press it.
+        private val REFUSAL_KEYWORDS = listOf("unauthorised", "unauthorized", "not allowed", "refused", "denied")
 
         const val GET_PUBLIC_KEY_AUTHORITY = "dev.forgesworn.cambium.GET_PUBLIC_KEY"
         const val PING_AUTHORITY = "dev.forgesworn.cambium.PING"
