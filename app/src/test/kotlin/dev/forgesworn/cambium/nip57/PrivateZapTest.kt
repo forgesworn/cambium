@@ -130,6 +130,12 @@ class PrivateZapTest {
     }
 
     @Test
+    fun `an anon tag whose value is not a string is malformed, not treated as a public zap`() {
+        val nestedAnonValue = """{"kind":9734,"pubkey":"${"a".repeat(64)}","tags":[["anon",["nested"]]]}"""
+        assertIs<ZapDecodeResult.MalformedAnon>(PrivateZap.decodeAnonTag(nestedAnonValue))
+    }
+
+    @Test
     fun `recognises the real DIP-03 decrypted event as a valid kind-9733 private zap`() {
         assertTrue(PrivateZap.isValidPrivateZapEvent(decryptedPrivateZapEventJson))
     }

@@ -84,12 +84,19 @@ object PrivateZap {
         val tags = runCatching { event["tags"]?.jsonArray }
             .getOrElse { return ZapDecodeResult.Malformed("tags is not an array") }
             ?: return ZapDecodeResult.NoAnonTag
-        val anonValue = runCatching {
+        val anonTag = runCatching {
             tags.asSequence()
                 .mapNotNull { it as? JsonArray }
                 .firstOrNull { tag -> tag.getOrNull(0)?.jsonPrimitive?.content == "anon" }
-                ?.getOrNull(1)?.jsonPrimitive?.content
         }.getOrNull() ?: return ZapDecodeResult.NoAnonTag
+
+        // Found an "anon" tag but its second element isn't a JSON string (e.g. a nested array or
+        // object) -- distinct from NoAnonTag ("ordinary public zap, nothing to decrypt"): this is
+        // adversarial or corrupt input on a tag that is otherwise structurally an anon tag, so it
+        // must not be silently reclassified as "no anon tag at all".
+        val anonValue = runCatching { anonTag.getOrNull(1)?.jsonPrimitive?.content }
+            .getOrElse { return ZapDecodeResult.MalformedAnon("anon tag value is not a string") }
+            ?: return ZapDecodeResult.MalformedAnon("anon tag has no value")
 
         val separator = anonValue.indexOf('_')
         if (separator <= 0 || separator == anonValue.length - 1) {

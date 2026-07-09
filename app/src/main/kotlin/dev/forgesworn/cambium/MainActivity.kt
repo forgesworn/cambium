@@ -89,6 +89,12 @@ class MainActivity : AppCompatActivity() {
             binding.signerValue.text = npubDisplay(pairing.signerPubkeyHex)
             binding.relaysValue.text = pairing.relays.joinToString("\n")
             setKeepAliveToggleChecked(pairingStore.isKeepAliveEnabled())
+            // A denial only ever turns this hint on (see notificationPermissionLauncher); nothing
+            // previously turned it back off if the user granted the permission from system
+            // Settings instead of the in-app prompt and returned here via onResume.
+            if (hasNotificationPermission()) {
+                binding.notificationHint.isVisible = false
+            }
             renderConnectedApps()
         }
     }
@@ -131,14 +137,18 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        val needsNotificationPermission = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
-        if (needsNotificationPermission) {
-            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-        } else {
+        if (hasNotificationPermission()) {
             setKeepAliveEnabled(true)
+        } else {
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
     }
+
+    /** `POST_NOTIFICATIONS` is a runtime permission only from API 33 (Tiramisu) on; older
+     * platforms show the ongoing notification without asking. */
+    private fun hasNotificationPermission(): Boolean =
+        Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
 
     private fun setKeepAliveEnabled(enabled: Boolean) {
         pairingStore.setKeepAliveEnabled(enabled)

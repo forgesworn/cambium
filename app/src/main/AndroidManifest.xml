@@ -40,12 +40,21 @@
             </intent-filter>
         </activity>
 
+        <!-- A config change (rotation, dark/light switch, ...) mid-request would otherwise destroy
+             and recreate this activity, cancelling lifecycleScope and losing result delivery for
+             an in-flight silent request: the same failure mode the back-press block in
+             SignerActivity.kt guards against, but a system-driven recreation instead of a stray
+             tap. There is nothing here worth recreating for: the invisible path shows no UI at
+             all, and the visible path's sub-second progress overlay is not worth preserving
+             pixel-perfect layout for either. Handling every listed change ourselves means the
+             activity instance, and so its in-flight coroutine, simply survives. -->
         <activity
             android:name=".nip55.SignerActivity"
             android:exported="true"
             android:launchMode="singleTop"
             android:excludeFromRecents="true"
             android:taskAffinity=""
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|uiMode|density|fontScale|locale|layoutDirection"
             android:theme="@style/Theme.Cambium.Dialog">
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />

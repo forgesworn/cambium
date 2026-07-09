@@ -47,6 +47,15 @@ import kotlinx.coroutines.launch
  * read-only, always-safe operation Heartwood answers without a physical button. rust-nostr's
  * client bindings do not expose a lower-level "ping" primitive to call instead (checked via
  * `javap` against the actual AAR: `NostrConnect`/`NostrConnectInterface` have no `ping` method).
+ *
+ * The ping goes through [HeartwoodSession.trySilent], the shedding path, not [HeartwoodSession.withClient]:
+ * a real request against a slow or unreachable Heartwood can occupy the single worker for up to
+ * [HeartwoodSession]'s silent timeout, and `withClient` always queues regardless of how busy the
+ * worker already is, which would let a ping inflate queue depth against `MAX_QUEUED` and get a
+ * real Amethyst burst shed into visible popups -- the exact regression the queue exists to
+ * prevent. `trySilent` refuses immediately if the queue is non-empty, which is also the right
+ * behaviour here on its own terms: a busy queue means the session is demonstrably warm already,
+ * so a skipped ping loses nothing.
  */
 class HeartwoodKeepAliveService : Service() {
 
@@ -97,9 +106,10 @@ class HeartwoodKeepAliveService : Service() {
                 if (pairing == null || !pairingStore.isKeepAliveEnabled()) {
                     break
                 }
-                when (val result = HeartwoodSession.withClient(pairing) { it.getPublicKey() }) {
+                when (val result = HeartwoodSession.trySilent(pairing) { it.getPublicKey() }) {
                     is HeartwoodResult.Success -> Log.d(TAG, "keepalive ping ok")
                     is HeartwoodResult.Failure -> Log.d(TAG, "keepalive ping failed: ${result.error}")
+                    null -> Log.d(TAG, "keepalive ping skipped: worker already busy")
                 }
                 delay(PING_INTERVAL_MILLIS)
             }
@@ -140,7 +150,7 @@ class HeartwoodKeepAliveService : Service() {
         private const val TAG = "HeartwoodKeepAlive"
         private const val CHANNEL_ID = "heartwood_keep_alive"
         private const val NOTIFICATION_ID = 1
-        private const val PING_INTERVAL_MILLIS = 4 * 60 * 1000L
+        private const val PING_INTERVAL_MILLIS = 8 * 60 * 1000L
 
         fun start(context: Context) {
             ContextCompat.startForegroundService(context, Intent(context, HeartwoodKeepAliveService::class.java))

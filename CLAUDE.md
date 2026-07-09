@@ -117,6 +117,14 @@ Amethyst / Primal / Voyage ...
   so a lost activity means a silently lost result. The visible Approve/Decline sheet's back-press
   behaviour (same as Decline, Android's default) is unchanged, since the callback is never enabled
   on that path.
+
+  The same result-delivery gap exists for a system-driven recreation, not just a stray tap: a
+  config change (rotation, dark/light switch, locale, ...) mid-request would otherwise destroy and
+  recreate the activity, cancelling `lifecycleScope` along with it. The manifest declares
+  `android:configChanges` for this activity covering every change worth handling ourselves, so the
+  instance -- and its in-flight coroutine -- survives instead; there is nothing here worth
+  recreating for (the invisible path shows no UI, the visible path's progress overlay is not worth
+  preserving pixel-perfect layout for).
 - `nip55/SignerProvider.kt` -- exported content provider, the NIP-55 "silent" path. A live test
   showed Amethyst queries this provider for *every* operation once an app is approved, not just
   get_public_key, and can burst around ten concurrent queries while the user is typing (drafts
@@ -172,6 +180,12 @@ Amethyst / Primal / Voyage ...
   is a known, permanent limitation, not a gap to close later: it needs the raw private key fed
   directly into a hash function, which NIP-46 remote signing has no operation for and Heartwood
   will never expose. Only the recipient path is implemented.
+
+  `decodeAnonTag` locates the `anon` tag entry first, then extracts its second element in its own
+  `runCatching` mapped to `MalformedAnon` -- kept separate from the tag *lookup* itself (which
+  falls back to `NoAnonTag`, "ordinary public zap") specifically so a found `anon` tag whose value
+  isn't a JSON string (adversarial or corrupt input, e.g. a nested array) is reported as malformed
+  rather than misclassified as "no anon tag at all".
 - `nip55/EventJson.kt` -- tiny shared helpers (`extractEventKind`, `extractEventSignatureHex`) used
   by both `SignerActivity` (approval sheet, legacy `signature` extra) and `SignerProvider` (the
   `signature` cursor column for forwarded `SIGN_EVENT`).
@@ -196,17 +210,27 @@ Amethyst / Primal / Voyage ...
   as the camera permission; and a connected-apps list (package, state, a "Forget" action that calls
   `PairingStore.forget` -- back to "ask") built from `PairingStore.allPermissionStates()`, one
   `item_connected_app.xml` row inflated per entry rather than a `RecyclerView`, since the list is
-  realistically tiny (a handful of paired Nostr clients).
+  realistically tiny (a handful of paired Nostr clients). `render()` (called from both `onCreate`
+  and `onResume`) force-hides the stale notification-permission hint whenever `hasNotificationPermission()`
+  is now true -- the in-app denial path is the only thing that turns the hint on, so nothing
+  previously cleared it again if the user instead granted the permission from system Settings and
+  returned via `onResume`.
 - `AndroidExtensions.kt` -- `PackageManager.displayNameFor(packageName)`, the app-label lookup
   (falls back to the raw package string on any failure) shared by `SignerActivity`'s approval sheet
   and `MainActivity`'s connected-apps list.
 - `service/HeartwoodKeepAliveService.kt` -- optional, off-by-default foreground service that keeps
   the process (and so `HeartwoodSession`'s warm `NostrConnect`) alive between requests, closing the
   previously-tracked "only warm while the process happens to be running" gap. Pings Heartwood every
-  4 minutes via `HeartwoodSession.withClient(pairing) { it.getPublicKey() }` -- a read-only,
+  8 minutes via `HeartwoodSession.trySilent(pairing) { it.getPublicKey() }` -- a read-only,
   always-safe operation Heartwood answers without a physical button; rust-nostr's client bindings
   have no lower-level "ping" primitive to call instead (checked directly against the AAR with
-  `javap`: neither `NostrConnect` nor `NostrConnectInterface` declare one). `targetSdk` 35 requires
+  `javap`: neither `NostrConnect` nor `NostrConnectInterface` declare one). `trySilent`, not
+  `withClient`: the ping must go through the shedding path, since `withClient` always queues and a
+  slow/unreachable Heartwood would let a scheduled ping occupy the single worker for up to the
+  silent timeout, inflating queue depth against `MAX_QUEUED` and shedding a real Amethyst burst
+  into visible popups -- the exact regression `HeartwoodSession`'s admission control exists to
+  prevent. A refusal (queue non-empty) is also the right outcome on its own terms: it means the
+  session is demonstrably warm already, so the ping was redundant. `targetSdk` 35 requires
   an explicit `foregroundServiceType`; there is no built-in type for "hold a NIP-46 connection
   open", so this follows Amber's own `ConnectivityService` (verified against its actual source,
   `greenart7c3/Amber` `service/ConnectivityService.kt` and manifest): `specialUse`, declared in the
@@ -214,8 +238,13 @@ Amethyst / Primal / Voyage ...
   `ServiceCompat.startForeground` on API 34+, where the type argument became mandatory. Low-
   importance, non-badged notification channel; the toggle and its state live in `PairingStore`
   (`isKeepAliveEnabled`/`setKeepAliveEnabled`), not the service, so `MainActivity` and
-  `service/BootReceiver.kt` (restarts the service after a reboot, gated on both the toggle and
-  still being paired) agree on state without talking to each other directly.
+  `service/BootReceiver.kt` agree on state without talking to each other directly.
+- `service/BootReceiver.kt` -- restarts `HeartwoodKeepAliveService` after a reboot, gated on both
+  the toggle and still being paired. Uses `goAsync()` and does the `PairingStore` read (a
+  synchronous Keystore-backed EncryptedSharedPreferences init) and the service start on
+  `Dispatchers.IO`, not the calling thread -- `BOOT_COMPLETED` delivery is the worst possible
+  window to block the main thread, with every other receiver and the rest of the boot sequence
+  contending for it too.
 
 ## Conventions
 
