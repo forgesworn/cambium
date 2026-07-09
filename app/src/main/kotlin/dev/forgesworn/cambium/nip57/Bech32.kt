@@ -94,28 +94,38 @@ object Bech32 {
      * including masking the accumulator to [fromBits] + [toBits] - 1 bits on every step -- without
      * that mask, `acc` grows without bound for long inputs (exactly what this decoder is for) and
      * silently produces wrong output once it exceeds 32 bits instead of failing loudly.
+     *
+     * The output length is exactly computable up front from [data]'s size, so this writes
+     * directly into a pre-sized `ByteArray` by index rather than boxing each byte into a
+     * `MutableList<Byte>` -- this runs on the binder thread inside `decrypt_zap_event` query
+     * bursts, where the boxing/unboxing and list growth are avoidable allocation churn.
      */
     private fun convertBits(data: IntArray, fromBits: Int, toBits: Int, pad: Boolean): ByteArray? {
         var acc = 0
         var bits = 0
         val maxV = (1 shl toBits) - 1
         val maxAcc = (1 shl (fromBits + toBits - 1)) - 1
-        val out = mutableListOf<Byte>()
+
+        val totalBits = data.size * fromBits
+        val outLen = totalBits / toBits + if (pad && totalBits % toBits != 0) 1 else 0
+        val out = ByteArray(outLen)
+        var outIndex = 0
+
         for (value in data) {
             if (value < 0 || (value shr fromBits) != 0) return null
             acc = ((acc shl fromBits) or value) and maxAcc
             bits += fromBits
             while (bits >= toBits) {
                 bits -= toBits
-                out.add(((acc shr bits) and maxV).toByte())
+                out[outIndex++] = ((acc shr bits) and maxV).toByte()
             }
         }
         if (pad) {
-            if (bits > 0) out.add(((acc shl (toBits - bits)) and maxV).toByte())
+            if (bits > 0) out[outIndex++] = ((acc shl (toBits - bits)) and maxV).toByte()
         } else if (bits >= fromBits || ((acc shl (toBits - bits)) and maxV) != 0) {
             return null
         }
-        return out.toByteArray()
+        return out
     }
 
     private const val SEPARATOR = "1"

@@ -97,33 +97,26 @@ class PairingStore(context: Context) {
 
     /** Remembers that [packageName] may use the paired signer without asking again. Clears any
      * previous denial -- approved and denied are mutually exclusive. */
-    fun approve(packageName: String) {
-        prefs.edit()
-            .putStringSet(KEY_ALLOWED_PACKAGES, approvedPackages() + packageName)
-            .putStringSet(KEY_DENIED_PACKAGES, deniedPackages() - packageName)
-            .apply()
-    }
+    fun approve(packageName: String) = setPermission(packageName, AppPermissionState.APPROVED)
 
     /** Remembers that [packageName] must never use the paired signer without asking again.
      * Clears any previous approval. */
-    fun deny(packageName: String) {
-        prefs.edit()
-            .putStringSet(KEY_ALLOWED_PACKAGES, approvedPackages() - packageName)
-            .putStringSet(KEY_DENIED_PACKAGES, deniedPackages() + packageName)
-            .apply()
-    }
+    fun deny(packageName: String) = setPermission(packageName, AppPermissionState.DENIED)
 
     /** Forgets any remembered choice for [packageName]: back to "ask" next time. */
-    fun forget(packageName: String) {
+    fun forget(packageName: String) = setPermission(packageName, null)
+
+    /** The one place either `StringSet` is written: [state] is the one true membership,
+     * `null` means neither set should contain [packageName] ("ask"). */
+    private fun setPermission(packageName: String, state: AppPermissionState?) {
         prefs.edit()
-            .putStringSet(KEY_ALLOWED_PACKAGES, approvedPackages() - packageName)
-            .putStringSet(KEY_DENIED_PACKAGES, deniedPackages() - packageName)
+            .putStringSet(KEY_ALLOWED_PACKAGES, approvedPackages().withMembership(packageName, state == AppPermissionState.APPROVED))
+            .putStringSet(KEY_DENIED_PACKAGES, deniedPackages().withMembership(packageName, state == AppPermissionState.DENIED))
             .apply()
     }
 
-    fun isApproved(packageName: String): Boolean = approvedPackages().contains(packageName)
-
-    fun isDenied(packageName: String): Boolean = deniedPackages().contains(packageName)
+    private fun Set<String>.withMembership(packageName: String, shouldContain: Boolean): Set<String> =
+        if (shouldContain) this + packageName else this - packageName
 
     fun permissionState(packageName: String): AppPermissionState? = when {
         approvedPackages().contains(packageName) -> AppPermissionState.APPROVED

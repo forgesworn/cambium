@@ -16,6 +16,7 @@ import dev.forgesworn.cambium.pairing.AppPermissionState
 import dev.forgesworn.cambium.pairing.Pairing
 import dev.forgesworn.cambium.pairing.PairingStore
 import dev.forgesworn.cambium.signer.CacheableDecrypt
+import dev.forgesworn.cambium.signer.HeartwoodClient
 import dev.forgesworn.cambium.signer.HeartwoodError
 import dev.forgesworn.cambium.signer.HeartwoodResult
 import dev.forgesworn.cambium.signer.HeartwoodSession
@@ -70,8 +71,11 @@ class SignerActivity : AppCompatActivity() {
     private lateinit var binding: ActivitySignerApprovalBinding
     private lateinit var pairingStore: PairingStore
     private var request: Nip55Request? = null
-    private var silent = false
     private var permissionState: AppPermissionState? = null
+
+    /** Decided once, from [permissionState], in `onCreate` -- see the class doc; not re-evaluated
+     * afterwards, since [permissionState] itself never changes after `onCreate` either. */
+    private val silent: Boolean get() = permissionState != null
 
     /** See the class doc comment. Disabled outside the two silent forwarding windows. */
     private val silentBackPressBlock = object : OnBackPressedCallback(false) {
@@ -85,7 +89,6 @@ class SignerActivity : AppCompatActivity() {
 
         val callingPkg = callingPackage
         permissionState = callingPkg?.let(pairingStore::permissionState)
-        silent = permissionState != null
         if (silent) {
             // Must happen before setContentView (and there is no content view to set here) for
             // the transparent/non-dimmed theme to actually take effect on the window.
@@ -196,31 +199,15 @@ class SignerActivity : AppCompatActivity() {
             return
         }
 
-        if (!silent) {
-            binding.progressGroup.isVisible = true
-        } else {
-            silentBackPressBlock.isEnabled = true
-        }
-        lifecycleScope.launch {
-            val result = HeartwoodSession.withClient(pairing, cacheableFor(request)) { client ->
-                when (request) {
-                    is Nip55Request.SignEvent -> client.signEvent(request.eventJson)
-                    is Nip55Request.Nip04Encrypt -> client.nip04Encrypt(request.pubkeyHex, request.plaintext)
-                    is Nip55Request.Nip04Decrypt -> client.nip04Decrypt(request.pubkeyHex, request.ciphertext)
-                    is Nip55Request.Nip44Encrypt -> client.nip44Encrypt(request.pubkeyHex, request.plaintext)
-                    is Nip55Request.Nip44Decrypt -> client.nip44Decrypt(request.pubkeyHex, request.ciphertext)
-                    is Nip55Request.GetPublicKey -> error("handled above without a relay round trip")
-                    is Nip55Request.DecryptZapEvent -> error("handled separately, see handleDecryptZapEvent")
-                }
-            }
-
-            when (result) {
-                is HeartwoodResult.Success -> respondSuccess(
-                    request,
-                    result.value,
-                    isPublicKeyRequest = false,
-                )
-                is HeartwoodResult.Failure -> showErrorAndReject(request.id, result.error)
+        submitAndRespond(pairing, request, cacheableFor(request)) { client ->
+            when (request) {
+                is Nip55Request.SignEvent -> client.signEvent(request.eventJson)
+                is Nip55Request.Nip04Encrypt -> client.nip04Encrypt(request.pubkeyHex, request.plaintext)
+                is Nip55Request.Nip04Decrypt -> client.nip04Decrypt(request.pubkeyHex, request.ciphertext)
+                is Nip55Request.Nip44Encrypt -> client.nip44Encrypt(request.pubkeyHex, request.plaintext)
+                is Nip55Request.Nip44Decrypt -> client.nip44Decrypt(request.pubkeyHex, request.ciphertext)
+                is Nip55Request.GetPublicKey -> error("handled above without a relay round trip")
+                is Nip55Request.DecryptZapEvent -> error("handled separately, see handleDecryptZapEvent")
             }
         }
     }
@@ -230,11 +217,9 @@ class SignerActivity : AppCompatActivity() {
      * the zap request's `anon` tag into an ordinary nip04_decrypt call. Anything that isn't a
      * decryptable private zap -- wrong kind, no `anon` tag (an ordinary public zap), a malformed
      * `anon` tag, or a structurally broken event -- is rejected immediately; there is nothing
-     * Heartwood could do with any of them. On a successful decrypt, [PrivateZap.isValidPrivateZapEvent]
-     * checks the plaintext is actually a kind 9733 event before it is handed back; a plaintext
-     * that fails that check is treated as a decrypt failure using the same "decryption failed"
-     * wording the firmware uses, so it is picked up by the existing deterministic-failure/caching
-     * logic without any special casing here.
+     * Heartwood could do with any of them. On a `Forward`, [PrivateZap.decryptAndValidate] and
+     * [PrivateZap.cacheableFor] are shared with `SignerProvider.queryDecryptZapEvent`, so the
+     * decrypt-then-check-kind-9733 call and its cache key exist exactly once.
      */
     private fun handleDecryptZapEvent(pairing: Pairing, request: Nip55Request.DecryptZapEvent) {
         val decoded = PrivateZap.decodeAnonTag(request.eventJson)
@@ -250,28 +235,30 @@ class SignerActivity : AppCompatActivity() {
             is ZapDecodeResult.Forward -> decoded
         }
 
+        submitAndRespond(pairing, request, PrivateZap.cacheableFor(forward)) { client ->
+            PrivateZap.decryptAndValidate(client, forward)
+        }
+    }
+
+    /**
+     * Shared tail for every forwarded request: shows the progress overlay (visible path) or arms
+     * [silentBackPressBlock] (silent path), submits [operation] to [HeartwoodSession]'s worker,
+     * and dispatches the outcome to [respondSuccess]/[showErrorAndReject]. [handle] and
+     * [handleDecryptZapEvent] both funnel into this so the submit-and-respond pipeline exists once.
+     */
+    private fun submitAndRespond(
+        pairing: Pairing,
+        request: Nip55Request,
+        cacheable: CacheableDecrypt?,
+        operation: suspend (HeartwoodClient) -> HeartwoodResult<String>,
+    ) {
         if (!silent) {
             binding.progressGroup.isVisible = true
         } else {
             silentBackPressBlock.isEnabled = true
         }
         lifecycleScope.launch {
-            // Keyed on the anon tag itself (the actual encrypted material), not the wrapper
-            // event's id/sig, so re-requesting the same zap under a re-serialised wrapper still hits.
-            val cacheable = CacheableDecrypt(CacheableDecrypt.Method.ZAP, forward.counterpartyPubkeyHex, forward.anonTagValue)
-            val result = HeartwoodSession.withClient(pairing, cacheable) { client ->
-                when (val decrypted = client.nip04Decrypt(forward.counterpartyPubkeyHex, forward.nip04Payload)) {
-                    is HeartwoodResult.Success ->
-                        if (PrivateZap.isValidPrivateZapEvent(decrypted.value)) {
-                            decrypted
-                        } else {
-                            HeartwoodResult.Failure(HeartwoodError.Protocol("decryption failed: not a kind 9733 event"))
-                        }
-                    is HeartwoodResult.Failure -> decrypted
-                }
-            }
-
-            when (result) {
+            when (val result = HeartwoodSession.withClient(pairing, cacheable, operation)) {
                 is HeartwoodResult.Success -> respondSuccess(request, result.value, isPublicKeyRequest = false)
                 is HeartwoodResult.Failure -> showErrorAndReject(request.id, result.error)
             }

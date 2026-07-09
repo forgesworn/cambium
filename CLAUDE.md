@@ -32,10 +32,13 @@ Amethyst / Primal / Voyage ...
   into `signer.ClientKeys` for key generation rather than importing rust-nostr itself (see below).
 
   Per-app state is a tri-state -- `AppPermissionState.APPROVED`/`DENIED`, or `null` meaning "ask"
-  -- backed by two independent `StringSet`s (`approve`/`deny` are mutually exclusive; `forget`
-  clears both, back to "ask"). The pre-existing approved set (`allowed_packages`) already meant
-  exactly "approved" before this model existed, so it needed no migration step -- only the new
-  `denied_packages` set is new. `allPermissionStates()` backs `MainActivity`'s connected-apps list.
+  -- backed by two independent `StringSet`s. `approve`/`deny`/`forget` are one-line callers of a
+  single private `setPermission(packageName, state: AppPermissionState?)` that writes both sets
+  from the target state in one place, rather than each hand-rolling its own pair of `+`/`-` edits
+  (`approve`/`deny` are mutually exclusive; `forget` clears both, back to "ask"). The pre-existing
+  approved set (`allowed_packages`) already meant exactly "approved" before this model existed, so
+  it needed no migration step -- only the new `denied_packages` set is new. `allPermissionStates()`
+  backs `MainActivity`'s connected-apps list.
 - `signer/HeartwoodClient.kt` -- **the only file that imports `rust.nostr.sdk`**. Wraps
   `NostrConnect` (rust-nostr's NIP-46 client) behind the `HeartwoodClient` interface so the
   implementation can be swapped or faked without touching pairing storage or the NIP-55 surface.
@@ -96,11 +99,12 @@ Amethyst / Primal / Voyage ...
   denied one is rejected immediately, no Heartwood call at all -- daily use showed the
   translucent/dimmed `Theme.Cambium.Dialog` overlay (still used only for a caller with *no*
   remembered choice yet) appearing on every subsequent request otherwise, not just at login. This
-  decision (`silent`/`permissionState`) is made once in `onCreate` and reused for the instance's
-  lifetime, not re-evaluated in `onNewIntent`, since swapping a visible theme for an invisible one
-  after the window already exists is unreliable. `singleTop` with `onNewIntent` handling, since a
-  client can fire a second request before the user dismisses the first (e.g. `sign_event` right
-  after `get_public_key`).
+  decision is made once in `onCreate`, which sets `permissionState` and never reassigns it again;
+  `silent` is a `get() = permissionState != null` computed straight from that, rather than a
+  second field that could in principle drift from it. Not re-evaluated in `onNewIntent`, since
+  swapping a visible theme for an invisible one after the window already exists is unreliable.
+  `singleTop` with `onNewIntent` handling, since a client can fire a second request before the
+  user dismisses the first (e.g. `sign_event` right after `get_public_key`).
 
   The approval sheet (shown only for "ask") has an "always deny this app" link below the normal
   Approve/Decline buttons -- a deliberately secondary affordance so a permanent block needs its own
@@ -125,6 +129,12 @@ Amethyst / Primal / Voyage ...
   instance -- and its in-flight coroutine -- survives instead; there is nothing here worth
   recreating for (the invisible path shows no UI, the visible path's progress overlay is not worth
   preserving pixel-perfect layout for).
+
+  `handle` and `handleDecryptZapEvent` both funnel into `submitAndRespond` (progress/back-press
+  toggle, `HeartwoodSession.withClient`, `Success`/`Failure` dispatch to `respondSuccess`/
+  `showErrorAndReject`) instead of each repeating that tail -- `handleDecryptZapEvent` differs only
+  in decoding the `anon` tag first and using `PrivateZap.decryptAndValidate`/`cacheableFor` as its
+  operation and cache key.
 - `nip55/SignerProvider.kt` -- exported content provider, the NIP-55 "silent" path. A live test
   showed Amethyst queries this provider for *every* operation once an app is approved, not just
   get_public_key, and can burst around ten concurrent queries while the user is typing (drafts
@@ -169,7 +179,9 @@ Amethyst / Primal / Voyage ...
   90-character length recommendation (which exists for Bitcoin-address readability, not
   cryptographic reasons) -- DIP-03's private-zap `anon` tag payload routinely exceeds it. Tested
   against the real bech32 strings in DIP-03's own worked example, not just round-tripped against
-  its own `encode()`.
+  its own `encode()`. `convertBits` writes into a pre-sized `ByteArray` by index (the output length
+  is exactly computable from the input size up front) rather than a boxed `MutableList<Byte>`,
+  since it runs on the binder thread inside `decrypt_zap_event` query bursts.
 - `nip57/PrivateZap.kt` -- decodes DIP-03's "private zap" `anon` tag (a de facto convention, not in
   the core NIP-57 spec, which explicitly defers zap privacy to "future work") into a plain
   nip04_decrypt call, and validates the decrypted plaintext is a kind 9733 event. Pure Kotlin (uses
@@ -180,6 +192,15 @@ Amethyst / Primal / Voyage ...
   is a known, permanent limitation, not a gap to close later: it needs the raw private key fed
   directly into a hash function, which NIP-46 remote signing has no operation for and Heartwood
   will never expose. Only the recipient path is implemented.
+
+  `decryptAndValidate(client, forward)` (the nip04_decrypt call plus the kind-9733 check,
+  synthesising a failure with `INVALID_PRIVATE_ZAP_MESSAGE` when it is not one) and
+  `cacheableFor(forward)` (the `CacheableDecrypt.Method.ZAP` key, built from the anon tag's own
+  value) are the single shared home for that pair of operations -- `SignerActivity.handleDecryptZapEvent`
+  and `SignerProvider.queryDecryptZapEvent` both call these two instead of each duplicating the
+  block. They reference `HeartwoodClient`/`HeartwoodResult`/`HeartwoodError`/`CacheableDecrypt`
+  from `signer`, but those are plain Kotlin types with nothing Android or rust-nostr in their own
+  signatures, so this file's JVM-testability is unaffected.
 
   `decodeAnonTag` locates the `anon` tag entry first, then extracts its second element in its own
   `runCatching` mapped to `MalformedAnon` -- kept separate from the tag *lookup* itself (which

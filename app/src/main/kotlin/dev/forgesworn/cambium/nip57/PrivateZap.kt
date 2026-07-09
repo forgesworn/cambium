@@ -1,5 +1,9 @@
 package dev.forgesworn.cambium.nip57
 
+import dev.forgesworn.cambium.signer.CacheableDecrypt
+import dev.forgesworn.cambium.signer.HeartwoodClient
+import dev.forgesworn.cambium.signer.HeartwoodError
+import dev.forgesworn.cambium.signer.HeartwoodResult
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.intOrNull
@@ -29,7 +33,10 @@ import java.util.Base64
  * which is simpler and no less correct than trying to detect that case up front.
  *
  * Pure Kotlin: no Android, so this stays JVM-testable, matching BunkerUri.kt/QrPairingScan.kt/
- * DecryptCache.kt.
+ * DecryptCache.kt. [decryptAndValidate] and [cacheableFor] reference [HeartwoodClient]/
+ * [HeartwoodResult]/[HeartwoodError]/[CacheableDecrypt] from `signer`, but those are themselves
+ * plain Kotlin types with no rust-nostr or Android in their own signatures, so this file's
+ * JVM-testability is unaffected.
  *
  * **Known limitation, not implemented**: DIP-03 also describes *sender*-side decoding, where the
  * sender of an anonymous zap can later recognise their own private zaps by regenerating the
@@ -118,6 +125,33 @@ object PrivateZap {
         Json.parseToJsonElement(plaintext).jsonObject["kind"]?.jsonPrimitive?.intOrNull == PRIVATE_ZAP_KIND
     }.getOrDefault(false)
 
+    /**
+     * Forwards [forward] as a nip04_decrypt against [client] and checks the plaintext is actually
+     * a kind 9733 event, synthesising a failure with [INVALID_PRIVATE_ZAP_MESSAGE] when it is not
+     * -- the same "decryption failed" wording the firmware itself uses, so an invalid decrypted
+     * zap flows through the ordinary deterministic-failure/caching logic (see
+     * [dev.forgesworn.cambium.signer.isDeterministicDecryptFailure]) without any special casing at
+     * the call site. Shared by `SignerActivity.handleDecryptZapEvent` and
+     * `SignerProvider.queryDecryptZapEvent` so this block exists exactly once.
+     */
+    suspend fun decryptAndValidate(client: HeartwoodClient, forward: ZapDecodeResult.Forward): HeartwoodResult<String> =
+        when (val decrypted = client.nip04Decrypt(forward.counterpartyPubkeyHex, forward.nip04Payload)) {
+            is HeartwoodResult.Success ->
+                if (isValidPrivateZapEvent(decrypted.value)) {
+                    decrypted
+                } else {
+                    HeartwoodResult.Failure(HeartwoodError.Protocol(INVALID_PRIVATE_ZAP_MESSAGE))
+                }
+            is HeartwoodResult.Failure -> decrypted
+        }
+
+    /** The one home for [CacheableDecrypt.Method.ZAP]'s key: the anon tag itself (the actual
+     * encrypted material), not the wrapper event's id/sig, so a re-requested zap under a
+     * re-serialised wrapper still hits the cache. */
+    fun cacheableFor(forward: ZapDecodeResult.Forward): CacheableDecrypt =
+        CacheableDecrypt(CacheableDecrypt.Method.ZAP, forward.counterpartyPubkeyHex, forward.anonTagValue)
+
     const val ZAP_REQUEST_KIND = 9734
     const val PRIVATE_ZAP_KIND = 9733
+    const val INVALID_PRIVATE_ZAP_MESSAGE = "decryption failed: not a kind 9733 event"
 }

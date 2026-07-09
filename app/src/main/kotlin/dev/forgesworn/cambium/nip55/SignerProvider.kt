@@ -157,11 +157,12 @@ class SignerProvider : ContentProvider() {
      * slot) to turn the zap request's `anon` tag into an ordinary nip04_decrypt call. Anything
      * that isn't a decryptable private zap -- wrong kind, no `anon` tag (an ordinary public zap),
      * a malformed `anon` tag, or a structurally broken event -- answers `rejected` immediately;
-     * all are deterministic, local problems that a relay round trip cannot fix. On a successful
-     * decrypt, [PrivateZap.isValidPrivateZapEvent] checks the plaintext is actually a kind 9733
-     * event; a plaintext that fails that check is turned into a failure using the same
-     * "decryption failed" wording the firmware uses, so it flows through the existing
-     * deterministic-failure/caching logic in [forward] without any special casing there.
+     * all are deterministic, local problems that a relay round trip cannot fix. On a `Forward`,
+     * [PrivateZap.decryptAndValidate] and [PrivateZap.cacheableFor] are the single shared home for
+     * the decrypt-then-check-kind-9733 call and its cache key -- `SignerActivity.handleDecryptZapEvent`
+     * uses the exact same two calls -- so a plaintext that fails the kind-9733 check flows through
+     * the existing deterministic-failure/caching logic in [forward] without any special casing
+     * here.
      */
     private fun queryDecryptZapEvent(projection: Array<out String>?): Cursor? = withApprovedCaller { caller ->
         val pairing = requirePairing(caller) ?: return@withApprovedCaller null
@@ -184,30 +185,14 @@ class SignerProvider : ContentProvider() {
                 Log.i(TAG, "silent decrypt_zap_event from $caller declined: ${decoded.reason}")
                 rejectedCursor()
             }
-            is ZapDecodeResult.Forward -> {
-                // Keyed on the anon tag itself (the actual encrypted material), not the wrapper
-                // event's id/sig, so re-requesting the same zap under a re-serialised wrapper
-                // still hits.
-                val cacheable = CacheableDecrypt(CacheableDecrypt.Method.ZAP, decoded.counterpartyPubkeyHex, decoded.anonTagValue)
-                forward(
-                    caller,
-                    pairing,
-                    decoded.nip04Payload,
-                    decoded.counterpartyPubkeyHex,
-                    includeEventAndSignature = false,
-                    cacheable,
-                ) { client, payload, otherPubkey ->
-                    when (val decrypted = client.nip04Decrypt(otherPubkey, payload)) {
-                        is HeartwoodResult.Success ->
-                            if (PrivateZap.isValidPrivateZapEvent(decrypted.value)) {
-                                decrypted
-                            } else {
-                                HeartwoodResult.Failure(HeartwoodError.Protocol("decryption failed: not a kind 9733 event"))
-                            }
-                        is HeartwoodResult.Failure -> decrypted
-                    }
-                }
-            }
+            is ZapDecodeResult.Forward -> forward(
+                caller,
+                pairing,
+                decoded.nip04Payload,
+                decoded.counterpartyPubkeyHex,
+                includeEventAndSignature = false,
+                cacheable = PrivateZap.cacheableFor(decoded),
+            ) { client, _, _ -> PrivateZap.decryptAndValidate(client, decoded) }
         }
     }
 
