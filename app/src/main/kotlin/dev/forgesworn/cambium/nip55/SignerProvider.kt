@@ -9,10 +9,12 @@ import android.os.SystemClock
 import android.util.Log
 import dev.forgesworn.cambium.pairing.Pairing
 import dev.forgesworn.cambium.pairing.PairingStore
+import dev.forgesworn.cambium.signer.CacheableDecrypt
 import dev.forgesworn.cambium.signer.HeartwoodClient
 import dev.forgesworn.cambium.signer.HeartwoodError
 import dev.forgesworn.cambium.signer.HeartwoodResult
 import dev.forgesworn.cambium.signer.HeartwoodSession
+import dev.forgesworn.cambium.signer.isDeterministicDecryptFailure
 import kotlinx.coroutines.runBlocking
 
 /**
@@ -46,14 +48,20 @@ import kotlinx.coroutines.runBlocking
  * requests behind a flood of drafts in testing.
  *
  * An explicit policy refusal from Heartwood (error text containing a refusal keyword -- see
- * [REFUSAL_KEYWORDS]) answers a `rejected` cursor rather than `null`, so a client stops
- * escalating a policy-blocked request to the visible flow every couple of seconds. Everything
- * else that cannot be answered here -- an unapproved/unpaired caller, a missing argument, the
- * worker queue being full, a timeout, or any other failure -- answers `null` (defer to the
- * intent). The caller is always taken from [getCallingPackage], never from query arguments -- a
- * caller cannot claim to be someone else by passing a different package name in. Forwarding
- * arguments arrive in the `projection` array as `[payload, otherPubkey, currentUser]` -- that is
- * how Amber's real clients pass them, despite the NIP-55 text describing `selectionArgs`.
+ * [REFUSAL_KEYWORDS]) or a deterministic decrypt failure (see
+ * [dev.forgesworn.cambium.signer.isDeterministicDecryptFailure]) answers a `rejected` cursor
+ * rather than `null`, so a client stops escalating a blocked or unrecoverable request to the
+ * visible flow every couple of seconds. Everything else that cannot be answered here -- an
+ * unapproved/unpaired caller, a missing argument, the worker queue being full, a timeout, or any
+ * other failure -- answers `null` (defer to the intent). The caller is always taken from
+ * [getCallingPackage], never from query arguments -- a caller cannot claim to be someone else by
+ * passing a different package name in. Forwarding arguments arrive in the `projection` array as
+ * `[payload, otherPubkey, currentUser]` -- that is how Amber's real clients pass them, despite the
+ * NIP-55 text describing `selectionArgs`.
+ *
+ * NIP04_DECRYPT and NIP44_DECRYPT results (successes and deterministic failures alike) are cached
+ * by [HeartwoodSession] itself -- see its class doc -- since Amethyst was observed re-requesting
+ * the same decrypt repeatedly while browsing, including legacy content that will never decrypt.
  *
  * Known gap: an unapproved caller and a permanently-*rejected* caller (as opposed to a
  * policy-refused one, see above) both get `null` today ("try the intent"); there is no persistent
@@ -83,7 +91,11 @@ class SignerProvider : ContentProvider() {
             client.nip04Encrypt(otherPubkey, payload)
         }
 
-        NIP04_DECRYPT_AUTHORITY -> queryForward(projection, requiresOtherPubkey = true) { client, payload, otherPubkey ->
+        NIP04_DECRYPT_AUTHORITY -> queryForward(
+            projection,
+            requiresOtherPubkey = true,
+            cacheMethod = CacheableDecrypt.Method.NIP04,
+        ) { client, payload, otherPubkey ->
             client.nip04Decrypt(otherPubkey, payload)
         }
 
@@ -91,7 +103,11 @@ class SignerProvider : ContentProvider() {
             client.nip44Encrypt(otherPubkey, payload)
         }
 
-        NIP44_DECRYPT_AUTHORITY -> queryForward(projection, requiresOtherPubkey = true) { client, payload, otherPubkey ->
+        NIP44_DECRYPT_AUTHORITY -> queryForward(
+            projection,
+            requiresOtherPubkey = true,
+            cacheMethod = CacheableDecrypt.Method.NIP44,
+        ) { client, payload, otherPubkey ->
             client.nip44Decrypt(otherPubkey, payload)
         }
 
@@ -120,18 +136,26 @@ class SignerProvider : ContentProvider() {
             return rejectedCursor()
         }
 
-        return forward(caller, pairing, payload, otherPubkey = "", includeEventAndSignature = true) { client, p, _ ->
-            client.signEvent(p)
-        }
+        return forward(
+            caller,
+            pairing,
+            payload,
+            otherPubkey = "",
+            includeEventAndSignature = true,
+            cacheable = null, // signs are never cached
+        ) { client, p, _ -> client.signEvent(p) }
     }
 
     /**
      * Shared path for the four NIP04/NIP44 authorities: resolves the caller and pairing, requires
-     * a payload and (for these methods) an other-party pubkey, then forwards.
+     * a payload and (for these methods) an other-party pubkey, then forwards. [cacheMethod] is
+     * non-null only for the two decrypt authorities -- decryption is deterministic and safe to
+     * cache; encryption (nonce freshness) is not, so it stays `null` there.
      */
     private fun queryForward(
         projection: Array<out String>?,
         requiresOtherPubkey: Boolean,
+        cacheMethod: CacheableDecrypt.Method? = null,
         call: suspend (HeartwoodClient, payload: String, otherPubkey: String) -> HeartwoodResult<String>,
     ): Cursor? {
         val caller = resolveApprovedCaller() ?: return null
@@ -144,7 +168,8 @@ class SignerProvider : ContentProvider() {
             return null
         }
 
-        return forward(caller, pairing, payload, otherPubkey.orEmpty(), includeEventAndSignature = false, call)
+        val cacheable = cacheMethod?.let { CacheableDecrypt(it, otherPubkey.orEmpty(), payload) }
+        return forward(caller, pairing, payload, otherPubkey.orEmpty(), includeEventAndSignature = false, cacheable, call)
     }
 
     private fun resolveApprovedCaller(): String? {
@@ -177,9 +202,11 @@ class SignerProvider : ContentProvider() {
     }
 
     /**
-     * Submits to [HeartwoodSession]'s admission-controlled worker and blocks this binder thread
-     * for the result. Returns `null` if the worker's queue is already full, the call times out, or
-     * fails for a reason other than an explicit policy refusal (see class doc).
+     * Submits to [HeartwoodSession]'s cache/admission-controlled worker and blocks this binder
+     * thread for the result -- unless [cacheable] is a hit, in which case [HeartwoodSession]
+     * answers before ever touching the queue. Returns `null` if the worker's queue is already
+     * full, the call times out, or fails for a reason other than an explicit policy refusal or a
+     * deterministic decrypt failure (see class doc).
      */
     private fun forward(
         caller: String,
@@ -187,11 +214,12 @@ class SignerProvider : ContentProvider() {
         payload: String,
         otherPubkey: String,
         includeEventAndSignature: Boolean,
+        cacheable: CacheableDecrypt?,
         call: suspend (HeartwoodClient, String, String) -> HeartwoodResult<String>,
     ): Cursor? {
         val startedAt = SystemClock.elapsedRealtime()
         val result = runBlocking {
-            HeartwoodSession.trySilent(pairing) { client -> call(client, payload, otherPubkey) }
+            HeartwoodSession.trySilent(pairing, cacheable) { client -> call(client, payload, otherPubkey) }
         }
         val elapsed = SystemClock.elapsedRealtime() - startedAt
 
@@ -206,8 +234,8 @@ class SignerProvider : ContentProvider() {
                 buildResultCursor(result.value, includeEventAndSignature)
             }
             is HeartwoodResult.Failure -> {
-                if (isPolicyRefusal(result.error)) {
-                    Log.i(TAG, "silent forward for $caller policy-refused after ${elapsed}ms (${result.error}); answering rejected")
+                if (isPolicyRefusal(result.error) || isDeterministicDecryptFailure(result.error)) {
+                    Log.i(TAG, "silent forward for $caller refused after ${elapsed}ms (${result.error}); answering rejected")
                     rejectedCursor()
                 } else {
                     Log.w(TAG, "silent forward for $caller failed after ${elapsed}ms (${result.error}); deferring to intent")

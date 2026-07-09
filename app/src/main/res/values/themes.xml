@@ -22,4 +22,16 @@
         <item name="android:backgroundDimEnabled">true</item>
         <item name="android:backgroundDimAmount">0.6</item>
     </style>
+
+    <style name="Theme.Cambium.Invisible">
+        <!-- No dim, no animation, no starting-window preview: an already-approved caller must see
+             nothing at all, not even a brief flash, while SignerActivity forwards its request. -->
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowIsFloating">false</item>
+        <item name="android:backgroundDimEnabled">false</item>
+        <item name="android:windowAnimationStyle">@null</item>
+        <item name="android:windowDisablePreview">true</item>
+    </style>
 </resources>

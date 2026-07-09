@@ -64,14 +64,36 @@ Amethyst / Primal / Voyage ...
   request reconnects against the pairing that was just confirmed. It is not routed through the
   worker queue -- it is a single, foreground, user-initiated action that never overlaps with
   itself -- but it does get the same `NonCancellable` protection as everything else.
+
+  Continued daily use surfaced a third finding: Amethyst re-requests the same nip04/nip44 decrypt
+  repeatedly while browsing, including legacy content that will never decrypt ("Could not
+  decrypt" items), each retry costing a full round trip. Both `trySilent` and `withClient` now
+  consult `DecryptCache` (see `DecryptCache.kt`) *before* the queue at all when the caller passes
+  a `CacheableDecrypt` key -- a hit answers instantly, never reaching the worker. Successes are
+  always cached; failures are cached only when `isDeterministicDecryptFailure` recognises the
+  firmware's "decryption failed" wording -- a timeout, a connect error, or an "unauthorised"
+  refusal are all transient/repairable and must never be cached. Signs and encrypts are never
+  cacheable (nonce freshness). `HeartwoodSession.shutdown()` clears the cache alongside the
+  session. Admission-control shedding (queue already at `MAX_QUEUED`) logs a rate-limited summary
+  line (about once a minute) so future tuning of the queue depth has real data to work from.
+- `signer/DecryptCache.kt` -- pure Kotlin (no Android), JVM-testable: a small in-memory LRU
+  (~512 entries, keyed on method + counterparty pubkey + a sha-256 of the payload so the key size
+  is bounded regardless of payload length) plus `isDeterministicDecryptFailure`, the classifier
+  that decides whether a failure is safe to cache.
 - `nip55/Nip55Request.kt` -- pure Kotlin parser from a plain `RawSignerIntent` data class to a
   sealed `Nip55Request`. JVM-testable; the actual `android.content.Intent` mapping is a single
   private extension function in `SignerActivity.kt`.
-- `nip55/SignerActivity.kt` -- exported, translucent/modal activity (see `Theme.Cambium.Dialog`)
-  handling `nostrsigner:` intents: approval sheet, forwards to `HeartwoodClient`, answers
-  `get_public_key` from the pairing record directly (no relay round trip needed once paired).
-  `singleTop` with `onNewIntent` handling, since a client can fire a second request before the
-  user dismisses the first (e.g. `sign_event` right after `get_public_key`).
+- `nip55/SignerActivity.kt` -- exported activity handling `nostrsigner:` intents. Genuinely
+  invisible for an already-approved caller: `Theme.Cambium.Invisible` is swapped in via `setTheme`
+  before any window setup, no content view is ever set, and the request just runs on
+  `HeartwoodSession`'s worker with a `setResult`/`finish()` at the end -- daily use showed the
+  translucent/dimmed `Theme.Cambium.Dialog` overlay (still used for the *first* approval of a
+  calling app) appearing on every subsequent request otherwise, not just at login. This
+  approved-or-not decision (`silent`) is made once in `onCreate` and reused for the instance's
+  lifetime, not re-evaluated in `onNewIntent`, since swapping a visible theme for an invisible one
+  after the window already exists is unreliable. `singleTop` with `onNewIntent` handling, since a
+  client can fire a second request before the user dismisses the first (e.g. `sign_event` right
+  after `get_public_key`).
 - `nip55/SignerProvider.kt` -- exported content provider, the NIP-55 "silent" path. A live test
   showed Amethyst queries this provider for *every* operation once an app is approved, not just
   get_public_key, and can burst around ten concurrent queries while the user is typing (drafts
@@ -88,15 +110,18 @@ Amethyst / Primal / Voyage ...
   `SIGN_EVENT` declines NIP-37 draft events (kind 31234) immediately, without forwarding or
   joining the queue: Amethyst auto-saves a draft roughly every 2s while typing, which floods a
   1-2s hardware round trip and buries real requests behind it. An explicit policy refusal from
-  Heartwood (error text containing "unauthorised"/"unauthorized"/"not allowed"/"refused") answers
-  a `rejected` cursor rather than `null`, so a client stops re-escalating a policy-blocked request
-  to the visible flow every couple of seconds. Both of those are answered with a distinct
-  `rejected` cursor column that clients should treat as terminal (no intent fallback). Everything
-  else that cannot be answered here -- an unapproved/unpaired caller, a missing argument, the
-  worker queue being full, a timeout, or any other failure -- returns `null` so the client falls
-  back to the intent. The caller is always taken from `getCallingPackage`, never from query
-  arguments. Diagnostic logging (tag `CambiumProvider`) covers every refusal path and timing for
-  each forward, added during live-device debugging and kept deliberately.
+  Heartwood (error text containing "unauthorised"/"unauthorized"/"not allowed"/"refused"/"denied")
+  or a deterministic decrypt failure (see `DecryptCache.kt`'s `isDeterministicDecryptFailure`)
+  answers a `rejected` cursor rather than `null`, so a client stops re-escalating a blocked or
+  unrecoverable request to the visible flow every couple of seconds. Both are answered with a
+  distinct `rejected` cursor column that clients should treat as terminal (no intent fallback).
+  `NIP04_DECRYPT`/`NIP44_DECRYPT` results are cached by `HeartwoodSession` before admission control
+  -- see its class doc. Everything else that cannot be answered here -- an unapproved/unpaired
+  caller, a missing argument, the worker queue being full, a timeout, or any other failure --
+  returns `null` so the client falls back to the intent. The caller is always taken from
+  `getCallingPackage`, never from query arguments. Diagnostic logging (tag `CambiumProvider`)
+  covers every refusal path and timing for each forward, added during live-device debugging and
+  kept deliberately.
 - `nip55/EventJson.kt` -- tiny shared helpers (`extractEventKind`, `extractEventSignatureHex`) used
   by both `SignerActivity` (approval sheet, legacy `signature` extra) and `SignerProvider` (the
   `signature` cursor column for forwarded `SIGN_EVENT`).
@@ -140,13 +165,21 @@ Amethyst / Primal / Voyage ...
   unwrapping is different from a plain nip44_decrypt and hasn't been built. Because it isn't
   recognised as a method in `Nip55Request` either, a zap that falls through to the intent path
   gets auto-rejected rather than shown to the user -- fixing that also needs the zap-unwrap logic.
+- The decrypt cache (`DecryptCache`) has no eviction on staleness beyond LRU size, and no
+  per-pairing partitioning -- unpairing clears it entirely via `HeartwoodSession.shutdown()`, but
+  re-pairing with a *different* signer inside the same process would need the same clear (already
+  covered, since `save()` in `MainActivity` also calls `shutdown()`), and there is no defence
+  against a cached plaintext outliving its usefulness if the counterparty rotates keys.
 - Multi-signer support (v1 pairs exactly one Heartwood).
 - NIP-55 single-intent batch requests (the `results` JSON-array response) -- currently each
   intent is handled individually, though `SignerActivity` does handle multiple *separate* intents
   arriving in sequence via `onNewIntent`.
 - The NIP-37 draft-decline (kind 31234) is a hardcoded constant in `SignerProvider`, not a user
-  setting; `HeartwoodSession`'s queue depth (3) and timeouts (15s silent, 20s intent) are likewise
-  hardcoded rather than configurable.
+  setting; `HeartwoodSession`'s queue depth (3), timeouts (15s silent, 20s intent), and
+  `DecryptCache`'s size (512 entries) are likewise hardcoded rather than configurable. The queue
+  depth in particular has not been revisited since the cache landed -- the shed-count log line
+  (tag `HeartwoodSession`, about once a minute when shedding) exists specifically to gather real
+  data on whether 3 is still the right number now that repeat decrypts rarely reach the queue.
 - The suspected root cause of the one observed process death (concurrent + cancelled rust-nostr
   calls corrupting native state) is a diagnosis from live-test symptoms, not a confirmed repro in
   a controlled setting -- the single-worker gate and `NonCancellable` wrapping address every

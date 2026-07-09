@@ -1,5 +1,6 @@
 package dev.forgesworn.cambium.signer
 
+import android.util.Log
 import dev.forgesworn.cambium.pairing.BunkerUri
 import dev.forgesworn.cambium.pairing.Pairing
 import kotlinx.coroutines.CompletableDeferred
@@ -24,6 +25,7 @@ import rust.nostr.sdk.UnsignedEvent
 import java.time.Duration
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * This is the only file in Cambium that imports `rust.nostr.sdk`. Everything else talks to
@@ -185,11 +187,20 @@ fun npubDisplay(pubkeyHex: String): String = runCatching {
  * immediately instead of adding a fourth. [withClient] (the intent path) always queues -- the user
  * is already looking at a progress overlay -- but shares the exact same worker, so a popup can
  * never run concurrently with a silent-path call either.
+ *
+ * A third live-use finding: Amethyst re-requests the same nip04/nip44 decrypt repeatedly while
+ * browsing, including content that deterministically cannot decrypt (legacy "Could not decrypt"
+ * items) -- each retry otherwise costs a full round trip, and there is no reason to ask Heartwood
+ * the same deterministic question twice. Both [trySilent] and [withClient] consult
+ * [DecryptCache] *before* touching the queue at all when the caller passes a [CacheableDecrypt];
+ * a hit answers instantly without ever reaching the worker.
  */
 object HeartwoodSession {
+    private const val TAG = "HeartwoodSession"
     private const val MAX_QUEUED = 3
     private const val SILENT_TIMEOUT_MILLIS = 15_000L
     private const val INTENT_TIMEOUT_MILLIS = 20_000L
+    private const val SHED_LOG_INTERVAL_MILLIS = 60_000L
 
     private val workerDispatcher = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "heartwood-worker").apply { isDaemon = true }
@@ -201,6 +212,9 @@ object HeartwoodSession {
     private var client: RustNostrHeartwoodClient? = null
     private var connectedSignerPubkey: String? = null
     private val queueDepth = AtomicInteger(0)
+    private val decryptCache = DecryptCache()
+    private val shedCount = AtomicInteger(0)
+    private val lastShedLogAt = AtomicLong(0L)
 
     private sealed interface Message {
         data class Call(
@@ -236,38 +250,80 @@ object HeartwoodSession {
     }
 
     /**
-     * Silent path ([dev.forgesworn.cambium.nip55.SignerProvider]'s `query()`): admission-controlled.
-     * Returns `null` immediately, without joining the queue, if [MAX_QUEUED] calls are already
-     * queued or running. A caller that gives up at its own timeout does not cancel the underlying
-     * job -- it keeps running on the worker regardless.
+     * Silent path ([dev.forgesworn.cambium.nip55.SignerProvider]'s `query()`): a [cacheable] hit
+     * answers instantly, before admission control is even consulted. Otherwise, returns `null`
+     * immediately, without joining the queue, if [MAX_QUEUED] calls are already queued or
+     * running. A caller that gives up at its own timeout does not cancel the underlying job -- it
+     * keeps running on the worker regardless.
      */
     suspend fun trySilent(
         pairing: Pairing,
+        cacheable: CacheableDecrypt? = null,
         operation: suspend (HeartwoodClient) -> HeartwoodResult<String>,
     ): HeartwoodResult<String>? {
-        if (!reserveSlot()) return null
-        return submitAndAwait(pairing, SILENT_TIMEOUT_MILLIS, operation)
+        cachedResult(cacheable)?.let { return it }
+
+        if (!reserveSlot()) {
+            recordShed()
+            return null
+        }
+        val result = submitAndAwait(pairing, SILENT_TIMEOUT_MILLIS, operation)
+        recordCacheOutcome(cacheable, result)
+        return result
     }
 
     /**
-     * Intent path ([dev.forgesworn.cambium.nip55.SignerActivity]): always queues -- the user is
-     * already looking at a progress overlay -- but shares the same single worker as [trySilent],
-     * so it can never run concurrently with a silent-path call.
+     * Intent path ([dev.forgesworn.cambium.nip55.SignerActivity]): a [cacheable] hit answers
+     * instantly, same as [trySilent]. Otherwise always queues -- the user is already looking at
+     * a progress overlay -- but shares the same single worker as [trySilent], so it can never run
+     * concurrently with a silent-path call either.
      */
     suspend fun withClient(
         pairing: Pairing,
+        cacheable: CacheableDecrypt? = null,
         operation: suspend (HeartwoodClient) -> HeartwoodResult<String>,
     ): HeartwoodResult<String> {
+        cachedResult(cacheable)?.let { return it }
+
         queueDepth.incrementAndGet()
-        return submitAndAwait(pairing, INTENT_TIMEOUT_MILLIS, operation)
-            ?: HeartwoodResult.Failure(HeartwoodError.Timeout)
+        val result = submitAndAwait(pairing, INTENT_TIMEOUT_MILLIS, operation)
+        recordCacheOutcome(cacheable, result)
+        return result ?: HeartwoodResult.Failure(HeartwoodError.Timeout)
     }
 
-    /** Drops the held session. Call on unpair, and after persisting a freshly-tested pairing. */
+    /** Drops the held session and the decrypt cache. Call on unpair, and after persisting a
+     * freshly-tested pairing. */
     suspend fun shutdown() {
+        decryptCache.clear()
         val deferred = CompletableDeferred<Unit>()
         inbox.send(Message.Shutdown(deferred))
         deferred.await()
+    }
+
+    private fun cachedResult(cacheable: CacheableDecrypt?): HeartwoodResult<String>? {
+        val key = cacheable ?: return null
+        return when (val cached = decryptCache.get(key)) {
+            is CachedOutcome.Success -> HeartwoodResult.Success(cached.value)
+            is CachedOutcome.DeterministicFailure -> HeartwoodResult.Failure(HeartwoodError.Protocol(cached.message))
+            null -> null
+        }
+    }
+
+    /**
+     * Populates the cache from a live outcome. [result] is `null` on a timeout -- never cached,
+     * since that is transient. A failure is only cached when it is a deterministic "cannot
+     * decrypt this" answer (see [isDeterministicDecryptFailure]); anything else (queue-full,
+     * connect errors, an "unauthorised"/policy refusal) is repairable and must be retried.
+     */
+    private fun recordCacheOutcome(cacheable: CacheableDecrypt?, result: HeartwoodResult<String>?) {
+        val key = cacheable ?: return
+        when (result) {
+            null -> Unit
+            is HeartwoodResult.Success -> decryptCache.putSuccess(key, result.value)
+            is HeartwoodResult.Failure -> if (isDeterministicDecryptFailure(result.error)) {
+                decryptCache.putDeterministicFailure(key, (result.error as HeartwoodError.Protocol).message)
+            }
+        }
     }
 
     private fun reserveSlot(): Boolean {
@@ -275,6 +331,18 @@ object HeartwoodSession {
             val current = queueDepth.get()
             if (current >= MAX_QUEUED) return false
             if (queueDepth.compareAndSet(current, current + 1)) return true
+        }
+    }
+
+    /** Rate-limited to about once a minute so a sustained burst doesn't spam logcat, but still
+     * gives future tuning a read on how often silent-path admission control is actually shedding. */
+    private fun recordShed() {
+        val count = shedCount.incrementAndGet()
+        val now = System.currentTimeMillis()
+        val last = lastShedLogAt.get()
+        if (now - last >= SHED_LOG_INTERVAL_MILLIS && lastShedLogAt.compareAndSet(last, now)) {
+            Log.w(TAG, "shed: queue full x$count in the last minute (MAX_QUEUED=$MAX_QUEUED)")
+            shedCount.set(0)
         }
     }
 
