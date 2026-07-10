@@ -144,6 +144,32 @@
             android:textSize="11sp" />
     </LinearLayout>
 
+    <!-- Only shown when more than one identity is paired: Approve otherwise always means the
+         sole pairing, same as when Cambium only ever paired one Heartwood. -->
+    <LinearLayout
+        android:id="@+id/identityRow"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:orientation="horizontal"
+        android:visibility="gone"
+        tools:visibility="visible">
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:fontFamily="monospace"
+            android:text="@string/approval_identity_label"
+            android:textColor="@color/on_background_muted" />
+
+        <Spinner
+            android:id="@+id/identityPicker"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="2" />
+    </LinearLayout>
+
     <LinearLayout
         android:id="@+id/decisionGroup"
         android:layout_width="match_parent"

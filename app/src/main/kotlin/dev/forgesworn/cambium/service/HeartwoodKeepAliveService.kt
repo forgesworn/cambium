@@ -49,13 +49,19 @@ import kotlinx.coroutines.launch
  * `javap` against the actual AAR: `NostrConnect`/`NostrConnectInterface` have no `ping` method).
  *
  * The ping goes through [HeartwoodSession.trySilent], the shedding path, not [HeartwoodSession.withClient]:
- * a real request against a slow or unreachable Heartwood can occupy the single worker for up to
- * [HeartwoodSession]'s silent timeout, and `withClient` always queues regardless of how busy the
- * worker already is, which would let a ping inflate queue depth against `MAX_QUEUED` and get a
- * real Amethyst burst shed into visible popups -- the exact regression the queue exists to
+ * a real request against a slow or unreachable Heartwood can occupy that identity's worker for up
+ * to [HeartwoodSession]'s silent timeout, and `withClient` always queues regardless of how busy
+ * the worker already is, which would let a ping inflate queue depth against `MAX_QUEUED` and get
+ * a real Amethyst burst shed into visible popups -- the exact regression the queue exists to
  * prevent. `trySilent` refuses immediately if the queue is non-empty, which is also the right
  * behaviour here on its own terms: a busy queue means the session is demonstrably warm already,
  * so a skipped ping loses nothing.
+ *
+ * One cycle pings every paired identity in turn, not just one -- each has its own
+ * [HeartwoodSession] worker and admission control (see its class doc), so a slow/unreachable
+ * identity's ping can never delay or shed another identity's. With a realistic handful of paired
+ * signers this stays well inside [PING_INTERVAL_MILLIS]; there is no per-identity scheduling here,
+ * only a single sequential sweep every cycle.
  */
 class HeartwoodKeepAliveService : Service() {
 
@@ -102,14 +108,17 @@ class HeartwoodKeepAliveService : Service() {
         pingJob?.cancel()
         pingJob = scope.launch {
             while (isActive) {
-                val pairing = pairingStore.current()
-                if (pairing == null || !pairingStore.isKeepAliveEnabled()) {
+                val pairings = pairingStore.pairings()
+                if (pairings.isEmpty() || !pairingStore.isKeepAliveEnabled()) {
                     break
                 }
-                when (val result = HeartwoodSession.trySilent(pairing) { it.getPublicKey() }) {
-                    is HeartwoodResult.Success -> Log.d(TAG, "keepalive ping ok")
-                    is HeartwoodResult.Failure -> Log.d(TAG, "keepalive ping failed: ${result.error}")
-                    null -> Log.d(TAG, "keepalive ping skipped: worker already busy")
+                for (pairing in pairings) {
+                    val tag = pairing.signerPubkeyHex.take(8)
+                    when (val result = HeartwoodSession.trySilent(pairing) { it.getPublicKey() }) {
+                        is HeartwoodResult.Success -> Log.d(TAG, "keepalive ping ok ($tag)")
+                        is HeartwoodResult.Failure -> Log.d(TAG, "keepalive ping failed ($tag): ${result.error}")
+                        null -> Log.d(TAG, "keepalive ping skipped ($tag): worker already busy")
+                    }
                 }
                 delay(PING_INTERVAL_MILLIS)
             }

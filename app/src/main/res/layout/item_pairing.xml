@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:paddingVertical="8dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <TextView
+                android:id="@+id/pairingLabelValue"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:fontFamily="monospace"
+                android:textColor="@color/on_background"
+                tools:text="Living room Heartwood" />
+
+            <TextView
+                android:id="@+id/pairingNpubValue"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:fontFamily="monospace"
+                android:textColor="@color/on_background_muted"
+                android:textIsSelectable="true"
+                android:textSize="11sp"
+                tools:text="npub1exampleexampleexampleexampleexampleexampleexampleexamplex" />
+
+            <TextView
+                android:id="@+id/pairingRelaysValue"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:fontFamily="monospace"
+                android:textColor="@color/on_background_muted"
+                android:textSize="11sp"
+                tools:text="wss://relay.example" />
+        </LinearLayout>
+
+        <Button
+            android:id="@+id/pairingUnpairButton"
+            style="@style/Widget.Material3.Button.TextButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:fontFamily="monospace"
+            android:text="@string/unpair_button"
+            android:textColor="@color/danger" />
+    </LinearLayout>
+
+</LinearLayout>

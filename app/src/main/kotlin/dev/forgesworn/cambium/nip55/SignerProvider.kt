@@ -10,6 +10,7 @@ import android.util.Log
 import dev.forgesworn.cambium.nip57.PrivateZap
 import dev.forgesworn.cambium.nip57.ZapDecodeResult
 import dev.forgesworn.cambium.pairing.AppPermissionState
+import dev.forgesworn.cambium.pairing.IdentityRouting
 import dev.forgesworn.cambium.pairing.Pairing
 import dev.forgesworn.cambium.pairing.PairingStore
 import dev.forgesworn.cambium.signer.CacheableDecrypt
@@ -63,6 +64,14 @@ import kotlinx.coroutines.runBlocking
  * passing a different package name in. Forwarding arguments arrive in the `projection` array as
  * `[payload, otherPubkey, currentUser]` -- that is how Amber's real clients pass them, despite the
  * NIP-55 text describing `selectionArgs`.
+ *
+ * `currentUser` (index 2) is resolved to a pairing via [IdentityRouting.resolve] in
+ * [requirePairing], same precedence as the intent path: an explicit `current_user` wins if it
+ * names an identity we have, else the caller's bound identity, else the sole pairing. A
+ * `current_user` naming an identity we don't have, or no identity resolving at all (more than one
+ * pairing, no `current_user`, no binding -- should not normally happen for an approved caller,
+ * since approving always binds), both answer `null` here -- there is no way to ask which identity
+ * was meant from the silent path, so it defers to the intent rather than guessing.
  *
  * NIP04_DECRYPT and NIP44_DECRYPT results (successes and deterministic failures alike) are cached
  * by [HeartwoodSession] itself -- see its class doc -- since Amethyst was observed re-requesting
@@ -123,18 +132,18 @@ class SignerProvider : ContentProvider() {
         // goes through the visible intent, see the class doc -- but a *denied* caller still gets
         // the terminal `rejected` answer here, like every other authority, so a blocked app's
         // login probe cannot keep bouncing through the invisible intent path.
-        GET_PUBLIC_KEY_AUTHORITY -> withApprovedCaller { null }
+        GET_PUBLIC_KEY_AUTHORITY -> withApprovedCaller { _, _ -> null }
 
         else -> null
     }
 
-    private fun queryPing(): Cursor? = withApprovedCaller {
+    private fun queryPing(): Cursor? = withApprovedCaller { _, _ ->
         if (!pairingStore.isPaired()) return@withApprovedCaller null
         MatrixCursor(arrayOf(COLUMN_RESULT)).apply { addRow(arrayOf(PONG)) }
     }
 
-    private fun querySignEvent(projection: Array<out String>?): Cursor? = withApprovedCaller { caller ->
-        val pairing = requirePairing(caller) ?: return@withApprovedCaller null
+    private fun querySignEvent(projection: Array<out String>?): Cursor? = withApprovedCaller { caller, boundIdentity ->
+        val pairing = requirePairing(caller, boundIdentity, projection?.getOrNull(2)) ?: return@withApprovedCaller null
         val payload = requirePayload(caller, projection) ?: return@withApprovedCaller null
 
         if (extractEventKind(payload) == NIP37_DRAFT_KIND) {
@@ -164,8 +173,8 @@ class SignerProvider : ContentProvider() {
      * the existing deterministic-failure/caching logic in [forward] without any special casing
      * here.
      */
-    private fun queryDecryptZapEvent(projection: Array<out String>?): Cursor? = withApprovedCaller { caller ->
-        val pairing = requirePairing(caller) ?: return@withApprovedCaller null
+    private fun queryDecryptZapEvent(projection: Array<out String>?): Cursor? = withApprovedCaller { caller, boundIdentity ->
+        val pairing = requirePairing(caller, boundIdentity, projection?.getOrNull(2)) ?: return@withApprovedCaller null
         val eventJson = requirePayload(caller, projection) ?: return@withApprovedCaller null
 
         when (val decoded = PrivateZap.decodeAnonTag(eventJson)) {
@@ -207,8 +216,8 @@ class SignerProvider : ContentProvider() {
         requiresOtherPubkey: Boolean,
         cacheMethod: CacheableDecrypt.Method? = null,
         call: suspend (HeartwoodClient, payload: String, otherPubkey: String) -> HeartwoodResult<String>,
-    ): Cursor? = withApprovedCaller { caller ->
-        val pairing = requirePairing(caller) ?: return@withApprovedCaller null
+    ): Cursor? = withApprovedCaller { caller, boundIdentity ->
+        val pairing = requirePairing(caller, boundIdentity, projection?.getOrNull(2)) ?: return@withApprovedCaller null
         val payload = requirePayload(caller, projection) ?: return@withApprovedCaller null
 
         val otherPubkey = projection?.getOrNull(1)?.takeIf { it.isNotBlank() }
@@ -222,7 +231,7 @@ class SignerProvider : ContentProvider() {
     }
 
     private sealed interface CallerResolution {
-        data class Approved(val packageName: String) : CallerResolution
+        data class Approved(val packageName: String, val boundIdentityPubkeyHex: String?) : CallerResolution
         data object Denied : CallerResolution
         data object Unresolved : CallerResolution
     }
@@ -233,35 +242,52 @@ class SignerProvider : ContentProvider() {
             Log.w(TAG, "silent query refused: calling package unresolvable")
             return CallerResolution.Unresolved
         }
-        return when (pairingStore.permissionState(caller)) {
-            AppPermissionState.APPROVED -> CallerResolution.Approved(caller)
-            AppPermissionState.DENIED -> {
-                Log.i(TAG, "silent query from denied caller $caller; answering rejected")
-                CallerResolution.Denied
-            }
+        return when (val permission = pairingStore.permission(caller)) {
             null -> {
                 Log.i(TAG, "silent query from unapproved caller $caller; deferring to intent")
                 CallerResolution.Unresolved
             }
+            else -> when (permission.state) {
+                AppPermissionState.APPROVED -> CallerResolution.Approved(caller, permission.boundIdentityPubkeyHex)
+                AppPermissionState.DENIED -> {
+                    Log.i(TAG, "silent query from denied caller $caller; answering rejected")
+                    CallerResolution.Denied
+                }
+            }
         }
     }
 
-    /** Runs [block] for an approved caller; answers `rejected` immediately for a denied one
-     * (no [block] call at all); defers to the intent (`null`) for a caller with no remembered
-     * choice yet, or one that could not be resolved. */
-    private inline fun withApprovedCaller(block: (String) -> Cursor?): Cursor? =
+    /** Runs [block] for an approved caller, passing its bound identity along; answers `rejected`
+     * immediately for a denied one (no [block] call at all); defers to the intent (`null`) for a
+     * caller with no remembered choice yet, or one that could not be resolved. */
+    private inline fun withApprovedCaller(block: (caller: String, boundIdentityPubkeyHex: String?) -> Cursor?): Cursor? =
         when (val resolution = resolveCaller()) {
-            is CallerResolution.Approved -> block(resolution.packageName)
+            is CallerResolution.Approved -> block(resolution.packageName, resolution.boundIdentityPubkeyHex)
             CallerResolution.Denied -> rejectedCursor()
             CallerResolution.Unresolved -> null
         }
 
-    private fun requirePairing(caller: String): Pairing? {
-        val pairing = pairingStore.current()
-        if (pairing == null) {
-            Log.w(TAG, "silent query from $caller but no pairing stored")
+    /** Resolves which pairing this request should route to -- see the class doc's `currentUser`
+     * paragraph. `null` (defer to intent) covers every case that can't be answered silently:
+     * nothing paired, a `current_user` naming an identity we don't have, or no identity resolving
+     * at all. */
+    private fun requirePairing(caller: String, boundIdentityPubkeyHex: String?, rawCurrentUser: String?): Pairing? {
+        val pairings = pairingStore.pairings()
+        if (pairings.isEmpty()) {
+            Log.w(TAG, "silent query from $caller but nothing paired")
+            return null
         }
-        return pairing
+        return when (val routed = IdentityRouting.resolve(rawCurrentUser, boundIdentityPubkeyHex, pairings)) {
+            is IdentityRouting.Result.Resolved -> routed.pairing
+            IdentityRouting.Result.UnknownCurrentUser -> {
+                Log.w(TAG, "silent query from $caller named a current_user we don't have; deferring to intent")
+                null
+            }
+            IdentityRouting.Result.Ambiguous -> {
+                Log.w(TAG, "silent query from $caller ambiguous across ${pairings.size} pairings; deferring to intent")
+                null
+            }
+        }
     }
 
     private fun requirePayload(caller: String, projection: Array<out String>?): String? {

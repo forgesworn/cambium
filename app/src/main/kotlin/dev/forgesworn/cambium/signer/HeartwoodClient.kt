@@ -23,6 +23,7 @@ import rust.nostr.sdk.RelayOptions
 import rust.nostr.sdk.SecretKey
 import rust.nostr.sdk.UnsignedEvent
 import java.time.Duration
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
@@ -162,245 +163,283 @@ fun npubDisplay(pubkeyHex: String): String = runCatching {
     PublicKey.parse(pubkeyHex).toBech32()
 }.getOrElse { "${pubkeyHex.take(8)}…${pubkeyHex.takeLast(8)}" }
 
+/** [Pairing.label] if the user set one, else a truncated npub -- the one place display falls
+ * back, so `MainActivity`'s pairing list and connected-apps rows agree on what a pairing is called. */
+fun Pairing.displayLabel(): String = label?.takeIf { it.isNotBlank() } ?: npubDisplay(signerPubkeyHex)
+
 /**
- * Application-scoped Heartwood session shared by [dev.forgesworn.cambium.nip55.SignerActivity]
- * and [dev.forgesworn.cambium.nip55.SignerProvider]. Two problems surfaced in a live test against
- * a real device under load (Amethyst bursting ~10 provider queries while the user typed a reply):
- *
- * 1. **Concurrency.** The previous mutex-guarded design still let a caller's own timeout
- *    (`withTimeoutOrNull` in the content provider) cancel the *same coroutine* that was in the
- *    middle of an FFI call, because the mutex only serialised entry into the critical section --
- *    it did not stop the calling coroutine's own cancellation from reaching straight through it
- *    into `operation(...)`. Two requests came back `Protocol(unauthorised)` (consistent with a
- *    half-torn-down rust-nostr call), and the process died outright once (no Java exception --
- *    suspected native wedge from a cancelled in-flight call).
- * 2. **Queueing.** Everything shared one lock with no admission control, so a burst of silent
- *    queries piled up behind a 1.5-2s relay round trip and the tail ones blew their timeout,
- *    falling back to the visible intent -- a popup storm of its own, just delayed.
- *
- * The fix: every Heartwood call is handed to exactly one dedicated worker coroutine, running on
- * its own single-thread dispatcher, in a [CoroutineScope] with no parent -- nothing a caller does
- * can ever cancel work already handed to it. A caller gets its result via a [CompletableDeferred]
- * and waits on that (a safe cancellation point: giving up just stops waiting, the queued job runs
- * to completion regardless, which still warms the session for next time). [trySilent] additionally
- * sheds load: if [MAX_QUEUED] calls are already queued or running, it refuses new silent-path work
- * immediately instead of adding a fourth. [withClient] (the intent path) always queues -- the user
- * is already looking at a progress overlay -- but shares the exact same worker, so a popup can
- * never run concurrently with a silent-path call either.
- *
- * A third live-use finding: Amethyst re-requests the same nip04/nip44 decrypt repeatedly while
- * browsing, including content that deterministically cannot decrypt (legacy "Could not decrypt"
- * items) -- each retry otherwise costs a full round trip, and there is no reason to ask Heartwood
- * the same deterministic question twice. Both [trySilent] and [withClient] consult
- * [DecryptCache] *before* touching the queue at all when the caller passes a [CacheableDecrypt];
- * a hit answers instantly without ever reaching the worker.
+ * Registry of per-identity Heartwood sessions, keyed by signer pubkey, shared by
+ * [dev.forgesworn.cambium.nip55.SignerActivity] and [dev.forgesworn.cambium.nip55.SignerProvider].
+ * Cambium pairs more than one Heartwood identity from 0.3.0 on, and each identity's NIP-46
+ * connection, admission control and decrypt cache must stay fully isolated from every other
+ * identity's -- a burst of requests against identity A must never shed or slow down identity B,
+ * and a cached decrypt for A must never leak into B's answers. [Session] (below) is the exact
+ * single-pairing design this object used to *be* before 0.3.0, now instantiated once per signer
+ * pubkey instead of once for the whole app; every invariant it documents still holds, just scoped
+ * to one identity's worker instead of the app's only worker.
  */
 object HeartwoodSession {
-    private const val TAG = "HeartwoodSession"
-    private const val MAX_QUEUED = 3
-    private const val SILENT_TIMEOUT_MILLIS = 15_000L
-    private const val INTENT_TIMEOUT_MILLIS = 20_000L
-    private const val SHED_LOG_INTERVAL_MILLIS = 60_000L
+    private val sessions = ConcurrentHashMap<String, Session>()
 
-    private val workerDispatcher = Executors.newSingleThreadExecutor { runnable ->
-        Thread(runnable, "heartwood-worker").apply { isDaemon = true }
-    }.asCoroutineDispatcher()
-
-    // No parent job: nothing outside this object can cancel work already handed to the worker.
-    private val workerScope = CoroutineScope(SupervisorJob() + workerDispatcher)
-
-    private var client: RustNostrHeartwoodClient? = null
-    private var connectedSignerPubkey: String? = null
-    private val queueDepth = AtomicInteger(0)
-    private val decryptCache = DecryptCache()
-    private val shedCount = AtomicInteger(0)
-    private val lastShedLogAt = AtomicLong(0L)
-
-    private sealed interface Message {
-        data class Call(
-            val pairing: Pairing,
-            val operation: suspend (HeartwoodClient) -> HeartwoodResult<String>,
-            val deferred: CompletableDeferred<HeartwoodResult<String>>,
-        ) : Message
-
-        data class Shutdown(val deferred: CompletableDeferred<Unit>) : Message
-    }
-
-    private val inbox = Channel<Message>(capacity = Channel.UNLIMITED)
-
-    init {
-        workerScope.launch {
-            for (message in inbox) {
-                when (message) {
-                    is Message.Call -> {
-                        val result = runCatching { deliver(message.pairing, message.operation) }
-                            .getOrElse { e -> HeartwoodResult.Failure(HeartwoodError.Protocol(e.message ?: "worker error")) }
-                        queueDepth.decrementAndGet()
-                        message.deferred.complete(result)
-                    }
-                    is Message.Shutdown -> {
-                        client?.disconnect()
-                        client = null
-                        connectedSignerPubkey = null
-                        message.deferred.complete(Unit)
-                    }
-                }
-            }
-        }
-    }
-
-    /**
-     * Silent path ([dev.forgesworn.cambium.nip55.SignerProvider]'s `query()`): a [cacheable] hit
-     * answers instantly, before admission control is even consulted. Otherwise, returns `null`
-     * immediately, without joining the queue, if [MAX_QUEUED] calls are already queued or
-     * running. A caller that gives up at its own timeout does not cancel the underlying job -- it
-     * keeps running on the worker regardless.
-     */
     suspend fun trySilent(
         pairing: Pairing,
         cacheable: CacheableDecrypt? = null,
         operation: suspend (HeartwoodClient) -> HeartwoodResult<String>,
-    ): HeartwoodResult<String>? {
-        cachedResult(cacheable)?.let { return it }
+    ): HeartwoodResult<String>? = sessionFor(pairing).trySilent(pairing, cacheable, operation)
 
-        if (!reserveSlot()) {
-            recordShed()
-            return null
-        }
-        val result = submitAndAwait(pairing, SILENT_TIMEOUT_MILLIS, operation)
-        recordCacheOutcome(cacheable, result)
-        return result
-    }
-
-    /**
-     * Intent path ([dev.forgesworn.cambium.nip55.SignerActivity]): a [cacheable] hit answers
-     * instantly, same as [trySilent]. Otherwise always queues -- the user is already looking at
-     * a progress overlay -- but shares the same single worker as [trySilent], so it can never run
-     * concurrently with a silent-path call either.
-     */
     suspend fun withClient(
         pairing: Pairing,
         cacheable: CacheableDecrypt? = null,
         operation: suspend (HeartwoodClient) -> HeartwoodResult<String>,
-    ): HeartwoodResult<String> {
-        cachedResult(cacheable)?.let { return it }
+    ): HeartwoodResult<String> = sessionFor(pairing).withClient(pairing, cacheable, operation)
 
-        queueDepth.incrementAndGet()
-        val result = submitAndAwait(pairing, INTENT_TIMEOUT_MILLIS, operation)
-        recordCacheOutcome(cacheable, result)
-        return result ?: HeartwoodResult.Failure(HeartwoodError.Timeout)
+    /** Drops one identity's session and decrypt cache. Call after removing that one pairing, and
+     * after refreshing an existing pairing's connection details (relays/secret), so the next call
+     * reconnects against what was just persisted rather than reusing a stale client. */
+    suspend fun shutdown(signerPubkeyHex: String) {
+        sessions.remove(signerPubkeyHex)?.shutdown()
     }
 
-    /** Drops the held session and the decrypt cache. Call on unpair, and after persisting a
-     * freshly-tested pairing. */
-    suspend fun shutdown() {
-        decryptCache.clear()
-        val deferred = CompletableDeferred<Unit>()
-        inbox.send(Message.Shutdown(deferred))
-        deferred.await()
+    /** Drops every identity's session and decrypt cache. Call on a full reset (`PairingStore.clearAll`). */
+    suspend fun shutdownAll() {
+        val all = sessions.keys.mapNotNull { sessions.remove(it) }
+        all.forEach { it.shutdown() }
     }
 
-    private fun cachedResult(cacheable: CacheableDecrypt?): HeartwoodResult<String>? {
-        val key = cacheable ?: return null
-        return when (val cached = decryptCache.get(key)) {
-            is CachedOutcome.Success -> HeartwoodResult.Success(cached.value)
-            is CachedOutcome.DeterministicFailure -> HeartwoodResult.Failure(HeartwoodError.Protocol(cached.message))
-            null -> null
-        }
-    }
+    private fun sessionFor(pairing: Pairing): Session = sessions.getOrPut(pairing.signerPubkeyHex) { Session() }
 
     /**
-     * Populates the cache from a live outcome. [result] is `null` on a timeout -- never cached,
-     * since that is transient. A failure is only cached when it is a deterministic "cannot
-     * decrypt this" answer (see [isDeterministicDecryptFailure]); anything else (queue-full,
-     * connect errors, an "unauthorised"/policy refusal) is repairable and must be retried.
+     * One dedicated worker + decrypt cache for exactly one Heartwood identity. Two problems
+     * surfaced in a live test against a real device under load (Amethyst bursting ~10 provider
+     * queries while the user typed a reply), back when this design served the app's one and only
+     * pairing directly:
+     *
+     * 1. **Concurrency.** A mutex-guarded design still let a caller's own timeout
+     *    (`withTimeoutOrNull` in the content provider) cancel the *same coroutine* that was in the
+     *    middle of an FFI call, because the mutex only serialised entry into the critical section
+     *    -- it did not stop the calling coroutine's own cancellation from reaching straight
+     *    through it into `operation(...)`. Two requests came back `Protocol(unauthorised)`
+     *    (consistent with a half-torn-down rust-nostr call), and the process died outright once
+     *    (no Java exception -- suspected native wedge from a cancelled in-flight call).
+     * 2. **Queueing.** Everything shared one lock with no admission control, so a burst of silent
+     *    queries piled up behind a 1.5-2s relay round trip and the tail ones blew their timeout,
+     *    falling back to the visible intent -- a popup storm of its own, just delayed.
+     *
+     * The fix: every call against this identity is handed to exactly one dedicated worker
+     * coroutine, running on its own single-thread dispatcher, in a [CoroutineScope] with no
+     * parent -- nothing a caller does can ever cancel work already handed to it. A caller gets
+     * its result via a [CompletableDeferred] and waits on that (a safe cancellation point: giving
+     * up just stops waiting, the queued job runs to completion regardless, which still warms the
+     * session for next time). [trySilent] additionally sheds load: if [MAX_QUEUED] calls are
+     * already queued or running *for this identity*, it refuses new silent-path work immediately
+     * instead of adding a fourth -- admission control is per identity, so a burst against one
+     * paired signer can never shed a request against another. [withClient] (the intent path)
+     * always queues -- the user is already looking at a progress overlay -- but shares this same
+     * worker, so a popup can never run concurrently with a silent-path call against the same
+     * identity either.
+     *
+     * A third live-use finding: Amethyst re-requests the same nip04/nip44 decrypt repeatedly
+     * while browsing, including content that deterministically cannot decrypt (legacy "Could not
+     * decrypt" items) -- each retry otherwise costs a full round trip, and there is no reason to
+     * ask Heartwood the same deterministic question twice. Both [trySilent] and [withClient]
+     * consult [DecryptCache] *before* touching the queue at all when the caller passes a
+     * [CacheableDecrypt]; a hit answers instantly without ever reaching the worker. [decryptCache]
+     * is instantiated once per [Session] -- i.e. once per identity -- which is what makes it
+     * partitioned per pairing: a decrypt cached while talking to identity A can never answer a
+     * request routed to identity B, since B has its own, entirely separate cache instance.
      */
-    private fun recordCacheOutcome(cacheable: CacheableDecrypt?, result: HeartwoodResult<String>?) {
-        val key = cacheable ?: return
-        when (result) {
-            null -> Unit
-            is HeartwoodResult.Success -> decryptCache.putSuccess(key, result.value)
-            is HeartwoodResult.Failure -> if (isDeterministicDecryptFailure(result.error)) {
-                decryptCache.putDeterministicFailure(key, (result.error as HeartwoodError.Protocol).message)
+    private class Session {
+        private val workerDispatcher = Executors.newSingleThreadExecutor { runnable ->
+            Thread(runnable, "heartwood-worker").apply { isDaemon = true }
+        }.asCoroutineDispatcher()
+
+        // No parent job: nothing outside this session can cancel work already handed to the worker.
+        private val workerScope = CoroutineScope(SupervisorJob() + workerDispatcher)
+
+        private var client: RustNostrHeartwoodClient? = null
+        private val queueDepth = AtomicInteger(0)
+        private val decryptCache = DecryptCache()
+        private val shedCount = AtomicInteger(0)
+        private val lastShedLogAt = AtomicLong(0L)
+
+        private sealed interface Message {
+            data class Call(
+                val pairing: Pairing,
+                val operation: suspend (HeartwoodClient) -> HeartwoodResult<String>,
+                val deferred: CompletableDeferred<HeartwoodResult<String>>,
+            ) : Message
+
+            data class Shutdown(val deferred: CompletableDeferred<Unit>) : Message
+        }
+
+        private val inbox = Channel<Message>(capacity = Channel.UNLIMITED)
+
+        init {
+            workerScope.launch {
+                for (message in inbox) {
+                    when (message) {
+                        is Message.Call -> {
+                            val result = runCatching { deliver(message.pairing, message.operation) }
+                                .getOrElse { e -> HeartwoodResult.Failure(HeartwoodError.Protocol(e.message ?: "worker error")) }
+                            queueDepth.decrementAndGet()
+                            message.deferred.complete(result)
+                        }
+                        is Message.Shutdown -> {
+                            client?.disconnect()
+                            client = null
+                            message.deferred.complete(Unit)
+                        }
+                    }
+                }
             }
         }
-    }
 
-    private fun reserveSlot(): Boolean {
-        while (true) {
-            val current = queueDepth.get()
-            if (current >= MAX_QUEUED) return false
-            if (queueDepth.compareAndSet(current, current + 1)) return true
-        }
-    }
+        suspend fun trySilent(
+            pairing: Pairing,
+            cacheable: CacheableDecrypt?,
+            operation: suspend (HeartwoodClient) -> HeartwoodResult<String>,
+        ): HeartwoodResult<String>? {
+            cachedResult(cacheable)?.let { return it }
 
-    /** Rate-limited to about once a minute so a sustained burst doesn't spam logcat, but still
-     * gives future tuning a read on how often silent-path admission control is actually shedding. */
-    private fun recordShed() {
-        val count = shedCount.incrementAndGet()
-        val now = System.currentTimeMillis()
-        val last = lastShedLogAt.get()
-        if (now - last >= SHED_LOG_INTERVAL_MILLIS && lastShedLogAt.compareAndSet(last, now)) {
-            Log.w(TAG, "shed: queue full x$count in the last minute (MAX_QUEUED=$MAX_QUEUED)")
-            shedCount.set(0)
-        }
-    }
-
-    private suspend fun submitAndAwait(
-        pairing: Pairing,
-        timeoutMillis: Long,
-        operation: suspend (HeartwoodClient) -> HeartwoodResult<String>,
-    ): HeartwoodResult<String>? {
-        val deferred = CompletableDeferred<HeartwoodResult<String>>()
-        inbox.send(Message.Call(pairing, operation, deferred))
-        // Only this wait is cancellable -- the job itself runs on the worker regardless of
-        // whether we give up on it here (see the class doc for why that matters).
-        return withTimeoutOrNull(timeoutMillis) { deferred.await() }
-    }
-
-    /** Runs on the worker thread only: reconnects if the held session is missing/stale, then runs
-     * [operation], retrying once against a fresh connection if it fails. */
-    private suspend fun deliver(
-        pairing: Pairing,
-        operation: suspend (HeartwoodClient) -> HeartwoodResult<String>,
-    ): HeartwoodResult<String> {
-        val cachedClient = client
-        val connected = if (cachedClient != null && connectedSignerPubkey == pairing.signerPubkeyHex) {
-            HeartwoodResult.Success(cachedClient)
-        } else {
-            reconnect(pairing)
-        }
-
-        val active = when (connected) {
-            is HeartwoodResult.Success -> connected.value
-            is HeartwoodResult.Failure -> return connected
-        }
-
-        val result = operation(active)
-        if (result is HeartwoodResult.Success) return result
-
-        val retried = when (val reconnected = reconnect(pairing)) {
-            is HeartwoodResult.Success -> reconnected.value
-            is HeartwoodResult.Failure -> return result
-        }
-        return operation(retried)
-    }
-
-    /** Runs on the worker thread only. */
-    private suspend fun reconnect(pairing: Pairing): HeartwoodResult<HeartwoodClient> {
-        client?.disconnect()
-        client = null
-        connectedSignerPubkey = null
-
-        val fresh = RustNostrHeartwoodClient()
-        val bunkerUri = BunkerUri(pairing.signerPubkeyHex, pairing.relays, pairing.secret).toUriString()
-        return when (val connected = fresh.connect(bunkerUri, pairing.clientSecretKeyHex)) {
-            is HeartwoodResult.Success -> {
-                client = fresh
-                connectedSignerPubkey = pairing.signerPubkeyHex
-                HeartwoodResult.Success(fresh)
+            if (!reserveSlot()) {
+                recordShed()
+                return null
             }
-            is HeartwoodResult.Failure -> connected
+            val result = submitAndAwait(pairing, SILENT_TIMEOUT_MILLIS, operation)
+            recordCacheOutcome(cacheable, result)
+            return result
+        }
+
+        suspend fun withClient(
+            pairing: Pairing,
+            cacheable: CacheableDecrypt?,
+            operation: suspend (HeartwoodClient) -> HeartwoodResult<String>,
+        ): HeartwoodResult<String> {
+            cachedResult(cacheable)?.let { return it }
+
+            queueDepth.incrementAndGet()
+            val result = submitAndAwait(pairing, INTENT_TIMEOUT_MILLIS, operation)
+            recordCacheOutcome(cacheable, result)
+            return result ?: HeartwoodResult.Failure(HeartwoodError.Timeout)
+        }
+
+        suspend fun shutdown() {
+            decryptCache.clear()
+            val deferred = CompletableDeferred<Unit>()
+            inbox.send(Message.Shutdown(deferred))
+            deferred.await()
+        }
+
+        private fun cachedResult(cacheable: CacheableDecrypt?): HeartwoodResult<String>? {
+            val key = cacheable ?: return null
+            return when (val cached = decryptCache.get(key)) {
+                is CachedOutcome.Success -> HeartwoodResult.Success(cached.value)
+                is CachedOutcome.DeterministicFailure -> HeartwoodResult.Failure(HeartwoodError.Protocol(cached.message))
+                null -> null
+            }
+        }
+
+        /**
+         * Populates the cache from a live outcome. [result] is `null` on a timeout -- never
+         * cached, since that is transient. A failure is only cached when it is a deterministic
+         * "cannot decrypt this" answer (see [isDeterministicDecryptFailure]); anything else
+         * (queue-full, connect errors, an "unauthorised"/policy refusal) is repairable and must
+         * be retried.
+         */
+        private fun recordCacheOutcome(cacheable: CacheableDecrypt?, result: HeartwoodResult<String>?) {
+            val key = cacheable ?: return
+            when (result) {
+                null -> Unit
+                is HeartwoodResult.Success -> decryptCache.putSuccess(key, result.value)
+                is HeartwoodResult.Failure -> if (isDeterministicDecryptFailure(result.error)) {
+                    decryptCache.putDeterministicFailure(key, (result.error as HeartwoodError.Protocol).message)
+                }
+            }
+        }
+
+        private fun reserveSlot(): Boolean {
+            while (true) {
+                val current = queueDepth.get()
+                if (current >= MAX_QUEUED) return false
+                if (queueDepth.compareAndSet(current, current + 1)) return true
+            }
+        }
+
+        /** Rate-limited to about once a minute so a sustained burst doesn't spam logcat, but
+         * still gives future tuning a read on how often silent-path admission control is
+         * actually shedding, per identity. */
+        private fun recordShed() {
+            val count = shedCount.incrementAndGet()
+            val now = System.currentTimeMillis()
+            val last = lastShedLogAt.get()
+            if (now - last >= SHED_LOG_INTERVAL_MILLIS && lastShedLogAt.compareAndSet(last, now)) {
+                Log.w(TAG, "shed: queue full x$count in the last minute (MAX_QUEUED=$MAX_QUEUED)")
+                shedCount.set(0)
+            }
+        }
+
+        private suspend fun submitAndAwait(
+            pairing: Pairing,
+            timeoutMillis: Long,
+            operation: suspend (HeartwoodClient) -> HeartwoodResult<String>,
+        ): HeartwoodResult<String>? {
+            val deferred = CompletableDeferred<HeartwoodResult<String>>()
+            inbox.send(Message.Call(pairing, operation, deferred))
+            // Only this wait is cancellable -- the job itself runs on the worker regardless of
+            // whether we give up on it here (see the class doc for why that matters).
+            return withTimeoutOrNull(timeoutMillis) { deferred.await() }
+        }
+
+        /** Runs on the worker thread only: reconnects if there is no held client yet, then runs
+         * [operation], retrying once against a fresh connection if it fails. There is no
+         * "does the cached client match this pairing" check here the way the pre-0.3.0 single
+         * global session needed -- this [Session] only ever serves the one identity it was
+         * created for, so any cached [client] already matches [pairing] by construction. A
+         * pairing's relays/secret changing (a re-pair) instead goes through [HeartwoodSession.shutdown],
+         * which drops this whole [Session] so the next call starts fresh. */
+        private suspend fun deliver(
+            pairing: Pairing,
+            operation: suspend (HeartwoodClient) -> HeartwoodResult<String>,
+        ): HeartwoodResult<String> {
+            val connected = client?.let { HeartwoodResult.Success(it) } ?: reconnect(pairing)
+
+            val active = when (connected) {
+                is HeartwoodResult.Success -> connected.value
+                is HeartwoodResult.Failure -> return connected
+            }
+
+            val result = operation(active)
+            if (result is HeartwoodResult.Success) return result
+
+            val retried = when (val reconnected = reconnect(pairing)) {
+                is HeartwoodResult.Success -> reconnected.value
+                is HeartwoodResult.Failure -> return result
+            }
+            return operation(retried)
+        }
+
+        /** Runs on the worker thread only. */
+        private suspend fun reconnect(pairing: Pairing): HeartwoodResult<HeartwoodClient> {
+            client?.disconnect()
+            client = null
+
+            val fresh = RustNostrHeartwoodClient()
+            val bunkerUri = BunkerUri(pairing.signerPubkeyHex, pairing.relays, pairing.secret).toUriString()
+            return when (val connected = fresh.connect(bunkerUri, pairing.clientSecretKeyHex)) {
+                is HeartwoodResult.Success -> {
+                    client = fresh
+                    HeartwoodResult.Success(fresh)
+                }
+                is HeartwoodResult.Failure -> connected
+            }
+        }
+
+        private companion object {
+            const val TAG = "HeartwoodSession"
+            const val MAX_QUEUED = 3
+            const val SILENT_TIMEOUT_MILLIS = 15_000L
+            const val INTENT_TIMEOUT_MILLIS = 20_000L
+            const val SHED_LOG_INTERVAL_MILLIS = 60_000L
         }
     }
 }

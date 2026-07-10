@@ -27,52 +27,106 @@ Amethyst / Primal / Voyage ...
 - `pairing/BunkerUri.kt` -- pure Kotlin `bunker://` URI parser. No Android, no rust-nostr:
   rust-nostr ships native code per ABI and cannot load on a host JVM, so anything touching it is
   unusable in plain unit tests. This file stays JVM-testable so the parser can be exercised fast.
-- `pairing/PairingStore.kt` -- persists the single pairing (signer pubkey, relays, secret, our
-  ephemeral client key) and the per-app permission state in `EncryptedSharedPreferences`. Calls
-  into `signer.ClientKeys` for key generation rather than importing rust-nostr itself (see below).
+- `pairing/PairingStore.kt` -- persists every paired Heartwood identity (signer pubkey, relays,
+  secret, an optional user label) and the per-app permission state in `EncryptedSharedPreferences`,
+  each as a single encrypted JSON blob (`kotlinx.serialization`) rather than one preference key per
+  field. Calls into `signer.ClientKeys` for key generation rather than importing rust-nostr itself
+  (see below). All pairings currently share **one** Cambium client keypair (`ensureClientKeys`) --
+  one NIP-46 client identity presented to every paired bunker, not one per identity -- generated
+  once and reused; `Pairing.clientSecretKeyHex`/`clientPublicKeyHex` carry the same value on every
+  entry, kept per-`Pairing` so single-`Pairing` call sites don't need a second lookup.
 
   Per-app state is a tri-state -- `AppPermissionState.APPROVED`/`DENIED`, or `null` meaning "ask"
-  -- backed by two independent `StringSet`s. `approve`/`deny`/`forget` are one-line callers of a
-  single private `setPermission(packageName, state: AppPermissionState?)` that writes both sets
-  from the target state in one place, rather than each hand-rolling its own pair of `+`/`-` edits
-  (`approve`/`deny` are mutually exclusive; `forget` clears both, back to "ask"). The pre-existing
-  approved set (`allowed_packages`) already meant exactly "approved" before this model existed, so
-  it needed no migration step -- only the new `denied_packages` set is new. `allPermissionStates()`
-  backs `MainActivity`'s connected-apps list.
+  -- plus, for an approval, which paired identity it was approved for (`AppPermission.boundIdentityPubkeyHex`;
+  denial carries no binding, since it blocks the app outright regardless of identity).
+  `approve`/`deny`/`forget` are one-line callers of a private `setPermission(packageName, permission: AppPermission?)`.
+
+  `addPairing(bunkerUri, label)` upserts by signer pubkey (re-pairing refreshes relays/secret in
+  place rather than duplicating; omitting `label` on a re-pair keeps whatever label the entry
+  already had). `removePairing(signerPubkeyHex)` also forgets any app bound to that identity --
+  keeping a remembered approval bound to an identity that no longer exists risks a future silent
+  fallback to a *different* identity (see `IdentityRouting`), so it is cleared outright rather than
+  left dangling. `clearAll()` is a full reset (every pairing, every permission, the keep-alive
+  toggle, and the client keypair itself) -- the same "forget everything" `MainActivity`'s "Unpair
+  all" action triggers, matching what unpairing the single 0.2.x pairing used to do.
+
+  `ensureMigrated` transparently upgrades 0.2.x's single-pairing schema (flat `signer_pubkey_hex`/
+  `relays`/`secret` keys, `allowed_packages`/`denied_packages` `StringSet`s) to the list-of-pairings
+  schema on first read after an upgrade, checked once per `PairingStore` instance and a no-op
+  forever after the new JSON key exists. The actual transform is pure and lives in
+  `PairingMigration.kt` so it is JVM-testable independent of `EncryptedSharedPreferences`; this
+  class's job is just reading the old flat keys, calling it, and writing the result -- the new JSON
+  and the removal of every old key happen in one `Editor`/`apply()`, so a process death mid-migration
+  cannot leave the store readable under neither schema.
+- `pairing/PairingMigration.kt` -- pure Kotlin (no Android): the 0.2.x-to-0.3.0 schema transform
+  itself, see `PairingStore.ensureMigrated`. The migrated pairing gets no label (falls back to a
+  truncated npub for display). Every previously-approved package migrates bound to the migrated
+  pairing's identity, since it was the only identity that existed; denied packages carry no
+  binding, matching denial's identity-agnostic meaning everywhere else.
+- `pairing/IdentityRouting.kt` -- pure Kotlin (no Android): decides which paired identity a NIP-55
+  request routes to, shared by `SignerActivity` and `SignerProvider`. `normaliseCurrentUser`
+  accepts NIP-55's `current_user` extra as either an npub or 64-hex pubkey (Amber accepts both),
+  decoding npub via `Bech32.decode(_, expectedHrp = "npub")`; garbage input and "a well-formed
+  pubkey we don't have" are deliberately indistinguishable to `resolve` -- both refuse rather than
+  guess. `resolve`'s precedence: an explicit `current_user` match wins outright; otherwise the
+  calling app's bound identity; otherwise the sole pairing, if there is exactly one. A
+  `current_user` naming an identity we don't have is `Result.UnknownCurrentUser`, never falling
+  through to the binding or the sole pairing -- signing with a different identity than explicitly
+  named would be worse than refusing. Two or more pairings with neither a match nor a binding is
+  `Result.Ambiguous` for the same reason. Both callers collapse every non-`Resolved` outcome to
+  "defer/ask" -- `SignerProvider` has no way to ask which identity was meant from the silent path
+  at all, and `SignerActivity` can only show the picker on the *first* intent of an activity
+  instance (see `SignerActivity`'s `decideSilent`).
 - `signer/HeartwoodClient.kt` -- **the only file that imports `rust.nostr.sdk`**. Wraps
   `NostrConnect` (rust-nostr's NIP-46 client) behind the `HeartwoodClient` interface so the
   implementation can be swapped or faked without touching pairing storage or the NIP-55 surface.
   Also hosts `ClientKeys` (ephemeral keypair generation), `npubDisplay`, and `HeartwoodSession` for
   the same reason: they are rust-nostr operations, so everything else calls into this file instead
-  of importing `rust.nostr.sdk` directly.
+  of importing `rust.nostr.sdk` directly. `Pairing.displayLabel()` (`label` if the user set one,
+  else `npubDisplay(signerPubkeyHex)`) lives here too, next to `npubDisplay` -- the one place
+  display falls back, so `MainActivity`'s pairing list, its connected-apps rows, and the approval
+  sheet's identity picker all agree on what a pairing is called.
 
-  `HeartwoodSession` is the one application-scoped, kept-warm `NostrConnect` session shared by
-  `SignerActivity` and `SignerProvider` -- a live test against a real device showed a fresh
-  session per request cost multiple seconds each. Every call is handed to exactly one dedicated
-  worker coroutine on its own single-thread dispatcher, running in a `CoroutineScope` with no
-  parent, so nothing a caller does can ever cancel work already handed to it; a caller gets its
-  result via a `CompletableDeferred` and only ever cancels *its own wait* on that, never the
-  underlying job. This exists because of a second live-test finding: under a burst of ~10
-  concurrent provider queries (Amethyst querying while the user typed a reply), the earlier
-  mutex-guarded design still let a caller's own `withTimeoutOrNull` cancel the very coroutine that
-  was mid-FFI-call, since a mutex only serialises *entry*, not the calling coroutine's own
-  cancellation reaching through it. Two requests came back `Protocol(unauthorised)` (consistent
-  with a half-torn-down call) and the process died outright once with no Java exception --
-  suspected native wedge from a cancelled in-flight rust-nostr call, which is not documented as
-  cancellation-safe. `trySilent` (used by `SignerProvider`) additionally sheds load: if 3 calls are
-  already queued or running, a new silent-path request is refused immediately rather than joining
-  the queue. `RustNostrHeartwoodClient` itself also wraps every actual FFI call in
+  `HeartwoodSession` is a registry of per-identity sessions, keyed by signer pubkey, shared by
+  `SignerActivity` and `SignerProvider` -- from 0.3.0 on Cambium pairs more than one Heartwood
+  identity, and each one's NIP-46 connection, admission control, and decrypt cache must stay fully
+  isolated: a burst against identity A must never shed or slow down identity B, and a decrypt
+  cached while talking to A must never leak into B's answers. The private `Session` class is
+  exactly the single-pairing design this object used to *be* before 0.3.0, now instantiated once
+  per signer pubkey (`sessions.getOrPut(pairing.signerPubkeyHex) { Session() }`) instead of once
+  for the whole app -- every invariant below still holds, just scoped to one identity's worker
+  instead of the app's only worker. A live test against a real device showed a fresh session per
+  request cost multiple seconds each, hence keeping one warm at all.
+
+  Within a `Session`, every call is handed to exactly one dedicated worker coroutine on its own
+  single-thread dispatcher, running in a `CoroutineScope` with no parent, so nothing a caller does
+  can ever cancel work already handed to it; a caller gets its result via a `CompletableDeferred`
+  and only ever cancels *its own wait* on that, never the underlying job. This exists because of a
+  live-test finding: under a burst of ~10 concurrent provider queries (Amethyst querying while the
+  user typed a reply), an earlier mutex-guarded design still let a caller's own `withTimeoutOrNull`
+  cancel the very coroutine that was mid-FFI-call, since a mutex only serialises *entry*, not the
+  calling coroutine's own cancellation reaching through it. Two requests came back
+  `Protocol(unauthorised)` (consistent with a half-torn-down call) and the process died outright
+  once with no Java exception -- suspected native wedge from a cancelled in-flight rust-nostr call,
+  which is not documented as cancellation-safe. `trySilent` (used by `SignerProvider`) additionally
+  sheds load *per identity*: if 3 calls are already queued or running against that one identity's
+  worker, a new silent-path request against it is refused immediately rather than joining the
+  queue -- a burst against one paired signer can never shed a request against another.
+  `RustNostrHeartwoodClient` itself also wraps every actual FFI call in
   `withContext(NonCancellable + Dispatchers.IO)` as a second, independent line of defence, since
   rust-nostr's own `NostrConnect` constructor already takes a `Duration` that bounds each relay
   round trip internally -- there was never a need for a JVM-side timeout that could cancel the
   call out from under the native code.
 
   `MainActivity`'s pairing test deliberately uses its own disposable client instead of
-  `HeartwoodSession` (it is testing a URI that has not been saved yet, so there is no `Pairing` to
-  key a shared session on), then calls `HeartwoodSession.shutdown()` after saving so the next real
-  request reconnects against the pairing that was just confirmed. It is not routed through the
-  worker queue -- it is a single, foreground, user-initiated action that never overlaps with
-  itself -- but it does get the same `NonCancellable` protection as everything else.
+  `HeartwoodSession` (it is testing a URI that has not been saved yet, so there is no persisted
+  `Pairing` to key a session on), then calls `HeartwoodSession.shutdown(signerPubkeyHex)` after
+  saving so the next real request against that identity reconnects fresh rather than reusing a
+  stale client -- relevant on a re-pair; a brand new identity has no session to discard yet. It is
+  not routed through any worker queue -- it is a single, foreground, user-initiated action that
+  never overlaps with itself -- but it does get the same `NonCancellable` protection as everything
+  else. `shutdownAll()` drops every identity's session at once, used by `MainActivity`'s "Unpair
+  all" action (`PairingStore.clearAll()`).
 
   Continued daily use surfaced a third finding: Amethyst re-requests the same nip04/nip44 decrypt
   repeatedly while browsing, including legacy content that will never decrypt ("Could not
@@ -82,9 +136,13 @@ Amethyst / Primal / Voyage ...
   always cached; failures are cached only when `isDeterministicDecryptFailure` recognises the
   firmware's "decryption failed" wording -- a timeout, a connect error, or an "unauthorised"
   refusal are all transient/repairable and must never be cached. Signs and encrypts are never
-  cacheable (nonce freshness). `HeartwoodSession.shutdown()` clears the cache alongside the
-  session. Admission-control shedding (queue already at `MAX_QUEUED`) logs a rate-limited summary
-  line (about once a minute) so future tuning of the queue depth has real data to work from.
+  cacheable (nonce freshness). Each `Session` instantiates its own `DecryptCache` in its
+  constructor, which is what makes the cache partitioned per pairing -- there is no shared cache
+  instance for two identities' entries to collide in, by construction, not by a key that happens to
+  include the signer pubkey. `HeartwoodSession.shutdown(signerPubkeyHex)` clears that one
+  identity's cache alongside its session. Admission-control shedding (queue already at
+  `MAX_QUEUED`, per identity) logs a rate-limited summary line (about once a minute) so future
+  tuning of the queue depth has real data to work from.
 - `signer/DecryptCache.kt` -- pure Kotlin (no Android), JVM-testable: a small in-memory LRU
   (~512 entries, keyed on method + counterparty pubkey + a sha-256 of the payload so the key size
   is bounded regardless of payload length) plus `isDeterministicDecryptFailure`, the classifier
@@ -98,20 +156,32 @@ Amethyst / Primal / Voyage ...
   caller's request runs on `HeartwoodSession`'s worker with a `setResult`/`finish()` at the end; a
   denied one is rejected immediately, no Heartwood call at all -- daily use showed the
   translucent/dimmed `Theme.Cambium.Dialog` overlay (still used only for a caller with *no*
-  remembered choice yet) appearing on every subsequent request otherwise, not just at login. This
-  decision is made once in `onCreate`, which sets `permissionState` and never reassigns it again;
-  `silent` is a `get() = permissionState != null` computed straight from that, rather than a
-  second field that could in principle drift from it. Not re-evaluated in `onNewIntent`, since
-  swapping a visible theme for an invisible one after the window already exists is unreliable.
+  remembered choice yet) appearing on every subsequent request otherwise, not just at login.
   `singleTop` with `onNewIntent` handling, since a client can fire a second request before the
   user dismisses the first (e.g. `sign_event` right after `get_public_key`).
 
-  The approval sheet (shown only for "ask") has an "always deny this app" link below the normal
-  Approve/Decline buttons -- a deliberately secondary affordance so a permanent block needs its own
-  action, not an accidental extra tap on Decline. It also renders `get_public_key`'s optional
-  `permissions` extra (see `nip55/RequestedPermissions.kt`) as a summary line with a note that
-  Heartwood's own `ClientPolicy` is the actual authority -- display only, Cambium does not
-  pre-authorise anything from this list.
+  `silent` is decided once in `onCreate`, before any window setup, and is no longer a plain
+  function of the caller's remembered choice alone the way it was pre-0.3.0: `decideSilent` also
+  has to look ahead at whether the *first* intent's identity routing (see `IdentityRouting`) will
+  actually resolve. An approved caller whose `current_user` cannot be resolved must fall back to
+  the visible sheet rather than guess an identity -- which is only possible if the invisible theme
+  was never applied in the first place, since switching a visible theme for an invisible one (or
+  the reverse) after the window already exists is unreliable either way. A later `onNewIntent`-
+  delivered request that hits the same routing failure on an already-silent-themed window instead
+  rejects outright (`handleIncomingIntent`'s `else` branch) -- there is no reliable way to grow a
+  sheet's decorations onto an invisible window after the fact, so it cannot fall back to asking the
+  way the first intent could.
+
+  The approval sheet (shown only for "ask", or for an approved caller whose routing did not
+  resolve on the first intent) has an "always deny this app" link below the normal Approve/Decline
+  buttons -- a deliberately secondary affordance so a permanent block needs its own action, not an
+  accidental extra tap on Decline. It also renders `get_public_key`'s optional `permissions` extra
+  (see `nip55/RequestedPermissions.kt`) as a summary line with a note that Heartwood's own
+  `ClientPolicy` is the actual authority -- display only, Cambium does not pre-authorise anything
+  from this list. An identity picker (`Spinner`, only shown once there is more than one pairing)
+  defaults to the request's `current_user` match if it named one we have, else the first pairing;
+  Approve binds the app to whichever identity is selected at tap time
+  (`pairingStore.approve(packageName, chosen.signerPubkeyHex)`).
 
   `silentBackPressBlock`, a no-op `OnBackPressedCallback`, is enabled only for the two silent
   forwarding windows (`handle`, `handleDecryptZapEvent`, only when `silent`) and reset to disabled
@@ -169,7 +239,14 @@ Amethyst / Primal / Voyage ...
   A caller with a *remembered denial* gets `rejected` immediately, for every authority, without
   ever resolving a pairing or touching the queue -- distinct from a caller with no remembered
   choice yet (`null`, "try the intent", where they see the approval sheet). `resolveCaller`/
-  `withApprovedCaller` centralise this tri-state check so every `query*` method gets it uniformly.
+  `withApprovedCaller` centralise this tri-state check so every `query*` method gets it uniformly,
+  and now also carry the caller's bound identity (`AppPermission.boundIdentityPubkeyHex`) through
+  to `requirePairing`, which resolves it against `projection`'s `current_user` (index 2) via
+  `IdentityRouting.resolve` -- same precedence as the intent path. A `current_user` naming an
+  identity we don't have, or nothing resolving at all (more than one pairing, no `current_user`, no
+  binding -- should not normally happen for an approved caller, since approving always binds),
+  both answer `null` here: there is no way to ask which identity was meant from the silent path, so
+  it defers to the intent rather than guessing.
 - `nip55/RequestedPermissions.kt` -- pure Kotlin parser for `get_public_key`'s optional
   `permissions` extra (a JSON array of `{ "type": ..., "kind": ... }`) into a display summary for
   the first-approval sheet. Cambium does not pre-authorise anything from this list; it is shown so
@@ -217,25 +294,38 @@ Amethyst / Primal / Voyage ...
   bunker-URI QR never produces and Cambium never consumes.
 - `MainActivity.kt` -- pairing status screen: scan a QR (via `zxing-android-embedded`'s
   `ScanContract`/`ScanOptions` ActivityResult API -- QR-only, no beep, orientation locked, prompt
-  in our tone) or paste the bunker URI text, see connection details, unpair. A successful scan
-  pairs immediately (fills the field and calls the same `connectAndSave` path as pressing Pair,
-  so it is one tap total). `CAMERA` is a runtime permission requested only on the Scan QR tap;
-  denial shows a static inline hint that pasting still works and is never re-prompted
-  automatically -- the system's own permission dialog already refuses to reappear after a user
-  denies twice, so there is no custom "don't ask again" tracking needed on top of that. The
-  library's own `CaptureActivity` is pulled in entirely via manifest merger (not exported --
-  it declares no intent filter, so it defaults closed) and is pure Java (`com.google.zxing:core`),
-  no Google Play services, matching the GrapheneOS target. Also hosts the "Keep connection warm"
-  toggle -- see `service/HeartwoodKeepAliveService.kt` -- requesting `POST_NOTIFICATIONS` on API 33+
-  only when the toggle is switched on, with the same permanent-decline-shows-a-static-hint pattern
-  as the camera permission; and a connected-apps list (package, state, a "Forget" action that calls
-  `PairingStore.forget` -- back to "ask") built from `PairingStore.allPermissionStates()`, one
-  `item_connected_app.xml` row inflated per entry rather than a `RecyclerView`, since the list is
-  realistically tiny (a handful of paired Nostr clients). `render()` (called from both `onCreate`
-  and `onResume`) force-hides the stale notification-permission hint whenever `hasNotificationPermission()`
-  is now true -- the in-app denial path is the only thing that turns the hint on, so nothing
-  previously cleared it again if the user instead granted the permission from system Settings and
-  returned via `onResume`.
+  in our tone) or paste the bunker URI text, with an optional label field, to pair a signer. A
+  successful scan pairs immediately (fills the field and calls the same `connectAndSave` path as
+  pressing Pair, so it is one tap total). The pairing form stays visible regardless of how many
+  signers are already paired -- `connectAndSave` calls `PairingStore.addPairing`, which appends (or
+  upserts, on a re-pair of the same identity) rather than overwriting a single slot -- so a second,
+  third, ... signer is added the exact same way as the first. `CAMERA` is a runtime permission
+  requested only on the Scan QR tap; denial shows a static inline hint that pasting still works and
+  is never re-prompted automatically -- the system's own permission dialog already refuses to
+  reappear after a user denies twice, so there is no custom "don't ask again" tracking needed on
+  top of that. The library's own `CaptureActivity` is pulled in entirely via manifest merger (not
+  exported -- it declares no intent filter, so it defaults closed) and is pure Java
+  (`com.google.zxing:core`), no Google Play services, matching the GrapheneOS target.
+
+  `renderPairingsList` shows one `item_pairing.xml` row per pairing (label or truncated npub,
+  npub, relays), each with its own confirm-gated unpair (`PairingStore.removePairing` +
+  `HeartwoodSession.shutdown(signerPubkeyHex)`); a separate "Unpair all" action
+  (`PairingStore.clearAll` + `HeartwoodSession.shutdownAll`) is a full reset, confirmed with its own
+  dialog, for when the user wants to start over rather than remove signers one at a time. The
+  paired-signers section, the keep-alive toggle, and the connected-apps list are all hidden
+  together on a fresh install (`pairings.isEmpty()`) -- there is nothing to show but the pairing
+  form. Also hosts the "Keep connection warm" toggle -- see `service/HeartwoodKeepAliveService.kt`
+  -- requesting `POST_NOTIFICATIONS` on API 33+ only when the toggle is switched on, with the same
+  permanent-decline-shows-a-static-hint pattern as the camera permission; and a connected-apps list
+  (package, state, a "Forget" action that calls `PairingStore.forget` -- back to "ask") built from
+  `PairingStore.allPermissions()`, one `item_connected_app.xml` row inflated per entry rather than
+  a `RecyclerView`, since the list is realistically tiny (a handful of paired Nostr clients). An
+  approved row also shows which paired identity it is bound to
+  (`AppPermission.boundIdentityPubkeyHex` resolved back to a `Pairing` and its `displayLabel()`).
+  `render()` (called from both `onCreate` and `onResume`) force-hides the stale
+  notification-permission hint whenever `hasNotificationPermission()` is now true -- the in-app
+  denial path is the only thing that turns the hint on, so nothing previously cleared it again if
+  the user instead granted the permission from system Settings and returned via `onResume`.
 - `AndroidExtensions.kt` -- `PackageManager.displayNameFor(packageName)`, the app-label lookup
   (falls back to the raw package string on any failure) shared by `SignerActivity`'s approval sheet
   and `MainActivity`'s connected-apps list.
@@ -288,12 +378,19 @@ Amethyst / Primal / Voyage ...
   ephemeral key -- needs the raw private key hashed directly, which is permanently impossible over
   NIP-46 (see `nip57/PrivateZap.kt`'s class doc), not a gap that will be closed later. The
   decrypted plaintext is checked for `"kind": 9733` but its signature is not verified.
-- The decrypt cache (`DecryptCache`) has no eviction on staleness beyond LRU size, and no
-  per-pairing partitioning -- unpairing clears it entirely via `HeartwoodSession.shutdown()`, but
-  re-pairing with a *different* signer inside the same process would need the same clear (already
-  covered, since `save()` in `MainActivity` also calls `shutdown()`), and there is no defence
-  against a cached plaintext outliving its usefulness if the counterparty rotates keys.
-- Multi-signer support (v1 pairs exactly one Heartwood).
+- The decrypt cache (`DecryptCache`) has no eviction on staleness beyond LRU size -- there is no
+  defence against a cached plaintext outliving its usefulness if the counterparty rotates keys.
+  Partitioning per pairing (each `HeartwoodSession.Session` owns its own `DecryptCache` instance)
+  is a structural guarantee verifiable by reading the constructor, not something with its own
+  automated test -- `HeartwoodSession` cannot be unit tested at all: any exercise of it eventually
+  constructs a real `RustNostrHeartwoodClient`, which needs rust-nostr's per-ABI native library and
+  cannot load on a host JVM (see `signer/HeartwoodClient.kt`'s "only file that imports
+  `rust.nostr.sdk`" note). This predates 0.3.0 -- the single-session design was never unit tested
+  either -- and is unchanged by moving to one session per identity.
+- All pairings share one Cambium client keypair (`PairingStore.ensureClientKeys`) rather than one
+  per identity -- a deliberate simplification (Cambium presents one NIP-46 client identity to every
+  bunker it talks to), not a limitation flagged as a gap to close, but worth knowing if a future
+  design wants per-identity client key isolation.
 - NIP-55 single-intent batch requests (the `results` JSON-array response) -- currently each
   intent is handled individually, though `SignerActivity` does handle multiple *separate* intents
   arriving in sequence via `onNewIntent`.

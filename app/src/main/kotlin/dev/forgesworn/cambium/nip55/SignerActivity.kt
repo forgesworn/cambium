@@ -2,6 +2,7 @@ package dev.forgesworn.cambium.nip55
 
 import android.content.Intent
 import android.os.Bundle
+import android.widget.ArrayAdapter
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
@@ -12,7 +13,9 @@ import dev.forgesworn.cambium.databinding.ActivitySignerApprovalBinding
 import dev.forgesworn.cambium.displayNameFor
 import dev.forgesworn.cambium.nip57.PrivateZap
 import dev.forgesworn.cambium.nip57.ZapDecodeResult
+import dev.forgesworn.cambium.pairing.AppPermission
 import dev.forgesworn.cambium.pairing.AppPermissionState
+import dev.forgesworn.cambium.pairing.IdentityRouting
 import dev.forgesworn.cambium.pairing.Pairing
 import dev.forgesworn.cambium.pairing.PairingStore
 import dev.forgesworn.cambium.signer.CacheableDecrypt
@@ -20,6 +23,7 @@ import dev.forgesworn.cambium.signer.HeartwoodClient
 import dev.forgesworn.cambium.signer.HeartwoodError
 import dev.forgesworn.cambium.signer.HeartwoodResult
 import dev.forgesworn.cambium.signer.HeartwoodSession
+import dev.forgesworn.cambium.signer.displayLabel
 import kotlinx.coroutines.launch
 
 private const val EXTRA_TYPE = "type"
@@ -47,10 +51,12 @@ private const val EXTRA_REJECTED = "rejected"
  * with a `setResult`/`finish()` at the end; a denied caller is rejected immediately, with no
  * Heartwood call at all -- either way, at most a sub-second flash. The visible Approve/Decline
  * sheet and the "asking your signer" progress overlay exist only for a caller with no remembered
- * choice yet (matches Amber's remembered-choice UX). [silent]/[permissionState] are decided once,
- * in `onCreate`, and reused for the lifetime of this activity instance -- not re-evaluated in
- * [onNewIntent], since switching from a visible theme to an invisible one after the window already
- * exists is unreliable.
+ * choice yet (matches Amber's remembered-choice UX), or for an approved caller whose identity
+ * routing cannot be resolved silently -- see [decideSilent] and [IdentityRouting]. [silent] is
+ * decided once, in `onCreate`, and reused for the lifetime of this activity instance -- not
+ * re-evaluated in [onNewIntent], since switching from a visible theme to an invisible one after
+ * the window already exists is unreliable (nor the reverse: an invisible window can't reliably
+ * grow the decorations a visible sheet needs after the fact either).
  *
  * While a silent request is actually in flight against Heartwood, [silentBackPressBlock] makes
  * back-press a no-op: a stray back-press finishing this activity mid-request would still let the
@@ -71,11 +77,17 @@ class SignerActivity : AppCompatActivity() {
     private lateinit var binding: ActivitySignerApprovalBinding
     private lateinit var pairingStore: PairingStore
     private var request: Nip55Request? = null
-    private var permissionState: AppPermissionState? = null
+    private var callerPermission: AppPermission? = null
 
-    /** Decided once, from [permissionState], in `onCreate` -- see the class doc; not re-evaluated
-     * afterwards, since [permissionState] itself never changes after `onCreate` either. */
-    private val silent: Boolean get() = permissionState != null
+    /**
+     * Decided once in `onCreate`, before any window setup -- see the class doc for why it can't
+     * be re-evaluated afterwards. No longer a plain function of [callerPermission] alone the way
+     * it was pre-0.3.0: an approved caller is only silent if [decideSilent] finds that the first
+     * intent's identity routing will actually resolve without asking. Set directly rather than
+     * computed, since it depends on that one-time decision, not on a field that stays constant
+     * for the rest of the instance's lifetime.
+     */
+    private var silent = false
 
     /** See the class doc comment. Disabled outside the two silent forwarding windows. */
     private val silentBackPressBlock = object : OnBackPressedCallback(false) {
@@ -87,8 +99,8 @@ class SignerActivity : AppCompatActivity() {
         onBackPressedDispatcher.addCallback(this, silentBackPressBlock)
         pairingStore = PairingStore(this)
 
-        val callingPkg = callingPackage
-        permissionState = callingPkg?.let(pairingStore::permissionState)
+        callerPermission = callingPackage?.let(pairingStore::permission)
+        silent = decideSilent(intent)
         if (silent) {
             // Must happen before setContentView (and there is no content view to set here) for
             // the transparent/non-dimmed theme to actually take effect on the window.
@@ -101,6 +113,27 @@ class SignerActivity : AppCompatActivity() {
         }
 
         handleIncomingIntent(intent)
+    }
+
+    /**
+     * A remembered DENIED caller is always silent: rejected outright, no Heartwood call, nothing
+     * to show. A remembered APPROVED caller is silent only if [intent]'s identity routing (see
+     * [IdentityRouting]) will actually resolve to a pairing without asking -- an approved caller
+     * whose `current_user` cannot be resolved must fall back to the visible sheet rather than
+     * guess an identity, which is only possible if the theme was chosen correctly here, before
+     * `onCreate` finishes. An unparsable intent, or nothing paired at all, is also silent: both
+     * end in an immediate reject with no UI needed either way. Everything else -- no remembered
+     * choice yet, or an approved caller whose routing does not resolve -- needs the visible sheet.
+     */
+    private fun decideSilent(intent: Intent): Boolean {
+        val permission = callerPermission ?: return false
+        if (permission.state == AppPermissionState.DENIED) return true
+
+        val pairings = pairingStore.pairings()
+        if (pairings.isEmpty()) return true
+        val parsed = Nip55Request.from(intent.toRawSignerIntent()) ?: return true
+        val routed = IdentityRouting.resolve(parsed.currentUser, permission.boundIdentityPubkeyHex, pairings)
+        return routed is IdentityRouting.Result.Resolved
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -129,21 +162,35 @@ class SignerActivity : AppCompatActivity() {
         }
         request = parsed
 
-        val pairing = pairingStore.current()
-        if (pairing == null) {
+        val pairings = pairingStore.pairings()
+        if (pairings.isEmpty()) {
             if (!silent) Toast.makeText(this, R.string.error_not_paired, Toast.LENGTH_LONG).show()
             rejectAndFinish(parsed.id)
             return
         }
 
-        when (permissionState) {
-            AppPermissionState.APPROVED -> handle(pairing, parsed)
+        val permission = callerPermission
+        when (permission?.state) {
             AppPermissionState.DENIED -> rejectAndFinish(parsed.id)
-            null -> showApprovalSheet(pairing, parsed, callingPackage)
+            AppPermissionState.APPROVED -> {
+                val routed = IdentityRouting.resolve(parsed.currentUser, permission.boundIdentityPubkeyHex, pairings)
+                when {
+                    routed is IdentityRouting.Result.Resolved -> handle(routed.pairing, parsed)
+                    !silent -> showApprovalSheet(pairings, parsed, callingPackage)
+                    else -> {
+                        // A later onNewIntent-delivered request from an approved caller whose
+                        // current_user cannot be resolved: the window is already invisible-themed
+                        // from the first intent (see decideSilent), so a reliable visible sheet
+                        // isn't possible here. Reject rather than silently guessing an identity.
+                        rejectAndFinish(parsed.id)
+                    }
+                }
+            }
+            null -> showApprovalSheet(pairings, parsed, callingPackage)
         }
     }
 
-    private fun showApprovalSheet(pairing: Pairing, request: Nip55Request, callingPkg: String?) {
+    private fun showApprovalSheet(pairings: List<Pairing>, request: Nip55Request, callingPkg: String?) {
         binding.appValue.text = callingPkg?.let(packageManager::displayNameFor) ?: "unknown caller"
         binding.methodValue.text = methodLabel(request)
 
@@ -151,6 +198,21 @@ class SignerActivity : AppCompatActivity() {
         binding.kindRow.isVisible = kind != null
         if (kind != null) {
             binding.kindValue.text = kind.toString()
+        }
+
+        // Only worth showing once there is more than one pairing to choose between; with exactly
+        // one, Approve always means that one pairing, same as before Cambium supported more.
+        // Default selection: the current_user match if the request named one we have, else first.
+        binding.identityRow.isVisible = pairings.size > 1
+        if (pairings.size > 1) {
+            binding.identityPicker.adapter = ArrayAdapter(
+                this,
+                android.R.layout.simple_spinner_dropdown_item,
+                pairings.map { it.displayLabel() },
+            )
+            val currentUserHex = IdentityRouting.normaliseCurrentUser(request.currentUser)
+            val defaultIndex = pairings.indexOfFirst { it.signerPubkeyHex.equals(currentUserHex, ignoreCase = true) }
+            binding.identityPicker.setSelection(defaultIndex.takeIf { it >= 0 } ?: 0)
         }
 
         // Display only, per NIP-55's optional get_public_key `permissions` extra: Heartwood's own
@@ -166,8 +228,9 @@ class SignerActivity : AppCompatActivity() {
         binding.progressGroup.isVisible = false
 
         binding.approveButton.setOnClickListener {
-            callingPkg?.let { pairingStore.approve(it) }
-            handle(pairing, request)
+            val chosen = pairings.getOrNull(binding.identityPicker.selectedItemPosition) ?: pairings.first()
+            callingPkg?.let { pairingStore.approve(it, chosen.signerPubkeyHex) }
+            handle(chosen, request)
         }
         binding.declineButton.setOnClickListener {
             rejectAndFinish(request.id)

@@ -7,6 +7,7 @@
 
     <string name="pair_hint">Scan the QR or paste the bunker:// URI shown by Sapwood\'s Connect an app flow.</string>
     <string name="pair_input_hint">bunker://…</string>
+    <string name="pair_label_hint">Label (optional)</string>
     <string name="pair_button">Pair</string>
     <string name="scan_qr_button">Scan QR</string>
     <string name="qr_scan_prompt">Point the camera at the QR shown by Sapwood.</string>
@@ -14,11 +15,14 @@
     <string name="pairing_in_progress">Connecting to your signer…</string>
     <string name="pairing_failed">Pairing failed: %1$s</string>
 
-    <string name="signer_label">Signer</string>
+    <string name="paired_signers_label">Paired signers</string>
     <string name="relays_label">Relays</string>
     <string name="unpair_button">Unpair</string>
-    <string name="unpair_confirm_title">Unpair this signer?</string>
-    <string name="unpair_confirm_body">Cambium will forget this Heartwood. Apps using it for signing will stop working until you pair again.</string>
+    <string name="unpair_row_confirm_title">Unpair %1$s?</string>
+    <string name="unpair_row_confirm_body">Cambium will forget this signer. Apps bound to it will stop working until you pair it again.</string>
+    <string name="unpair_all_button">Unpair all</string>
+    <string name="unpair_all_confirm_title">Unpair all signers?</string>
+    <string name="unpair_all_confirm_body">Cambium will forget every paired signer and every app\'s permissions. Apps will stop working until you pair again.</string>
 
     <string name="keep_alive_toggle_title">Keep connection warm</string>
     <string name="keep_alive_toggle_body">Runs a background service so signing stays fast. Uses a small amount of battery. Off by default.</string>
@@ -32,6 +36,7 @@
     <string name="approval_app_label">App</string>
     <string name="approval_method_label">Request</string>
     <string name="approval_kind_label">Event kind</string>
+    <string name="approval_identity_label">Identity</string>
     <string name="approval_permissions_label">Requested</string>
     <string name="approval_permissions_note">Heartwood\'s own policy still decides what actually gets signed.</string>
     <string name="approval_approve">Approve</string>
@@ -58,4 +63,9 @@
     <string name="method_nip44_encrypt">nip44_encrypt</string>
     <string name="method_nip44_decrypt">nip44_decrypt</string>
     <string name="method_decrypt_zap_event">decrypt_zap_event</string>
+
+    <plurals name="status_paired_count">
+        <item quantity="one">%1$d signer paired</item>
+        <item quantity="other">%1$d signers paired</item>
+    </plurals>
 </resources>

@@ -15,10 +15,12 @@ import com.journeyapps.barcodescanner.ScanIntentResult
 import com.journeyapps.barcodescanner.ScanOptions
 import dev.forgesworn.cambium.databinding.ActivityMainBinding
 import dev.forgesworn.cambium.databinding.ItemConnectedAppBinding
+import dev.forgesworn.cambium.databinding.ItemPairingBinding
 import dev.forgesworn.cambium.pairing.AppPermissionState
 import dev.forgesworn.cambium.pairing.BunkerUri
 import dev.forgesworn.cambium.pairing.BunkerUriParser
 import dev.forgesworn.cambium.pairing.BunkerUriResult
+import dev.forgesworn.cambium.pairing.Pairing
 import dev.forgesworn.cambium.pairing.PairingStore
 import dev.forgesworn.cambium.pairing.QrPairingScan
 import dev.forgesworn.cambium.pairing.QrScanResult
@@ -28,12 +30,13 @@ import dev.forgesworn.cambium.signer.HeartwoodError
 import dev.forgesworn.cambium.signer.HeartwoodResult
 import dev.forgesworn.cambium.signer.HeartwoodSession
 import dev.forgesworn.cambium.signer.RustNostrHeartwoodClient
+import dev.forgesworn.cambium.signer.displayLabel
 import dev.forgesworn.cambium.signer.npubDisplay
 import kotlinx.coroutines.launch
 
 /**
- * Status screen: paired or not, scan-or-paste-a-bunker-URI pairing flow, and connection details
- * once paired.
+ * Status screen: paired or not, scan-or-paste-a-bunker-URI pairing flow for one or more signers,
+ * and per-pairing connection details.
  */
 class MainActivity : AppCompatActivity() {
 
@@ -66,7 +69,7 @@ class MainActivity : AppCompatActivity() {
 
         binding.pairButton.setOnClickListener { onPairClicked() }
         binding.scanButton.setOnClickListener { onScanClicked() }
-        binding.unpairButton.setOnClickListener { onUnpairClicked() }
+        binding.unpairAllButton.setOnClickListener { onUnpairAllClicked() }
 
         render()
     }
@@ -77,17 +80,15 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun render() {
-        val pairing = pairingStore.current()
-        if (pairing == null) {
-            binding.statusValue.text = getString(R.string.status_unpaired)
-            binding.pairingSection.isVisible = true
-            binding.pairedSection.isVisible = false
+        val pairings = pairingStore.pairings()
+        binding.statusValue.text = if (pairings.isEmpty()) {
+            getString(R.string.status_unpaired)
         } else {
-            binding.statusValue.text = getString(R.string.status_paired)
-            binding.pairingSection.isVisible = false
-            binding.pairedSection.isVisible = true
-            binding.signerValue.text = npubDisplay(pairing.signerPubkeyHex)
-            binding.relaysValue.text = pairing.relays.joinToString("\n")
+            resources.getQuantityString(R.plurals.status_paired_count, pairings.size, pairings.size)
+        }
+        binding.pairedSection.isVisible = pairings.isNotEmpty()
+        if (pairings.isNotEmpty()) {
+            renderPairingsList(pairings)
             setKeepAliveToggleChecked(pairingStore.isKeepAliveEnabled())
             // A denial only ever turns this hint on (see notificationPermissionLauncher); nothing
             // previously turned it back off if the user granted the permission from system
@@ -95,29 +96,75 @@ class MainActivity : AppCompatActivity() {
             if (hasNotificationPermission()) {
                 binding.notificationHint.isVisible = false
             }
-            renderConnectedApps()
+            renderConnectedApps(pairings)
         }
     }
 
-    /** The approved/denied package list, with a "Forget" action per row that returns it to "ask". */
-    private fun renderConnectedApps() {
-        val states = pairingStore.allPermissionStates().toList().sortedBy { (packageName, _) -> packageName }
+    /** One row per pairing, each with its own confirm-gated unpair action. */
+    private fun renderPairingsList(pairings: List<Pairing>) {
+        binding.pairingsListContainer.removeAllViews()
+        for (pairing in pairings.sortedBy { it.displayLabel() }) {
+            val row = ItemPairingBinding.inflate(layoutInflater, binding.pairingsListContainer, false)
+            row.pairingLabelValue.text = pairing.displayLabel()
+            row.pairingNpubValue.text = npubDisplay(pairing.signerPubkeyHex)
+            row.pairingRelaysValue.text = pairing.relays.joinToString("\n")
+            row.pairingUnpairButton.setOnClickListener { onUnpairRowClicked(pairing) }
+            binding.pairingsListContainer.addView(row.root)
+        }
+    }
 
-        binding.connectedAppsEmpty.isVisible = states.isEmpty()
+    private fun onUnpairRowClicked(pairing: Pairing) {
+        AlertDialog.Builder(this)
+            .setTitle(getString(R.string.unpair_row_confirm_title, pairing.displayLabel()))
+            .setMessage(R.string.unpair_row_confirm_body)
+            .setPositiveButton(R.string.unpair_button) { _, _ ->
+                pairingStore.removePairing(pairing.signerPubkeyHex)
+                lifecycleScope.launch { HeartwoodSession.shutdown(pairing.signerPubkeyHex) }
+                render()
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    private fun onUnpairAllClicked() {
+        AlertDialog.Builder(this)
+            .setTitle(R.string.unpair_all_confirm_title)
+            .setMessage(R.string.unpair_all_confirm_body)
+            .setPositiveButton(R.string.unpair_all_button) { _, _ ->
+                pairingStore.clearAll()
+                HeartwoodKeepAliveService.stop(this)
+                lifecycleScope.launch { HeartwoodSession.shutdownAll() }
+                render()
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    /** The approved/denied package list, with a "Forget" action per row that returns it to "ask".
+     * An approved row also shows which paired identity it is bound to. */
+    private fun renderConnectedApps(pairings: List<Pairing>) {
+        val permissions = pairingStore.allPermissions().toList().sortedBy { (packageName, _) -> packageName }
+
+        binding.connectedAppsEmpty.isVisible = permissions.isEmpty()
         binding.connectedAppsContainer.removeAllViews()
 
-        for ((packageName, state) in states) {
+        for ((packageName, permission) in permissions) {
             val row = ItemConnectedAppBinding.inflate(layoutInflater, binding.connectedAppsContainer, false)
             row.appPackageValue.text = packageManager.displayNameFor(packageName)
             row.appStateValue.text = getString(
-                when (state) {
+                when (permission.state) {
                     AppPermissionState.APPROVED -> R.string.connected_apps_state_approved
                     AppPermissionState.DENIED -> R.string.connected_apps_state_denied
                 }
             )
+            val boundIdentity = permission.boundIdentityPubkeyHex?.let { hex -> pairings.firstOrNull { it.signerPubkeyHex == hex } }
+            row.appIdentityValue.isVisible = boundIdentity != null
+            if (boundIdentity != null) {
+                row.appIdentityValue.text = boundIdentity.displayLabel()
+            }
             row.forgetButton.setOnClickListener {
                 pairingStore.forget(packageName)
-                renderConnectedApps()
+                renderConnectedApps(pairings)
             }
             binding.connectedAppsContainer.addView(row.root)
         }
@@ -209,6 +256,7 @@ class MainActivity : AppCompatActivity() {
         // Generated (or read back) up front so the exact key we test the connection with is the
         // one that ends up persisted -- see PairingStore.ensureClientKeys.
         val clientKeys = pairingStore.ensureClientKeys()
+        val label = binding.labelInput.text?.toString()
 
         lifecycleScope.launch {
             // A disposable client, deliberately not the shared HeartwoodSession: this is a
@@ -222,30 +270,18 @@ class MainActivity : AppCompatActivity() {
 
             when (result) {
                 is HeartwoodResult.Success -> {
-                    pairingStore.save(bunkerUri)
-                    // Discard any session held for a previous pairing so the next real request
-                    // reconnects fresh against what was just saved.
-                    HeartwoodSession.shutdown()
+                    pairingStore.addPairing(bunkerUri, label)
+                    // Discard any session held for this identity so the next real request
+                    // reconnects fresh against what was just saved (relevant on a re-pair; a
+                    // brand new identity has no session to discard yet).
+                    HeartwoodSession.shutdown(bunkerUri.signerPubkeyHex)
                     binding.bunkerInput.text?.clear()
+                    binding.labelInput.text?.clear()
                     render()
                 }
                 is HeartwoodResult.Failure -> showPairingError(errorMessage(result.error))
             }
         }
-    }
-
-    private fun onUnpairClicked() {
-        AlertDialog.Builder(this)
-            .setTitle(R.string.unpair_confirm_title)
-            .setMessage(R.string.unpair_confirm_body)
-            .setPositiveButton(R.string.unpair_button) { _, _ ->
-                pairingStore.clear()
-                HeartwoodKeepAliveService.stop(this)
-                lifecycleScope.launch { HeartwoodSession.shutdown() }
-                render()
-            }
-            .setNegativeButton(android.R.string.cancel, null)
-            .show()
     }
 
     private fun showPairingError(message: String) {
