@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.3.0 (2026-07-10)
+
+- Multiple identities: pair each Heartwood identity separately (each bunker URI is one identity).
+  Apps bind to an identity at approval; the NIP-55 `current_user` field (npub or hex) selects the
+  identity per request. Cambium never substitutes identities silently: a request naming an
+  identity it does not hold is refused, and an ambiguous request asks. Each identity gets its own
+  isolated connection, request queue and decrypt cache.
+- Activity log: an on-phone, metadata-only record of signer activity (app, method, event kind,
+  identity, outcome). No event content, plaintext or ciphertext is ever stored. Toggle off or
+  clear at any time.
+- App lock: an optional biometric or device-credential gate on the management screen and on
+  approval decisions. Background signing for already-approved apps is never gated.
+- Existing 0.2.x pairings and app approvals migrate automatically.
+
 ## 0.2.0 (2026-07-09)
 
 First signed release.

@@ -85,11 +85,13 @@ Install directly with an attached device:
 
 ## Status
 
-Pairing (scan or paste), NIP-46 client with a shared kept-warm session, NIP-55 intent handling
-(`get_public_key`, `sign_event`, `nip04`/`nip44` encrypt/decrypt, `decrypt_zap_event`), and a
-silent content-provider path that forwards most of those methods to Heartwood without a visible
-popup for already-approved apps. Richer per-app permissions and multi-signer support are later
-milestones.
+Pairing (scan or paste) with multiple Heartwood identities, NIP-46 client with a kept-warm
+session per identity, NIP-55 intent handling (`get_public_key`, `sign_event`, `nip04`/`nip44`
+encrypt/decrypt, `decrypt_zap_event`, `current_user` identity selection), a silent
+content-provider path that forwards those methods to Heartwood without a visible popup for
+already-approved apps, persistent per-app approval or denial, an optional keep-warm foreground
+service, a metadata-only activity log, and an optional biometric app lock. Kind-level permissions
+live on the signer itself (Heartwood's policy engine, managed via Sapwood), not on the phone.
 
 ### Private zaps
 
