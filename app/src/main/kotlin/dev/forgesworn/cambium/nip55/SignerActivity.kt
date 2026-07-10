@@ -9,6 +9,8 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.isVisible
 import androidx.lifecycle.lifecycleScope
 import dev.forgesworn.cambium.R
+import dev.forgesworn.cambium.applock.AppLockPrompt
+import dev.forgesworn.cambium.applock.AppLockStore
 import dev.forgesworn.cambium.databinding.ActivitySignerApprovalBinding
 import dev.forgesworn.cambium.displayNameFor
 import dev.forgesworn.cambium.log.ActivityLog
@@ -74,12 +76,18 @@ private const val EXTRA_REJECTED = "rejected"
  * `get_public_key`) before the user has dismissed this activity, which arrives via
  * [onNewIntent] rather than a new instance. Each intent is handled sequentially in full; true
  * single-intent batch requests (NIP-55's `results` JSON-array response) are not implemented yet.
+ *
+ * App lock (see `applock/AppLockPrompt.kt`) gates exactly two actions here -- Approve and "always
+ * deny" on the visible sheet, via [requireUnlockedThen] -- never the silent forwarding path in
+ * [handle]/[submitAndRespond], which must keep answering an already-approved caller with the
+ * phone locked. Decline is not gated either: refusing needs no proof of presence.
  */
 class SignerActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivitySignerApprovalBinding
     private lateinit var pairingStore: PairingStore
     private lateinit var activityLogStore: ActivityLogStore
+    private lateinit var appLockStore: AppLockStore
     private var request: Nip55Request? = null
     private var callerPermission: AppPermission? = null
 
@@ -103,6 +111,7 @@ class SignerActivity : AppCompatActivity() {
         onBackPressedDispatcher.addCallback(this, silentBackPressBlock)
         pairingStore = PairingStore(this)
         activityLogStore = ActivityLogStore(this)
+        appLockStore = AppLockStore(this)
 
         callerPermission = callingPackage?.let(pairingStore::permission)
         silent = decideSilent(intent)
@@ -257,19 +266,44 @@ class SignerActivity : AppCompatActivity() {
         binding.progressGroup.isVisible = false
 
         binding.approveButton.setOnClickListener {
-            val chosen = pairings.getOrNull(binding.identityPicker.selectedItemPosition) ?: pairings.first()
-            callingPkg?.let { pairingStore.approve(it, chosen.signerPubkeyHex) }
-            handle(chosen, request)
+            requireUnlockedThen {
+                val chosen = pairings.getOrNull(binding.identityPicker.selectedItemPosition) ?: pairings.first()
+                callingPkg?.let { pairingStore.approve(it, chosen.signerPubkeyHex) }
+                handle(chosen, request)
+            }
         }
         binding.declineButton.setOnClickListener {
             logActivity(request, identityLabel = null, outcome = ActivityLogEntry.Outcome.REJECTED_USER)
             rejectAndFinish(request.id)
         }
         binding.denyAlwaysLink.setOnClickListener {
-            callingPkg?.let { pairingStore.deny(it) }
-            logActivity(request, identityLabel = null, outcome = ActivityLogEntry.Outcome.REJECTED_USER)
-            rejectAndFinish(request.id)
+            requireUnlockedThen {
+                callingPkg?.let { pairingStore.deny(it) }
+                logActivity(request, identityLabel = null, outcome = ActivityLogEntry.Outcome.REJECTED_USER)
+                rejectAndFinish(request.id)
+            }
         }
+    }
+
+    /** Gates [action] behind app lock -- see the class doc for exactly which two actions call
+     * this. A no-op passthrough when app lock is off, unavailable (fail-open -- see
+     * [AppLockPrompt.requiresAuthenticationNow]), or still within the grace window. */
+    private fun requireUnlockedThen(action: () -> Unit) {
+        if (!AppLockPrompt.requiresAuthenticationNow(this, appLockStore)) {
+            action()
+            return
+        }
+        AppLockPrompt.authenticate(
+            activity = this,
+            title = getString(R.string.app_lock_prompt_title),
+            onSuccess = {
+                appLockStore.recordAuthenticated()
+                action()
+            },
+            onFailure = {
+                // Stay on the sheet; the user can tap Approve/"always deny" again to retry.
+            },
+        )
     }
 
     /**

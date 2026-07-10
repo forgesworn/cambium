@@ -14,6 +14,8 @@ import androidx.lifecycle.lifecycleScope
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanIntentResult
 import com.journeyapps.barcodescanner.ScanOptions
+import dev.forgesworn.cambium.applock.AppLockPrompt
+import dev.forgesworn.cambium.applock.AppLockStore
 import dev.forgesworn.cambium.databinding.ActivityMainBinding
 import dev.forgesworn.cambium.databinding.ItemConnectedAppBinding
 import dev.forgesworn.cambium.databinding.ItemPairingBinding
@@ -44,6 +46,7 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
     private lateinit var pairingStore: PairingStore
+    private lateinit var appLockStore: AppLockStore
 
     // Registered as fields (not inside onCreate) per the ActivityResult contract: this must
     // happen before the activity reaches STARTED, and works even though `binding` -- referenced
@@ -68,21 +71,59 @@ class MainActivity : AppCompatActivity() {
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
         pairingStore = PairingStore(this)
+        appLockStore = AppLockStore(this)
 
         binding.pairButton.setOnClickListener { onPairClicked() }
         binding.scanButton.setOnClickListener { onScanClicked() }
         binding.unpairAllButton.setOnClickListener { onUnpairAllClicked() }
         binding.activityLogButton.setOnClickListener { startActivity(Intent(this, ActivityLogActivity::class.java)) }
+        binding.unlockButton.setOnClickListener { promptUnlock() }
 
-        render()
+        // The actual lock check happens in onResume, which always runs right after onCreate too
+        // (onCreate -> onStart -> onResume, nothing is drawn before onResume completes) -- no
+        // separate check needed here, and calling render() here first would just be redundant
+        // work immediately superseded by whatever onResume decides.
     }
 
     override fun onResume() {
         super.onResume()
-        render()
+        if (AppLockPrompt.requiresAuthenticationNow(this, appLockStore)) {
+            showLocked()
+        } else {
+            binding.lockedSection.isVisible = false
+            binding.contentSection.isVisible = true
+            render()
+        }
+    }
+
+    /** Shown instead of [ActivityMainBinding.contentSection] whenever app lock is on, the device
+     * still has a credential enrolled, and the grace window has expired -- see
+     * [AppLockPrompt.requiresAuthenticationNow]. Triggers the system prompt immediately;
+     * `unlockButton` is the manual retry if that prompt gets dismissed or fails. */
+    private fun showLocked() {
+        binding.contentSection.isVisible = false
+        binding.lockedSection.isVisible = true
+        promptUnlock()
+    }
+
+    private fun promptUnlock() {
+        AppLockPrompt.authenticate(
+            activity = this,
+            title = getString(R.string.app_lock_prompt_title),
+            onSuccess = {
+                appLockStore.recordAuthenticated()
+                binding.lockedSection.isVisible = false
+                binding.contentSection.isVisible = true
+                render()
+            },
+            onFailure = {
+                // Stay locked; unlockButton lets the user retry without leaving the activity.
+            },
+        )
     }
 
     private fun render() {
+        renderAppLockToggle()
         val pairings = pairingStore.pairings()
         binding.statusValue.text = if (pairings.isEmpty()) {
             getString(R.string.status_unpaired)
@@ -100,6 +141,33 @@ class MainActivity : AppCompatActivity() {
                 binding.notificationHint.isVisible = false
             }
             renderConnectedApps(pairings)
+        }
+    }
+
+    /** Reflects the stored toggle when the device has a credential enrolled; forces the switch
+     * off and disabled, with a static hint, when it does not -- matches the fail-open reasoning
+     * in [AppLockPrompt.requiresAuthenticationNow]: the toggle itself must never claim to be on
+     * when there is nothing Cambium could actually prompt the user with. */
+    private fun renderAppLockToggle() {
+        val available = AppLockPrompt.canAuthenticate(this)
+        binding.appLockUnavailableHint.isVisible = !available
+        binding.appLockToggle.isEnabled = available
+        setAppLockToggleChecked(available && appLockStore.isEnabled())
+    }
+
+    /** Sets the switch's checked state without re-triggering [onAppLockToggled]. */
+    private fun setAppLockToggleChecked(checked: Boolean) {
+        binding.appLockToggle.setOnCheckedChangeListener(null)
+        binding.appLockToggle.isChecked = checked
+        binding.appLockToggle.setOnCheckedChangeListener { _, isChecked -> onAppLockToggled(isChecked) }
+    }
+
+    private fun onAppLockToggled(enabled: Boolean) {
+        appLockStore.setEnabled(enabled)
+        if (enabled) {
+            // The user just interacted with this screen, proving presence -- starting the grace
+            // window now avoids an immediate, redundant re-prompt on the very next resume.
+            appLockStore.recordAuthenticated()
         }
     }
 

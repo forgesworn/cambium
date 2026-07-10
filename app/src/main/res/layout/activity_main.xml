@@ -21,15 +21,106 @@
             android:textSize="24sp"
             android:textStyle="bold" />
 
-        <TextView
-            android:id="@+id/statusValue"
-            android:layout_width="wrap_content"
+        <!-- Shown instead of contentSection whenever app lock is on and the grace window has
+             expired: see MainActivity.onResume. authenticate() is triggered automatically as
+             soon as this becomes visible; unlockButton is the manual retry if that prompt gets
+             dismissed or fails. -->
+        <LinearLayout
+            android:id="@+id/lockedSection"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:layout_marginBottom="24dp"
-            android:fontFamily="monospace"
-            android:textColor="@color/on_background_muted"
-            tools:text="Not paired" />
+            android:layout_marginTop="24dp"
+            android:orientation="vertical"
+            android:visibility="gone"
+            tools:visibility="visible">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:fontFamily="monospace"
+                android:text="@string/app_lock_locked_title"
+                android:textColor="@color/on_background"
+                android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:layout_marginBottom="16dp"
+                android:fontFamily="monospace"
+                android:text="@string/app_lock_locked_body"
+                android:textColor="@color/on_background_muted" />
+
+            <Button
+                android:id="@+id/unlockButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:fontFamily="monospace"
+                android:text="@string/app_lock_unlock_button" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/contentSection"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <TextView
+                android:id="@+id/statusValue"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:layout_marginBottom="24dp"
+                android:fontFamily="monospace"
+                android:textColor="@color/on_background_muted"
+                tools:text="Not paired" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="4dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginEnd="12dp"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:fontFamily="monospace"
+                        android:text="@string/app_lock_toggle_title"
+                        android:textColor="@color/on_background" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:fontFamily="monospace"
+                        android:text="@string/app_lock_toggle_body"
+                        android:textColor="@color/on_background_muted"
+                        android:textSize="12sp" />
+                </LinearLayout>
+
+                <com.google.android.material.materialswitch.MaterialSwitch
+                    android:id="@+id/appLockToggle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content" />
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/appLockUnavailableHint"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="24dp"
+                android:fontFamily="monospace"
+                android:text="@string/app_lock_unavailable_hint"
+                android:textColor="@color/on_background_muted"
+                android:visibility="gone"
+                tools:visibility="visible" />
 
         <!-- Paired signers, keep-alive toggle and connected apps: visible once at least one
              identity is paired. Hidden entirely on a fresh install: there is nothing to show but
@@ -260,6 +351,8 @@
                     android:text="@string/pairing_in_progress"
                     android:textColor="@color/on_background_muted" />
             </LinearLayout>
+        </LinearLayout>
+
         </LinearLayout>
 
     </LinearLayout>

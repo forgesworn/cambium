@@ -373,6 +373,36 @@ Amethyst / Primal / Voyage ...
   one request. This keeps the capped 500-entry log meaningful signal (what was actually asked,
   approved, denied or failed) rather than routine background noise from Amethyst's constant
   drafts/pings/re-queries on the silent path.
+- `applock/AppLock.kt` -- pure Kotlin: whether a fresh authentication is needed right now, given
+  when Cambium was last unlocked (`null` means never, this install) and a grace window
+  (`GRACE_WINDOW_MILLIS`, ~1 minute). The grace window exists so a rotation or a quick switch to
+  another app and back does not re-prompt -- only walking away for longer does.
+- `applock/AppLockStore.kt` -- the toggle and the last-authenticated timestamp in their own small
+  plain `SharedPreferences` (a boolean and a timestamp, nothing worth Keystore encryption),
+  independent of `PairingStore` -- a device-local UI gate, not pairing state. Off by default
+  (opt-in, unlike the activity log's opt-out default): this changes what the user has to do to
+  open the app at all. One shared timestamp, not one per activity -- `MainActivity` and
+  `SignerActivity` each construct their own `AppLockStore`, backed by the same preferences file, so
+  authenticating from either covers the other within the same grace window.
+- `applock/AppLockPrompt.kt` -- thin wrapper over `androidx.biometric`'s `BiometricPrompt`/
+  `BiometricManager`, `BIOMETRIC_STRONG or DEVICE_CREDENTIAL` (never a weak/convenience biometric
+  alone; never `setNegativeButtonText`, which androidx.biometric forbids combining with
+  `DEVICE_CREDENTIAL`). `requiresAuthenticationNow(context, store)` is the one true "should we gate
+  right now" check, combining three things: the toggle (`AppLockStore.isEnabled`), `canAuthenticate`
+  (whether the device still has anything enrolled), and `AppLock`'s grace window. `canAuthenticate`
+  being part of that combination, not just of what enables the toggle, is deliberate and load-bearing:
+  if the toggle was left on and the device later loses its screen lock entirely, gating must fail
+  open rather than lock the user out of their own app with no way to ever pass a prompt that can no
+  longer be shown.
+
+  Gates exactly two human-interactive actions, both behind `MainActivity`/`SignerActivity`'s own
+  `requireUnlockedThen`/equivalent: `MainActivity` itself on every `onResume` (a locked-state screen
+  replaces its content entirely, auto-triggering the prompt, with a manual "Unlock" retry button
+  for when the prompt is dismissed or fails), and `SignerActivity`'s approval sheet's Approve and
+  "always deny" actions specifically -- not Decline (refusing needs no proof of presence), and
+  never the silent forwarding path in `handle`/`submitAndRespond` or any part of `SignerProvider`
+  at all: background signing for an already-approved caller must keep working with the phone
+  locked, since that is precisely the point of Cambium existing as a background NIP-46 proxy.
 - `service/HeartwoodKeepAliveService.kt` -- optional, off-by-default foreground service that keeps
   the process (and so `HeartwoodSession`'s warm `NostrConnect`) alive between requests, closing the
   previously-tracked "only warm while the process happens to be running" gap. Pings Heartwood every

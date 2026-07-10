@@ -65,6 +65,14 @@
     <string name="activity_log_outcome_rejected_user">Rejected</string>
     <string name="activity_log_outcome_failed">Failed</string>
 
+    <string name="app_lock_toggle_title">App lock</string>
+    <string name="app_lock_toggle_body">Require your device unlock (fingerprint, face or PIN) to open Cambium and approve requests. Off by default.</string>
+    <string name="app_lock_unavailable_hint">No screen lock is set up on this device. Set one in system settings to use app lock.</string>
+    <string name="app_lock_locked_title">Cambium is locked</string>
+    <string name="app_lock_locked_body">Unlock your device to continue.</string>
+    <string name="app_lock_unlock_button">Unlock</string>
+    <string name="app_lock_prompt_title">Unlock Cambium</string>
+
     <string name="error_not_paired">Cambium is not paired with a signer.</string>
     <string name="error_timeout">The signer did not respond in time.</string>
     <string name="error_relay">Could not reach the relay.</string>
