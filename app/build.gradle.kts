@@ -108,3 +108,37 @@ dependencies {
     androidTestImplementation(libs.androidx.test.ext.junit)
     androidTestImplementation(libs.espresso.core)
 }
+
+// A literal "--" inside an XML comment is illegal per the XML spec, and Android's resource
+// merger/data-binding layout parser reject it outright with a build failure rather than a
+// warning -- this has been re-introduced by hand several times in review (an em-dash-style "--"
+// used as a sentence separator inside a multi-line comment), always caught only by the build
+// itself failing. Cheap enough to check on every build rather than rely on remembering.
+tasks.register("checkXmlCommentHyphens") {
+    description = "Fails if any XML comment under src/main contains a literal '--'."
+    group = "verification"
+
+    val xmlFiles = fileTree("src/main") { include("**/*.xml") }
+    inputs.files(xmlFiles)
+
+    doLast {
+        val commentPattern = Regex("<!--(.*?)-->", RegexOption.DOT_MATCHES_ALL)
+        val offenders = mutableListOf<String>()
+        xmlFiles.forEach { file ->
+            val text = file.readText()
+            for (match in commentPattern.findAll(text)) {
+                if ("--" in match.groupValues[1]) {
+                    val line = text.substring(0, match.range.first).count { it == '\n' } + 1
+                    offenders += "${file.relativeTo(projectDir)}:$line"
+                }
+            }
+        }
+        check(offenders.isEmpty()) {
+            "XML comments must not contain '--':\n" + offenders.joinToString("\n") { "  $it" }
+        }
+    }
+}
+
+tasks.named("preBuild") {
+    dependsOn("checkXmlCommentHyphens")
+}

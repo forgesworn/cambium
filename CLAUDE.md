@@ -14,6 +14,13 @@ pairing flow.
 
 `local.properties` must set `sdk.dir` to the local Android SDK. Requires JDK 21.
 
+`checkXmlCommentHyphens` (in `app/build.gradle.kts`, wired into `preBuild` -- runs on every build,
+not a separate step to remember) fails the build if any XML comment under `src/main` contains a
+literal `--`, which is illegal per the XML spec and something Android's resource merger/data-binding
+parser reject outright rather than warn about. A cheap guard: this exact mistake (an em-dash-style
+`--` used as a sentence separator inside a multi-line comment) was hand-introduced and caught only
+by the build itself failing several times over the course of review.
+
 ## Architecture
 
 ```
@@ -362,7 +369,10 @@ Amethyst / Primal / Voyage ...
   and `MainActivity`'s connected-apps list.
 - `HexUtils.kt` -- pure Kotlin (no Android): `ByteArray.toHex()`, lowercase hex encoding, shared by
   `IdentityRouting`'s `current_user` normalisation and `DecryptCache`'s cache key rather than each
-  keeping its own copy of the same `"%02x"` formatting.
+  keeping its own copy of the same encoding -- both on hot paths (a burst of silent-path queries;
+  every cache lookup), so this writes into a `CharArray` via a lookup table instead of
+  `"%02x".format(...)`: `String.format`/`Formatter` parses the format string and boxes every byte
+  on each call, real overhead on a path called this often.
 - `log/ActivityLog.kt` -- the on-phone activity log's pure-Kotlin core: `ActivityLogEntry`
   (timestamp, calling package, NIP-55 method, event kind -- `sign_event` only, never any other
   method's payload -- identity display label, outcome) and `ActivityLog`, the capped append/rotate
