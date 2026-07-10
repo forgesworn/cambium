@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.3.2 (2026-07-10)
+
+Polish on the 0.3.1 fixes.
+
+- The approval sheet now warns live whenever the selected identity differs from the app's
+  existing binding, including when the picker is moved by hand, not just on its default.
+- Activity log writing is a single process-wide writer fed by a non-blocking queue.
+- Queue-shed log lines now name which identity's queue is shedding.
+- Faster hex encoding on the request path; a build-time guard against the recurring illegal
+  "--" inside XML comments.
+
 ## 0.3.1 (2026-07-10)
 
 Fix release from the completed 0.3.0 review.
