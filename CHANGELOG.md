@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.3.1 (2026-07-10)
+
+Fix release from the completed 0.3.0 review.
+
+- A first-time burst of concurrent requests against a newly paired identity could construct
+  duplicate session workers and leak the losers; session creation is now atomic.
+- The approval sheet's identity picker now defaults to the app's existing binding (after a
+  `current_user` match) instead of the first pairing, and says when a different identity is
+  selected, so a routine re-approval cannot silently rebind an app.
+- Activity log writes are now serialised process-wide and never block the request path; silent
+  cache hits are no longer logged (they would crowd out real entries).
+- Removing the last pairing from its row now stops the keep-warm service immediately.
+- Less repeated work per request on the intent path; shared hex encoding; dead code removed.
+
 ## 0.3.0 (2026-07-10)
 
 - Multiple identities: pair each Heartwood identity separately (each bunker URI is one identity).
