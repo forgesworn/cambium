@@ -191,6 +191,13 @@ class MainActivity : AppCompatActivity() {
             .setPositiveButton(R.string.unpair_button) { _, _ ->
                 pairingStore.removePairing(pairing.signerPubkeyHex)
                 lifecycleScope.launch { HeartwoodSession.shutdown(pairing.signerPubkeyHex) }
+                // The keep-alive service's own ping loop already stops itself once it next finds
+                // pairings() empty (see HeartwoodKeepAliveService), but that could be up to a
+                // full PING_INTERVAL_MILLIS away -- stopping it here immediately avoids leaving a
+                // "keeping your signer warm" notification showing with nothing left to keep warm.
+                if (pairingStore.pairings().isEmpty()) {
+                    HeartwoodKeepAliveService.stop(this)
+                }
                 render()
             }
             .setNegativeButton(android.R.string.cancel, null)

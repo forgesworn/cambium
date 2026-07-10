@@ -114,7 +114,8 @@ class SignerActivity : AppCompatActivity() {
         appLockStore = AppLockStore(this)
 
         callerPermission = callingPackage?.let(pairingStore::permission)
-        silent = decideSilent(intent)
+        val decision = decideSilent(intent)
+        silent = decision.silent
         if (silent) {
             // Must happen before setContentView (and there is no content view to set here) for
             // the transparent/non-dimmed theme to actually take effect on the window.
@@ -126,8 +127,19 @@ class SignerActivity : AppCompatActivity() {
             setContentView(binding.root)
         }
 
-        handleIncomingIntent(intent)
+        handleIncomingIntent(intent, decision)
     }
+
+    /** [decideSilent]'s findings, reused by the very first [handleIncomingIntent] call so it does
+     * not immediately re-parse [Intent] and re-run [IdentityRouting.resolve] against the exact
+     * same intent decideSilent just did. `null` fields mean decideSilent never got that far (the
+     * caller was DENIED, unresolved, or nothing was paired) -- [handleIncomingIntent] computes
+     * those fresh itself in that case, same as it always has. */
+    private data class SilentDecision(
+        val silent: Boolean,
+        val parsed: Nip55Request?,
+        val routed: IdentityRouting.Result?,
+    )
 
     /**
      * A remembered DENIED caller is always silent: rejected outright, no Heartwood call, nothing
@@ -139,24 +151,27 @@ class SignerActivity : AppCompatActivity() {
      * end in an immediate reject with no UI needed either way. Everything else -- no remembered
      * choice yet, or an approved caller whose routing does not resolve -- needs the visible sheet.
      */
-    private fun decideSilent(intent: Intent): Boolean {
-        val permission = callerPermission ?: return false
-        if (permission.state == AppPermissionState.DENIED) return true
+    private fun decideSilent(intent: Intent): SilentDecision {
+        val permission = callerPermission ?: return SilentDecision(silent = false, parsed = null, routed = null)
+        if (permission.state == AppPermissionState.DENIED) {
+            return SilentDecision(silent = true, parsed = null, routed = null)
+        }
 
         val pairings = pairingStore.pairings()
-        if (pairings.isEmpty()) return true
-        val parsed = Nip55Request.from(intent.toRawSignerIntent()) ?: return true
+        if (pairings.isEmpty()) return SilentDecision(silent = true, parsed = null, routed = null)
+        val parsed = Nip55Request.from(intent.toRawSignerIntent())
+            ?: return SilentDecision(silent = true, parsed = null, routed = null)
         val routed = IdentityRouting.resolve(parsed.currentUser, permission.boundIdentityPubkeyHex, pairings)
-        return routed is IdentityRouting.Result.Resolved
+        return SilentDecision(silent = routed is IdentityRouting.Result.Resolved, parsed = parsed, routed = routed)
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        handleIncomingIntent(intent)
+        handleIncomingIntent(intent, precomputed = null)
     }
 
-    private fun handleIncomingIntent(intent: Intent) {
+    private fun handleIncomingIntent(intent: Intent, precomputed: SilentDecision?) {
         // A stray back-press must only ever be blocked while a forwarding call is actually in
         // flight, never across a whole activity lifetime -- reset before working out what this
         // intent even is.
@@ -169,7 +184,7 @@ class SignerActivity : AppCompatActivity() {
         }
 
         val raw = intent.toRawSignerIntent()
-        val parsed = Nip55Request.from(raw)
+        val parsed = precomputed?.parsed ?: Nip55Request.from(raw)
         if (parsed == null) {
             rejectAndFinish(raw.id)
             return
@@ -190,7 +205,8 @@ class SignerActivity : AppCompatActivity() {
                 rejectAndFinish(parsed.id)
             }
             AppPermissionState.APPROVED -> {
-                val routed = IdentityRouting.resolve(parsed.currentUser, permission.boundIdentityPubkeyHex, pairings)
+                val routed = precomputed?.routed
+                    ?: IdentityRouting.resolve(parsed.currentUser, permission.boundIdentityPubkeyHex, pairings)
                 when {
                     routed is IdentityRouting.Result.Resolved -> handle(routed.pairing, parsed)
                     !silent -> showApprovalSheet(pairings, parsed, callingPackage)
@@ -240,7 +256,13 @@ class SignerActivity : AppCompatActivity() {
 
         // Only worth showing once there is more than one pairing to choose between; with exactly
         // one, Approve always means that one pairing, same as before Cambium supported more.
-        // Default selection: the current_user match if the request named one we have, else first.
+        // Default selection prefers the caller's *existing* bound identity over a current_user
+        // match: this sheet only shows for an already-approved caller when their current_user
+        // named an identity we don't have (see decideSilent/handleIncomingIntent), so a
+        // current_user match here would never actually exist -- defaulting to pairings[0] in that
+        // case would silently rebind the app to a different identity than it already had if the
+        // user just taps Approve out of habit, without noticing the picker moved. A brand-new
+        // caller (no existing binding) falls back to the current_user match, same as before.
         binding.identityRow.isVisible = pairings.size > 1
         if (pairings.size > 1) {
             binding.identityPicker.adapter = ArrayAdapter(
@@ -248,8 +270,9 @@ class SignerActivity : AppCompatActivity() {
                 android.R.layout.simple_spinner_dropdown_item,
                 pairings.map { it.displayLabel() },
             )
-            val currentUserHex = IdentityRouting.normaliseCurrentUser(request.currentUser)
-            val defaultIndex = pairings.indexOfFirst { it.signerPubkeyHex.equals(currentUserHex, ignoreCase = true) }
+            val preferredPubkeyHex = callerPermission?.boundIdentityPubkeyHex
+                ?: IdentityRouting.normaliseCurrentUser(request.currentUser)
+            val defaultIndex = pairings.indexOfFirst { it.signerPubkeyHex.equals(preferredPubkeyHex, ignoreCase = true) }
             binding.identityPicker.setSelection(defaultIndex.takeIf { it >= 0 } ?: 0)
         }
 

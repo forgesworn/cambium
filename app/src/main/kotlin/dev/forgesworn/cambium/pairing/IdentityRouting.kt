@@ -1,6 +1,7 @@
 package dev.forgesworn.cambium.pairing
 
 import dev.forgesworn.cambium.nip57.Bech32
+import dev.forgesworn.cambium.toHex
 
 /**
  * Decides which [Pairing] (which paired Heartwood identity) a NIP-55 request should route to,
@@ -58,8 +59,6 @@ object IdentityRouting {
     }
 
     private fun Char.isHexDigit(): Boolean = this in '0'..'9' || this in 'a'..'f' || this in 'A'..'F'
-
-    private fun ByteArray.toHex(): String = joinToString("") { "%02x".format(it) }
 
     private const val HEX_PUBKEY_LENGTH = 64
     private const val PUBKEY_BYTES = 32

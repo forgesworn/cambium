@@ -1,6 +1,13 @@
 package dev.forgesworn.cambium.log
 
 import android.content.Context
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -16,12 +23,23 @@ import java.io.File
  * (opt-out, not opt-in): the whole point is showing the user what Cambium has done on their
  * behalf, so it should work out of the box rather than needing to be found and switched on first.
  *
- * Reads and writes are small (capped at [ActivityLog.MAX_ENTRIES] entries) and synchronous,
- * called directly from whatever thread is already handling the request -- `SignerActivity`'s main
- * thread or `SignerProvider`'s binder thread -- rather than offloaded to a coroutine, the same way
- * `PairingStore`'s `EncryptedSharedPreferences` reads already are. `SignerActivity` calls this
- * immediately before `finish()`; offloading it to `lifecycleScope` would risk the write being
- * cancelled by the activity finishing before it completes.
+ * `SignerActivity`, `SignerProvider` and `ActivityLogActivity` each construct their own
+ * `ActivityLogStore` against the same underlying file -- an earlier version guarded reads/writes
+ * with `@Synchronized`, which only ever serialises calls against *one* instance's own monitor, not
+ * across the several instances actually writing to the same file concurrently. [mutex] and
+ * [writerScope] live on the companion object instead, so every instance shares the exact same
+ * serialisation regardless of which one constructed it.
+ *
+ * [append] is fire-and-forget: it enqueues the read-transform-write onto [writerScope] (a
+ * dedicated single-thread dispatcher that outlives any one activity) and returns immediately,
+ * never blocking the caller's thread on file I/O -- `SignerProvider`'s binder thread in
+ * particular, where blocking would undercut a `DecryptCache` hit's whole point of answering
+ * without a round trip (see `SignerProvider.forward`'s `HeartwoodOutcome.Cached` skip). Using a
+ * scope that is not tied to any one activity's lifecycle, rather than `lifecycleScope`, also means
+ * `SignerActivity` calling this immediately before `finish()` cannot have the write cancelled out
+ * from under it by the activity finishing. [entries]/[clear] still block their caller briefly
+ * (`runBlocking` under [mutex]) -- both are rare, user-initiated reads from `ActivityLogActivity`,
+ * where "block until this specific answer/effect is visible" is the actually-wanted behaviour.
  */
 class ActivityLogStore(context: Context) {
 
@@ -35,28 +53,30 @@ class ActivityLogStore(context: Context) {
         prefs.edit().putBoolean(KEY_ENABLED, enabled).apply()
     }
 
-    /** No-ops entirely -- does not even touch the file -- when logging is disabled. */
-    @Synchronized
+    /** No-ops entirely -- does not even touch the file or the writer queue -- when logging is
+     * disabled. */
     fun append(entry: ActivityLogEntry) {
         if (!isEnabled()) return
-        writeEntries(ActivityLog.append(readEntries(), entry))
+        writerScope.launch {
+            mutex.withLock {
+                writeEntriesLocked(ActivityLog.append(readEntriesLocked(), entry))
+            }
+        }
     }
 
     /** Newest first, for display. */
-    @Synchronized
-    fun entries(): List<ActivityLogEntry> = readEntries().asReversed()
+    fun entries(): List<ActivityLogEntry> = runBlocking { mutex.withLock { readEntriesLocked() } }.asReversed()
 
-    @Synchronized
     fun clear() {
-        file.delete()
+        runBlocking { mutex.withLock { file.delete() } }
     }
 
-    private fun readEntries(): List<ActivityLogEntry> {
+    private fun readEntriesLocked(): List<ActivityLogEntry> {
         if (!file.exists()) return emptyList()
         return runCatching { Json.decodeFromString<List<ActivityLogEntry>>(file.readText()) }.getOrDefault(emptyList())
     }
 
-    private fun writeEntries(entries: List<ActivityLogEntry>) {
+    private fun writeEntriesLocked(entries: List<ActivityLogEntry>) {
         file.writeText(Json.encodeToString(entries))
     }
 
@@ -64,5 +84,11 @@ class ActivityLogStore(context: Context) {
         const val FILE_NAME = "activity_log.json"
         const val PREFS_NAME = "cambium_activity_log"
         const val KEY_ENABLED = "enabled"
+
+        // Shared across every ActivityLogStore instance -- see the class doc. No parent job, like
+        // HeartwoodSession's worker: an in-flight append must never be cancelled by whichever
+        // activity happened to enqueue it finishing first.
+        val mutex = Mutex()
+        val writerScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     }
 }

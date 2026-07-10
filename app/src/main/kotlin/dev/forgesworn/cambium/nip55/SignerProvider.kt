@@ -18,6 +18,7 @@ import dev.forgesworn.cambium.pairing.Pairing
 import dev.forgesworn.cambium.pairing.PairingStore
 import dev.forgesworn.cambium.signer.CacheableDecrypt
 import dev.forgesworn.cambium.signer.HeartwoodClient
+import dev.forgesworn.cambium.signer.HeartwoodOutcome
 import dev.forgesworn.cambium.signer.HeartwoodResult
 import dev.forgesworn.cambium.signer.HeartwoodSession
 import dev.forgesworn.cambium.signer.displayLabel
@@ -86,13 +87,15 @@ import kotlinx.coroutines.runBlocking
  * pairing or touching the queue -- distinct from a caller with no remembered choice yet, who gets
  * `null` ("try the intent", where they will see the approval sheet). See [resolveCaller].
  *
- * [forward] logs to [ActivityLogStore] on every *definitive* outcome (a real result, or a
- * `rejected` cursor) -- never on a `null` deferral, since those are transient/retried via the
+ * [forward] logs to [ActivityLogStore] on every *definitive, non-cached* outcome (a real result,
+ * or a `rejected` cursor) -- never on a `null` deferral, since those are transient/retried via the
  * intent path, which will log its own outcome once the request actually concludes there; logging
- * both would double-count what the user experienced as one request. Nothing else in this class
- * logs: [queryPing], the NIP-37 draft decline, and [PrivateZap.decodeAnonTag]'s routine "not a
- * private zap" outcomes would mostly add noise (Amethyst pings and drafts constantly) rather than
- * signal about what Cambium actually did.
+ * both would double-count what the user experienced as one request. A [HeartwoodOutcome.Cached]
+ * hit is not logged either (see [logActivityUnlessCached]): it can repeat many times a second
+ * during a burst, and would be pure noise against the capped log rather than signal. Nothing else
+ * in this class logs: [queryPing], the NIP-37 draft decline, and [PrivateZap.decodeAnonTag]'s
+ * routine "not a private zap" outcomes would mostly add noise (Amethyst pings and drafts
+ * constantly) rather than signal about what Cambium actually did.
  */
 class SignerProvider : ContentProvider() {
 
@@ -363,13 +366,13 @@ class SignerProvider : ContentProvider() {
         return when (result) {
             is HeartwoodResult.Success -> {
                 Log.i(TAG, "silent forward for $caller answered in ${elapsed}ms")
-                logActivity(caller, method, eventKind, pairing, ActivityLog.outcomeFor(outcome))
+                logActivityUnlessCached(caller, method, eventKind, pairing, outcome)
                 buildResultCursor(result.value, includeEventAndSignature)
             }
             is HeartwoodResult.Failure -> {
                 if (isPolicyRefusal(result.error) || isDeterministicDecryptFailure(result.error)) {
                     Log.i(TAG, "silent forward for $caller refused after ${elapsed}ms (${result.error}); answering rejected")
-                    logActivity(caller, method, eventKind, pairing, ActivityLog.outcomeFor(outcome))
+                    logActivityUnlessCached(caller, method, eventKind, pairing, outcome)
                     rejectedCursor()
                 } else {
                     Log.w(TAG, "silent forward for $caller failed after ${elapsed}ms (${result.error}); deferring to intent")
@@ -377,6 +380,17 @@ class SignerProvider : ContentProvider() {
                 }
             }
         }
+    }
+
+    /** A [HeartwoodOutcome.Cached] hit on the silent path can repeat many times a second during a
+     * burst (Amethyst re-requesting the same decrypt while the user types) -- logging every one
+     * would be pure noise against the capped 500-entry log and needless work on the hot path the
+     * cache exists to keep fast. The intent path (`SignerActivity`) logs cache hits normally: it
+     * is a one-off, user-visible flow, not a background burst, so `SIGNED` vs
+     * `ANSWERED_FROM_CACHE` stays meaningful signal there. */
+    private fun logActivityUnlessCached(caller: String, method: String, eventKind: Int?, pairing: Pairing, outcome: HeartwoodOutcome<String>) {
+        if (outcome is HeartwoodOutcome.Cached) return
+        logActivity(caller, method, eventKind, pairing, ActivityLog.outcomeFor(outcome))
     }
 
     private fun logActivity(caller: String, method: String, eventKind: Int?, pairing: Pairing, outcome: ActivityLogEntry.Outcome) {

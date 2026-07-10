@@ -217,7 +217,14 @@ object HeartwoodSession {
         all.forEach { it.shutdown() }
     }
 
-    private fun sessionFor(pairing: Pairing): Session = sessions.getOrPut(pairing.signerPubkeyHex) { Session() }
+    // ConcurrentHashMap, but computeIfAbsent specifically -- not Kotlin's getOrPut extension,
+    // which is plain get-then-put with no atomicity of its own even on a concurrent map. Two
+    // threads racing getOrPut for the same brand-new identity could each construct a Session
+    // (spinning up its own worker thread) before either put() runs; the loser's Session -- and
+    // its thread -- would then be silently overwritten in the map and leaked, since nothing ever
+    // held a reference to shut it down again. computeIfAbsent is atomic per key: the second
+    // caller blocks until the first's factory has already returned and been stored.
+    private fun sessionFor(pairing: Pairing): Session = sessions.computeIfAbsent(pairing.signerPubkeyHex) { Session() }
 
     /**
      * One dedicated worker + decrypt cache for exactly one Heartwood identity. Two problems

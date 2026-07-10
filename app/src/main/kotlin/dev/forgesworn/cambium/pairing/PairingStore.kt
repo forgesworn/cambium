@@ -79,8 +79,6 @@ class PairingStore(context: Context) {
 
     fun pairings(): List<Pairing> = readPairings()
 
-    fun pairingFor(signerPubkeyHex: String): Pairing? = readPairings().firstOrNull { it.signerPubkeyHex == signerPubkeyHex }
-
     fun isPaired(): Boolean = pairings().isNotEmpty()
 
     /**

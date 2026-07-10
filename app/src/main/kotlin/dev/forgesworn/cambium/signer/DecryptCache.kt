@@ -1,5 +1,6 @@
 package dev.forgesworn.cambium.signer
 
+import dev.forgesworn.cambium.toHex
 import java.security.MessageDigest
 
 /**
@@ -64,8 +65,7 @@ class DecryptCache(private val maxEntries: Int = DEFAULT_MAX_ENTRIES) {
     /** Bounds the key size regardless of payload length: (method, counterparty, sha-256 of payload). */
     private fun keyFor(request: CacheableDecrypt): String {
         val digest = MessageDigest.getInstance("SHA-256").digest(request.payload.toByteArray(Charsets.UTF_8))
-        val payloadHash = digest.joinToString("") { byte -> "%02x".format(byte) }
-        return "${request.method}:${request.otherPubkeyHex}:$payloadHash"
+        return "${request.method}:${request.otherPubkeyHex}:${digest.toHex()}"
     }
 
     private companion object {

@@ -93,10 +93,16 @@ Amethyst / Primal / Voyage ...
   isolated: a burst against identity A must never shed or slow down identity B, and a decrypt
   cached while talking to A must never leak into B's answers. The private `Session` class is
   exactly the single-pairing design this object used to *be* before 0.3.0, now instantiated once
-  per signer pubkey (`sessions.getOrPut(pairing.signerPubkeyHex) { Session() }`) instead of once
-  for the whole app -- every invariant below still holds, just scoped to one identity's worker
+  per signer pubkey (`sessions.computeIfAbsent(pairing.signerPubkeyHex) { Session() }`) instead of
+  once for the whole app -- every invariant below still holds, just scoped to one identity's worker
   instead of the app's only worker. A live test against a real device showed a fresh session per
-  request cost multiple seconds each, hence keeping one warm at all.
+  request cost multiple seconds each, hence keeping one warm at all. `computeIfAbsent`
+  specifically, not Kotlin's `getOrPut` extension: `getOrPut` is plain get-then-put with no
+  atomicity of its own even on a `ConcurrentHashMap`, so two threads racing it for the same
+  brand-new identity could each construct a `Session` (spinning up its own worker thread) before
+  either `put()` ran -- the loser's `Session`, and its thread, would be silently overwritten in
+  the map and leaked, with nothing left holding a reference to ever shut it down.
+  `computeIfAbsent` is atomic per key on a real `ConcurrentHashMap`.
 
   `trySilent`/`withClient` return a `HeartwoodOutcome<String>` (`.result` is the same
   `HeartwoodResult<String>` either call always returned pre-0.3.0), not a bare `HeartwoodResult`,
@@ -176,7 +182,11 @@ Amethyst / Primal / Voyage ...
   delivered request that hits the same routing failure on an already-silent-themed window instead
   rejects outright (`handleIncomingIntent`'s `else` branch) -- there is no reliable way to grow a
   sheet's decorations onto an invisible window after the fact, so it cannot fall back to asking the
-  way the first intent could.
+  way the first intent could. `decideSilent` returns a `SilentDecision` (its parsed `Nip55Request`
+  and `IdentityRouting.Result`, alongside the `silent` verdict itself), which the very first
+  `handleIncomingIntent` call reuses instead of re-parsing the same intent and re-running routing
+  against it a second time immediately afterwards; `onNewIntent`-delivered requests still compute
+  both fresh, since `SilentDecision` only ever describes the *first* intent.
 
   The approval sheet (shown only for "ask", or for an approved caller whose routing did not
   resolve on the first intent) has an "always deny this app" link below the normal Approve/Decline
@@ -185,9 +195,14 @@ Amethyst / Primal / Voyage ...
   (see `nip55/RequestedPermissions.kt`) as a summary line with a note that Heartwood's own
   `ClientPolicy` is the actual authority -- display only, Cambium does not pre-authorise anything
   from this list. An identity picker (`Spinner`, only shown once there is more than one pairing)
-  defaults to the request's `current_user` match if it named one we have, else the first pairing;
-  Approve binds the app to whichever identity is selected at tap time
-  (`pairingStore.approve(packageName, chosen.signerPubkeyHex)`).
+  defaults to the caller's *existing* bound identity when there is one, else the request's
+  `current_user` match if it named one we have, else the first pairing -- existing binding takes
+  priority deliberately: this sheet only ever shows for an *already-approved* caller when their
+  `current_user` named an identity we don't have (see `decideSilent` above), so a `current_user`
+  match could never actually exist in that case, and defaulting to the first pairing instead of the
+  existing binding would silently rebind the app to a different identity than it already had if the
+  user just taps Approve out of habit without noticing the picker moved. Approve binds the app to
+  whichever identity is selected at tap time (`pairingStore.approve(packageName, chosen.signerPubkeyHex)`).
 
   `silentBackPressBlock`, a no-op `OnBackPressedCallback`, is enabled only for the two silent
   forwarding windows (`handle`, `handleDecryptZapEvent`, only when `silent`) and reset to disabled
@@ -315,9 +330,13 @@ Amethyst / Primal / Voyage ...
 
   `renderPairingsList` shows one `item_pairing.xml` row per pairing (label or truncated npub,
   npub, relays), each with its own confirm-gated unpair (`PairingStore.removePairing` +
-  `HeartwoodSession.shutdown(signerPubkeyHex)`); a separate "Unpair all" action
-  (`PairingStore.clearAll` + `HeartwoodSession.shutdownAll`) is a full reset, confirmed with its own
-  dialog, for when the user wants to start over rather than remove signers one at a time. The
+  `HeartwoodSession.shutdown(signerPubkeyHex)`, and `HeartwoodKeepAliveService.stop` too if that
+  was the last remaining pairing -- the service's own ping loop already stops itself once it next
+  finds `pairings()` empty, but not stopping it here immediately would leave a "keeping your
+  signer warm" notification showing for up to a full ping interval with nothing left to keep
+  warm); a separate "Unpair all" action (`PairingStore.clearAll` + `HeartwoodSession.shutdownAll`,
+  which already stops the service unconditionally) is a full reset, confirmed with its own dialog,
+  for when the user wants to start over rather than remove signers one at a time. The
   paired-signers section, the keep-alive toggle, and the connected-apps list are all hidden
   together on a fresh install (`pairings.isEmpty()`) -- there is nothing to show but the pairing
   form. Also hosts the "Keep connection warm" toggle -- see `service/HeartwoodKeepAliveService.kt`
@@ -335,6 +354,9 @@ Amethyst / Primal / Voyage ...
 - `AndroidExtensions.kt` -- `PackageManager.displayNameFor(packageName)`, the app-label lookup
   (falls back to the raw package string on any failure) shared by `SignerActivity`'s approval sheet
   and `MainActivity`'s connected-apps list.
+- `HexUtils.kt` -- pure Kotlin (no Android): `ByteArray.toHex()`, lowercase hex encoding, shared by
+  `IdentityRouting`'s `current_user` normalisation and `DecryptCache`'s cache key rather than each
+  keeping its own copy of the same `"%02x"` formatting.
 - `log/ActivityLog.kt` -- the on-phone activity log's pure-Kotlin core: `ActivityLogEntry`
   (timestamp, calling package, NIP-55 method, event kind -- `sign_event` only, never any other
   method's payload -- identity display label, outcome) and `ActivityLog`, the capped append/rotate
@@ -351,11 +373,23 @@ Amethyst / Primal / Voyage ...
   nothing here needs Keystore encryption) and the enabled toggle in its own tiny plain
   `SharedPreferences`, independent of `PairingStore` -- a diagnostic feature, not pairing state.
   Defaults to **on** (opt-out): the log exists to reassure, so it should work without first being
-  found and switched on. `append` no-ops entirely, without touching the file, when disabled. Reads
-  and writes are small and synchronous, called directly from whichever thread is already handling
-  the request (`SignerActivity`'s main thread, `SignerProvider`'s binder thread) rather than
-  offloaded to a coroutine -- `SignerActivity` logs immediately before `finish()`, and offloading to
-  `lifecycleScope` would risk the write being cancelled by the activity finishing first.
+  found and switched on. `append` no-ops entirely, without touching the file or the writer queue,
+  when disabled.
+
+  `SignerActivity`, `SignerProvider` and `ActivityLogActivity` each construct their own
+  `ActivityLogStore` against the same underlying file -- an early version guarded reads/writes with
+  `@Synchronized`, which only serialises calls against *one* instance's own monitor, not across the
+  several instances actually writing to the same file concurrently. A shared `Mutex` and a shared
+  single writer scope now live on the companion object instead, so every instance coordinates
+  through the same lock regardless of which one constructed it. `append` is fire-and-forget:
+  it enqueues the read-transform-write onto the shared writer scope (`Dispatchers.IO`, no parent
+  job -- an in-flight append must never be cancelled by whichever activity enqueued it finishing
+  first) and returns immediately, never blocking the caller's thread on file I/O --
+  `SignerProvider`'s binder thread in particular, where blocking would undercut a `DecryptCache`
+  hit's whole point of answering without a round trip (see its own class doc's cache-hit logging
+  note below). `entries`/`clear` still block their caller briefly (`runBlocking` under the shared
+  mutex) -- both are rare, user-initiated calls from `ActivityLogActivity`, where blocking until
+  the effect is actually visible is the wanted behaviour.
 - `log/ActivityLogActivity.kt` -- read-only log screen (newest first, monospace), reached from a
   button in `MainActivity`'s paired section. Off-toggle and a confirm-gated Clear action. One
   `item_activity_log_entry.xml` row inflated per entry rather than a `RecyclerView`, same trade-off
@@ -370,9 +404,15 @@ Amethyst / Primal / Voyage ...
   `forward()` outcome that defers to the intent (`null`) rather than answering definitively -- a
   transient provider-path failure is retried via the intent path, which logs its own outcome once
   the request actually concludes, so logging both would double-count what the user experienced as
-  one request. This keeps the capped 500-entry log meaningful signal (what was actually asked,
-  approved, denied or failed) rather than routine background noise from Amethyst's constant
-  drafts/pings/re-queries on the silent path.
+  one request. `SignerProvider.forward` additionally skips logging a `HeartwoodOutcome.Cached` hit
+  specifically (`logActivityUnlessCached`): a cache hit on the silent path can repeat many times a
+  second during a burst (Amethyst re-requesting the same decrypt while the user types), which would
+  be pure noise against the cap and needless work on the exact hot path the cache exists to keep
+  fast. `SignerActivity`'s intent-path logging is unaffected -- it is a one-off, user-visible flow,
+  not a background burst, so `SIGNED` vs `ANSWERED_FROM_CACHE` stays meaningful signal there. This
+  keeps the capped 500-entry log meaningful signal (what was actually asked, approved, denied or
+  failed) rather than routine background noise from Amethyst's constant drafts/pings/re-queries on
+  the silent path.
 - `applock/AppLock.kt` -- pure Kotlin: whether a fresh authentication is needed right now, given
   when Cambium was last unlocked (`null` means never, this install) and a grace window
   (`GRACE_WINDOW_MILLIS`, ~1 minute). The grace window exists so a rotation or a quick switch to
