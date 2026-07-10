@@ -447,6 +447,17 @@ Amethyst / Primal / Voyage ...
   individual `kind`s or methods); v1's tri-state (`AppPermissionState`) covers the whole-app case.
   The one-time "Decline" button on the approval sheet still does not remember anything -- only the
   separate "always deny" link does; a plain Decline shows the sheet again next time.
+- Timed remember-my-choice (an expiry -- 1 hour / 1 day / 1 week / always -- on a remembered
+  approve/deny, Amber's `acceptUntil`/`rejectUntil`) was scoped for 0.3.0 as a stretch goal and
+  deliberately not built. The store side is not the blocker: `AppPermission` could gain an
+  `expiresAtMillis: Long?`, and `PairingStore.permission` treating an expired entry as absent on
+  read (the same "back to ask" outcome `forget` produces, so `SignerProvider` already treats an
+  expired denial as unresolved rather than rejected with no further change) is a small, contained
+  addition. The approval sheet is: it already carries a conditional identity picker for
+  multi-pairing on top of the app/method/kind/permissions rows, and an expiry choice needs to
+  attach to *two* different actions (Approve and "always deny") without either silently changing
+  what a plain tap does or turning the sheet into something that needs its own layout pass to stay
+  legible on a 320dp modal. That interaction design, not the storage, is the real work here.
 - `decrypt_zap_event` only implements the recipient path (decoding a private zap sent *to* the
   paired identity). The sender path -- recognising your own anonymous zaps by regenerating the
   ephemeral key -- needs the raw private key hashed directly, which is permanently impossible over
