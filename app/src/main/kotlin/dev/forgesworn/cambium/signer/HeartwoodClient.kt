@@ -10,6 +10,7 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -298,6 +299,11 @@ object HeartwoodSession {
                             client?.disconnect()
                             client = null
                             message.deferred.complete(Unit)
+                            // End the consumer: this Session is being discarded (see shutdown()),
+                            // and before 0.3.0's per-identity sessions a worker never needed to
+                            // die -- now each unpair/re-pair replaces the Session, so a worker
+                            // that lived on would leak its thread (and pin this object) forever.
+                            break
                         }
                     }
                 }
@@ -336,8 +342,14 @@ object HeartwoodSession {
         suspend fun shutdown() {
             decryptCache.clear()
             val deferred = CompletableDeferred<Unit>()
-            inbox.send(Message.Shutdown(deferred))
-            deferred.await()
+            runCatching { inbox.send(Message.Shutdown(deferred)) }
+                .onSuccess { deferred.await() }
+            // Release the dedicated thread. HeartwoodSession removes this Session from its map
+            // before calling here, so no new caller can reach it; a caller that grabbed the
+            // reference just before removal fails its send harmlessly (see submitAndAwait).
+            inbox.close()
+            workerScope.cancel()
+            workerDispatcher.close()
         }
 
         private fun cachedResult(cacheable: CacheableDecrypt?): HeartwoodResult<String>? {
@@ -394,7 +406,16 @@ object HeartwoodSession {
             operation: suspend (HeartwoodClient) -> HeartwoodResult<String>,
         ): HeartwoodResult<String>? {
             val deferred = CompletableDeferred<HeartwoodResult<String>>()
-            inbox.send(Message.Call(pairing, operation, deferred))
+            // The send fails only when this Session was shut down between the caller resolving it
+            // and reaching here (the inbox is closed in shutdown()) -- answer like a timeout: the
+            // caller retries against the fresh Session the registry creates on its next call. The
+            // slot reserved by trySilent/withClient is normally released by the worker; there is
+            // no worker any more, so release it here.
+            val sent = runCatching { inbox.send(Message.Call(pairing, operation, deferred)) }
+            if (sent.isFailure) {
+                queueDepth.decrementAndGet()
+                return null
+            }
             // Only this wait is cancellable -- the job itself runs on the worker regardless of
             // whether we give up on it here (see the class doc for why that matters).
             return withTimeoutOrNull(timeoutMillis) { deferred.await() }
