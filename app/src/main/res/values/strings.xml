@@ -51,6 +51,20 @@
     <string name="connected_apps_state_approved">Approved</string>
     <string name="connected_apps_state_denied">Denied</string>
 
+    <string name="activity_log_button">Activity log</string>
+    <string name="activity_log_title">Activity log</string>
+    <string name="activity_log_body">What Cambium has done on your behalf. Timestamp, app, request and identity only: never a payload, a plaintext or a ciphertext.</string>
+    <string name="activity_log_toggle_title">Log signer activity</string>
+    <string name="activity_log_empty">No activity yet.</string>
+    <string name="activity_log_clear_button">Clear</string>
+    <string name="activity_log_clear_confirm_title">Clear the activity log?</string>
+    <string name="activity_log_clear_confirm_body">This removes every entry from this device. It does not change anything about your paired signers or connected apps.</string>
+    <string name="activity_log_outcome_signed">Signed</string>
+    <string name="activity_log_outcome_cached">Answered from cache</string>
+    <string name="activity_log_outcome_rejected_policy">Rejected by signer policy</string>
+    <string name="activity_log_outcome_rejected_user">Rejected</string>
+    <string name="activity_log_outcome_failed">Failed</string>
+
     <string name="error_not_paired">Cambium is not paired with a signer.</string>
     <string name="error_timeout">The signer did not respond in time.</string>
     <string name="error_relay">Could not reach the relay.</string>

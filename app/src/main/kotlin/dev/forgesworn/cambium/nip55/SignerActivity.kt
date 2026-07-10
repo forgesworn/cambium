@@ -11,6 +11,9 @@ import androidx.lifecycle.lifecycleScope
 import dev.forgesworn.cambium.R
 import dev.forgesworn.cambium.databinding.ActivitySignerApprovalBinding
 import dev.forgesworn.cambium.displayNameFor
+import dev.forgesworn.cambium.log.ActivityLog
+import dev.forgesworn.cambium.log.ActivityLogEntry
+import dev.forgesworn.cambium.log.ActivityLogStore
 import dev.forgesworn.cambium.nip57.PrivateZap
 import dev.forgesworn.cambium.nip57.ZapDecodeResult
 import dev.forgesworn.cambium.pairing.AppPermission
@@ -76,6 +79,7 @@ class SignerActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivitySignerApprovalBinding
     private lateinit var pairingStore: PairingStore
+    private lateinit var activityLogStore: ActivityLogStore
     private var request: Nip55Request? = null
     private var callerPermission: AppPermission? = null
 
@@ -98,6 +102,7 @@ class SignerActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         onBackPressedDispatcher.addCallback(this, silentBackPressBlock)
         pairingStore = PairingStore(this)
+        activityLogStore = ActivityLogStore(this)
 
         callerPermission = callingPackage?.let(pairingStore::permission)
         silent = decideSilent(intent)
@@ -171,7 +176,10 @@ class SignerActivity : AppCompatActivity() {
 
         val permission = callerPermission
         when (permission?.state) {
-            AppPermissionState.DENIED -> rejectAndFinish(parsed.id)
+            AppPermissionState.DENIED -> {
+                logActivity(parsed, identityLabel = null, outcome = ActivityLogEntry.Outcome.REJECTED_USER)
+                rejectAndFinish(parsed.id)
+            }
             AppPermissionState.APPROVED -> {
                 val routed = IdentityRouting.resolve(parsed.currentUser, permission.boundIdentityPubkeyHex, pairings)
                 when {
@@ -182,12 +190,33 @@ class SignerActivity : AppCompatActivity() {
                         // current_user cannot be resolved: the window is already invisible-themed
                         // from the first intent (see decideSilent), so a reliable visible sheet
                         // isn't possible here. Reject rather than silently guessing an identity.
+                        logActivity(parsed, identityLabel = null, outcome = ActivityLogEntry.Outcome.FAILED)
                         rejectAndFinish(parsed.id)
                     }
                 }
             }
             null -> showApprovalSheet(pairings, parsed, callingPackage)
         }
+    }
+
+    /** Metadata only -- see [ActivityLogEntry]'s doc: never a payload, plaintext, ciphertext or
+     * event content, just what was asked, by whom, answered how, and by which identity. Only
+     * called for requests that reached an actual decision about the paired identity -- a
+     * malformed/unparsable intent, "nothing paired at all", and `decrypt_zap_event`'s local
+     * "not a decryptable private zap" outcomes (an ordinary public zap tag being the routine
+     * case, not an error) are deliberately not logged, since they would mostly just be noise
+     * rather than signal about what Cambium actually did on the user's behalf. */
+    private fun logActivity(request: Nip55Request, identityLabel: String?, outcome: ActivityLogEntry.Outcome) {
+        activityLogStore.append(
+            ActivityLogEntry(
+                timestampMillis = System.currentTimeMillis(),
+                callingPackage = callingPackage ?: "unknown",
+                method = methodLabel(request),
+                eventKind = (request as? Nip55Request.SignEvent)?.let { extractEventKind(it.eventJson) },
+                identityLabel = identityLabel,
+                outcome = outcome,
+            )
+        )
     }
 
     private fun showApprovalSheet(pairings: List<Pairing>, request: Nip55Request, callingPkg: String?) {
@@ -233,10 +262,12 @@ class SignerActivity : AppCompatActivity() {
             handle(chosen, request)
         }
         binding.declineButton.setOnClickListener {
+            logActivity(request, identityLabel = null, outcome = ActivityLogEntry.Outcome.REJECTED_USER)
             rejectAndFinish(request.id)
         }
         binding.denyAlwaysLink.setOnClickListener {
             callingPkg?.let { pairingStore.deny(it) }
+            logActivity(request, identityLabel = null, outcome = ActivityLogEntry.Outcome.REJECTED_USER)
             rejectAndFinish(request.id)
         }
     }
@@ -253,6 +284,7 @@ class SignerActivity : AppCompatActivity() {
 
         if (request is Nip55Request.GetPublicKey) {
             // Answered from the pairing record: no relay round trip needed once paired.
+            logActivity(request, pairing.displayLabel(), ActivityLogEntry.Outcome.SIGNED)
             respondSuccess(request, pairing.signerPubkeyHex, isPublicKeyRequest = true)
             return
         }
@@ -321,7 +353,9 @@ class SignerActivity : AppCompatActivity() {
             silentBackPressBlock.isEnabled = true
         }
         lifecycleScope.launch {
-            when (val result = HeartwoodSession.withClient(pairing, cacheable, operation)) {
+            val outcome = HeartwoodSession.withClient(pairing, cacheable, operation)
+            logActivity(request, pairing.displayLabel(), ActivityLog.outcomeFor(outcome))
+            when (val result = outcome.result) {
                 is HeartwoodResult.Success -> respondSuccess(request, result.value, isPublicKeyRequest = false)
                 is HeartwoodResult.Failure -> showErrorAndReject(request.id, result.error)
             }

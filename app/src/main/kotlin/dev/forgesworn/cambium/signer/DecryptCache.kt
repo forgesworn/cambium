@@ -80,3 +80,18 @@ fun isDeterministicDecryptFailure(error: HeartwoodError): Boolean {
     val message = (error as? HeartwoodError.Protocol)?.message ?: return false
     return message.contains("decryption failed", ignoreCase = true)
 }
+
+/** Whether [error] is an explicit policy refusal from Heartwood's own `ClientPolicy` (an unbound
+ * client, or a policy block), as opposed to a technical failure. Verified against firmware source
+ * (`nip46_handler.rs`): unbound clients and policy blocks answer "unauthorised"; a physical-button
+ * decline answers "user denied". A "timeout" (button not pressed in time) is deliberately not a
+ * refusal keyword: the visible retry gives the user another chance to press it. Shared by
+ * `SignerProvider` (the `rejected`-cursor decision) and the activity log (`log/ActivityLog.kt`'s
+ * `REJECTED_POLICY` classification), rather than each keeping its own copy of the keyword list. */
+fun isPolicyRefusal(error: HeartwoodError): Boolean {
+    val message = (error as? HeartwoodError.Protocol)?.message ?: return false
+    val lower = message.lowercase()
+    return POLICY_REFUSAL_KEYWORDS.any { it in lower }
+}
+
+private val POLICY_REFUSAL_KEYWORDS = listOf("unauthorised", "unauthorized", "not allowed", "refused", "denied")

@@ -137,8 +137,17 @@
                 android:id="@+id/connectedAppsContainer"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginBottom="24dp"
+                android:layout_marginBottom="16dp"
                 android:orientation="vertical" />
+
+            <Button
+                android:id="@+id/activityLogButton"
+                style="@style/Widget.Material3.Button.OutlinedButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="24dp"
+                android:fontFamily="monospace"
+                android:text="@string/activity_log_button" />
         </LinearLayout>
 
         <!-- Pairing form: always available, so a second (or third, ...) signer can be added the

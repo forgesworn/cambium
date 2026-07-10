@@ -7,6 +7,9 @@ import android.database.MatrixCursor
 import android.net.Uri
 import android.os.SystemClock
 import android.util.Log
+import dev.forgesworn.cambium.log.ActivityLog
+import dev.forgesworn.cambium.log.ActivityLogEntry
+import dev.forgesworn.cambium.log.ActivityLogStore
 import dev.forgesworn.cambium.nip57.PrivateZap
 import dev.forgesworn.cambium.nip57.ZapDecodeResult
 import dev.forgesworn.cambium.pairing.AppPermissionState
@@ -15,10 +18,11 @@ import dev.forgesworn.cambium.pairing.Pairing
 import dev.forgesworn.cambium.pairing.PairingStore
 import dev.forgesworn.cambium.signer.CacheableDecrypt
 import dev.forgesworn.cambium.signer.HeartwoodClient
-import dev.forgesworn.cambium.signer.HeartwoodError
 import dev.forgesworn.cambium.signer.HeartwoodResult
 import dev.forgesworn.cambium.signer.HeartwoodSession
+import dev.forgesworn.cambium.signer.displayLabel
 import dev.forgesworn.cambium.signer.isDeterministicDecryptFailure
+import dev.forgesworn.cambium.signer.isPolicyRefusal
 import kotlinx.coroutines.runBlocking
 
 /**
@@ -53,8 +57,8 @@ import kotlinx.coroutines.runBlocking
  * the user types, and forwarding each one to a 1-2s hardware round trip is what buried real
  * requests behind a flood of drafts in testing.
  *
- * An explicit policy refusal from Heartwood (error text containing a refusal keyword -- see
- * [REFUSAL_KEYWORDS]) or a deterministic decrypt failure (see
+ * An explicit policy refusal from Heartwood (see [dev.forgesworn.cambium.signer.isPolicyRefusal])
+ * or a deterministic decrypt failure (see
  * [dev.forgesworn.cambium.signer.isDeterministicDecryptFailure]) answers a `rejected` cursor
  * rather than `null`, so a client stops escalating a blocked or unrecoverable request to the
  * visible flow every couple of seconds. Everything else that cannot be answered here -- an
@@ -81,13 +85,24 @@ import kotlinx.coroutines.runBlocking
  * "always deny" link) gets `rejected` immediately, for every authority, without ever resolving a
  * pairing or touching the queue -- distinct from a caller with no remembered choice yet, who gets
  * `null` ("try the intent", where they will see the approval sheet). See [resolveCaller].
+ *
+ * [forward] logs to [ActivityLogStore] on every *definitive* outcome (a real result, or a
+ * `rejected` cursor) -- never on a `null` deferral, since those are transient/retried via the
+ * intent path, which will log its own outcome once the request actually concludes there; logging
+ * both would double-count what the user experienced as one request. Nothing else in this class
+ * logs: [queryPing], the NIP-37 draft decline, and [PrivateZap.decodeAnonTag]'s routine "not a
+ * private zap" outcomes would mostly add noise (Amethyst pings and drafts constantly) rather than
+ * signal about what Cambium actually did.
  */
 class SignerProvider : ContentProvider() {
 
     private lateinit var pairingStore: PairingStore
+    private lateinit var activityLogStore: ActivityLogStore
 
     override fun onCreate(): Boolean {
-        pairingStore = PairingStore(requireNotNull(context))
+        val ctx = requireNotNull(context)
+        pairingStore = PairingStore(ctx)
+        activityLogStore = ActivityLogStore(ctx)
         return true
     }
 
@@ -102,24 +117,34 @@ class SignerProvider : ContentProvider() {
 
         SIGN_EVENT_AUTHORITY -> querySignEvent(projection)
 
-        NIP04_ENCRYPT_AUTHORITY -> queryForward(projection, requiresOtherPubkey = true) { client, payload, otherPubkey ->
+        NIP04_ENCRYPT_AUTHORITY -> queryForward(
+            projection,
+            Nip55Request.TYPE_NIP04_ENCRYPT,
+            requiresOtherPubkey = true,
+        ) { client, payload, otherPubkey ->
             client.nip04Encrypt(otherPubkey, payload)
         }
 
         NIP04_DECRYPT_AUTHORITY -> queryForward(
             projection,
+            Nip55Request.TYPE_NIP04_DECRYPT,
             requiresOtherPubkey = true,
             cacheMethod = CacheableDecrypt.Method.NIP04,
         ) { client, payload, otherPubkey ->
             client.nip04Decrypt(otherPubkey, payload)
         }
 
-        NIP44_ENCRYPT_AUTHORITY -> queryForward(projection, requiresOtherPubkey = true) { client, payload, otherPubkey ->
+        NIP44_ENCRYPT_AUTHORITY -> queryForward(
+            projection,
+            Nip55Request.TYPE_NIP44_ENCRYPT,
+            requiresOtherPubkey = true,
+        ) { client, payload, otherPubkey ->
             client.nip44Encrypt(otherPubkey, payload)
         }
 
         NIP44_DECRYPT_AUTHORITY -> queryForward(
             projection,
+            Nip55Request.TYPE_NIP44_DECRYPT,
             requiresOtherPubkey = true,
             cacheMethod = CacheableDecrypt.Method.NIP44,
         ) { client, payload, otherPubkey ->
@@ -146,7 +171,8 @@ class SignerProvider : ContentProvider() {
         val pairing = requirePairing(caller, boundIdentity, projection?.getOrNull(2)) ?: return@withApprovedCaller null
         val payload = requirePayload(caller, projection) ?: return@withApprovedCaller null
 
-        if (extractEventKind(payload) == NIP37_DRAFT_KIND) {
+        val eventKind = extractEventKind(payload)
+        if (eventKind == NIP37_DRAFT_KIND) {
             Log.i(TAG, "silent sign_event from $caller declined: draft (kind $NIP37_DRAFT_KIND)")
             return@withApprovedCaller rejectedCursor()
         }
@@ -154,6 +180,8 @@ class SignerProvider : ContentProvider() {
         forward(
             caller,
             pairing,
+            Nip55Request.TYPE_SIGN_EVENT,
+            eventKind,
             payload,
             otherPubkey = "",
             includeEventAndSignature = true,
@@ -197,6 +225,8 @@ class SignerProvider : ContentProvider() {
             is ZapDecodeResult.Forward -> forward(
                 caller,
                 pairing,
+                Nip55Request.TYPE_DECRYPT_ZAP_EVENT,
+                eventKind = null,
                 decoded.nip04Payload,
                 decoded.counterpartyPubkeyHex,
                 includeEventAndSignature = false,
@@ -213,6 +243,7 @@ class SignerProvider : ContentProvider() {
      */
     private fun queryForward(
         projection: Array<out String>?,
+        method: String,
         requiresOtherPubkey: Boolean,
         cacheMethod: CacheableDecrypt.Method? = null,
         call: suspend (HeartwoodClient, payload: String, otherPubkey: String) -> HeartwoodResult<String>,
@@ -227,7 +258,7 @@ class SignerProvider : ContentProvider() {
         }
 
         val cacheable = cacheMethod?.let { CacheableDecrypt(it, otherPubkey.orEmpty(), payload) }
-        forward(caller, pairing, payload, otherPubkey.orEmpty(), includeEventAndSignature = false, cacheable, call)
+        forward(caller, pairing, method, eventKind = null, payload, otherPubkey.orEmpty(), includeEventAndSignature = false, cacheable, call)
     }
 
     private sealed interface CallerResolution {
@@ -303,11 +334,14 @@ class SignerProvider : ContentProvider() {
      * thread for the result -- unless [cacheable] is a hit, in which case [HeartwoodSession]
      * answers before ever touching the queue. Returns `null` if the worker's queue is already
      * full, the call times out, or fails for a reason other than an explicit policy refusal or a
-     * deterministic decrypt failure (see class doc).
+     * deterministic decrypt failure (see class doc). Logs to [ActivityLogStore] on both
+     * definitive outcomes (see the class doc's logging paragraph) -- never on the `null` deferral.
      */
     private fun forward(
         caller: String,
         pairing: Pairing,
+        method: String,
+        eventKind: Int?,
         payload: String,
         otherPubkey: String,
         includeEventAndSignature: Boolean,
@@ -315,24 +349,27 @@ class SignerProvider : ContentProvider() {
         call: suspend (HeartwoodClient, String, String) -> HeartwoodResult<String>,
     ): Cursor? {
         val startedAt = SystemClock.elapsedRealtime()
-        val result = runBlocking {
+        val outcome = runBlocking {
             HeartwoodSession.trySilent(pairing, cacheable) { client -> call(client, payload, otherPubkey) }
         }
         val elapsed = SystemClock.elapsedRealtime() - startedAt
 
-        if (result == null) {
+        if (outcome == null) {
             Log.w(TAG, "silent forward for $caller refused (queue full) or timed out after ${elapsed}ms; deferring to intent")
             return null
         }
 
+        val result = outcome.result
         return when (result) {
             is HeartwoodResult.Success -> {
                 Log.i(TAG, "silent forward for $caller answered in ${elapsed}ms")
+                logActivity(caller, method, eventKind, pairing, ActivityLog.outcomeFor(outcome))
                 buildResultCursor(result.value, includeEventAndSignature)
             }
             is HeartwoodResult.Failure -> {
                 if (isPolicyRefusal(result.error) || isDeterministicDecryptFailure(result.error)) {
                     Log.i(TAG, "silent forward for $caller refused after ${elapsed}ms (${result.error}); answering rejected")
+                    logActivity(caller, method, eventKind, pairing, ActivityLog.outcomeFor(outcome))
                     rejectedCursor()
                 } else {
                     Log.w(TAG, "silent forward for $caller failed after ${elapsed}ms (${result.error}); deferring to intent")
@@ -342,10 +379,17 @@ class SignerProvider : ContentProvider() {
         }
     }
 
-    private fun isPolicyRefusal(error: HeartwoodError): Boolean {
-        val message = (error as? HeartwoodError.Protocol)?.message ?: return false
-        val lower = message.lowercase()
-        return REFUSAL_KEYWORDS.any { it in lower }
+    private fun logActivity(caller: String, method: String, eventKind: Int?, pairing: Pairing, outcome: ActivityLogEntry.Outcome) {
+        activityLogStore.append(
+            ActivityLogEntry(
+                timestampMillis = System.currentTimeMillis(),
+                callingPackage = caller,
+                method = method,
+                eventKind = eventKind,
+                identityLabel = pairing.displayLabel(),
+                outcome = outcome,
+            )
+        )
     }
 
     private fun rejectedCursor(): Cursor = MatrixCursor(arrayOf(COLUMN_REJECTED)).apply {
@@ -388,12 +432,6 @@ class SignerProvider : ContentProvider() {
         // clients treat the `rejected` column as terminal, no intent fallback -- rather than
         // forwarded. Hardcoded on for now; a settings toggle can replace this later.
         private const val NIP37_DRAFT_KIND = 31234
-
-        // Verified against firmware source (nip46_handler.rs): unbound clients and policy blocks
-        // answer "unauthorised"; a physical-button decline answers "user denied". A "timeout"
-        // (button not pressed in time) deliberately stays null: the visible retry gives the
-        // user another chance to press it.
-        private val REFUSAL_KEYWORDS = listOf("unauthorised", "unauthorized", "not allowed", "refused", "denied")
 
         const val GET_PUBLIC_KEY_AUTHORITY = "dev.forgesworn.cambium.GET_PUBLIC_KEY"
         const val PING_AUTHORITY = "dev.forgesworn.cambium.PING"

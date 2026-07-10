@@ -98,6 +98,12 @@ Amethyst / Primal / Voyage ...
   instead of the app's only worker. A live test against a real device showed a fresh session per
   request cost multiple seconds each, hence keeping one warm at all.
 
+  `trySilent`/`withClient` return a `HeartwoodOutcome<String>` (`.result` is the same
+  `HeartwoodResult<String>` either call always returned pre-0.3.0), not a bare `HeartwoodResult`,
+  so that a `Cached` answer is distinguishable from a `Fresh` one -- the activity log
+  (`log/ActivityLog.kt`'s `outcomeFor`) needs an accurate `SIGNED`-vs-`ANSWERED_FROM_CACHE`
+  outcome rather than a guess, and there was previously no way for a caller to tell the two apart.
+
   Within a `Session`, every call is handed to exactly one dedicated worker coroutine on its own
   single-thread dispatcher, running in a `CoroutineScope` with no parent, so nothing a caller does
   can ever cancel work already handed to it; a caller gets its result via a `CompletableDeferred`
@@ -329,6 +335,44 @@ Amethyst / Primal / Voyage ...
 - `AndroidExtensions.kt` -- `PackageManager.displayNameFor(packageName)`, the app-label lookup
   (falls back to the raw package string on any failure) shared by `SignerActivity`'s approval sheet
   and `MainActivity`'s connected-apps list.
+- `log/ActivityLog.kt` -- the on-phone activity log's pure-Kotlin core: `ActivityLogEntry`
+  (timestamp, calling package, NIP-55 method, event kind -- `sign_event` only, never any other
+  method's payload -- identity display label, outcome) and `ActivityLog`, the capped append/rotate
+  logic (`MAX_ENTRIES` 500, oldest dropped first) plus `outcomeFor`, which classifies a
+  `HeartwoodOutcome` into `SIGNED`/`ANSWERED_FROM_CACHE`/`REJECTED_POLICY`/`FAILED` (`REJECTED_USER`
+  is set directly by the two callers below, for a Cambium-level user decision rather than anything
+  Heartwood answered). **Metadata only, deliberately**: never a payload, plaintext, ciphertext or
+  event body -- the point is reassurance/transparency ("what has Cambium done on my behalf"), not
+  an audit trail of what was actually signed, which Cambium cannot see anyway. References
+  `HeartwoodOutcome`/`HeartwoodResult`/`isPolicyRefusal` from `signer`, but those have nothing
+  Android or rust-nostr in their own signatures (same reasoning as `nip57/PrivateZap.kt`'s
+  dependency on `signer`), so this file stays JVM-testable.
+- `log/ActivityLogStore.kt` -- persists the log as a small JSON file in `filesDir` (metadata only,
+  nothing here needs Keystore encryption) and the enabled toggle in its own tiny plain
+  `SharedPreferences`, independent of `PairingStore` -- a diagnostic feature, not pairing state.
+  Defaults to **on** (opt-out): the log exists to reassure, so it should work without first being
+  found and switched on. `append` no-ops entirely, without touching the file, when disabled. Reads
+  and writes are small and synchronous, called directly from whichever thread is already handling
+  the request (`SignerActivity`'s main thread, `SignerProvider`'s binder thread) rather than
+  offloaded to a coroutine -- `SignerActivity` logs immediately before `finish()`, and offloading to
+  `lifecycleScope` would risk the write being cancelled by the activity finishing first.
+- `log/ActivityLogActivity.kt` -- read-only log screen (newest first, monospace), reached from a
+  button in `MainActivity`'s paired section. Off-toggle and a confirm-gated Clear action. One
+  `item_activity_log_entry.xml` row inflated per entry rather than a `RecyclerView`, same trade-off
+  `MainActivity`'s connected-apps list already makes at a smaller scale -- an occasionally-opened
+  diagnostic screen, not a live feed.
+
+  `SignerActivity` and `SignerProvider` both call `ActivityLogStore.append` only at points that
+  reached an actual decision about the paired identity or an explicit user choice -- not at every
+  possible termination point. Deliberately unlogged: a malformed/unparsable intent, "nothing paired
+  at all", `decrypt_zap_event`'s local "not a decryptable private zap" outcomes (an ordinary public
+  zap is the routine case there, not an error), `SignerProvider`'s NIP-37 draft decline, and any
+  `forward()` outcome that defers to the intent (`null`) rather than answering definitively -- a
+  transient provider-path failure is retried via the intent path, which logs its own outcome once
+  the request actually concludes, so logging both would double-count what the user experienced as
+  one request. This keeps the capped 500-entry log meaningful signal (what was actually asked,
+  approved, denied or failed) rather than routine background noise from Amethyst's constant
+  drafts/pings/re-queries on the silent path.
 - `service/HeartwoodKeepAliveService.kt` -- optional, off-by-default foreground service that keeps
   the process (and so `HeartwoodSession`'s warm `NostrConnect`) alive between requests, closing the
   previously-tracked "only warm while the process happens to be running" gap. Pings Heartwood every

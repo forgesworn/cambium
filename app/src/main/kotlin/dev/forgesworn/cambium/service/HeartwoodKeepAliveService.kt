@@ -114,7 +114,7 @@ class HeartwoodKeepAliveService : Service() {
                 }
                 for (pairing in pairings) {
                     val tag = pairing.signerPubkeyHex.take(8)
-                    when (val result = HeartwoodSession.trySilent(pairing) { it.getPublicKey() }) {
+                    when (val result = HeartwoodSession.trySilent(pairing) { it.getPublicKey() }?.result) {
                         is HeartwoodResult.Success -> Log.d(TAG, "keepalive ping ok ($tag)")
                         is HeartwoodResult.Failure -> Log.d(TAG, "keepalive ping failed ($tag): ${result.error}")
                         null -> Log.d(TAG, "keepalive ping skipped ($tag): worker already busy")

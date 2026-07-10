@@ -64,6 +64,11 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".log.ActivityLogActivity"
+            android:exported="false"
+            android:theme="@style/Theme.Cambium" />
+
         <provider
             android:name=".nip55.SignerProvider"
             android:authorities="dev.forgesworn.cambium.GET_PUBLIC_KEY;dev.forgesworn.cambium.SIGN_EVENT;dev.forgesworn.cambium.NIP04_ENCRYPT;dev.forgesworn.cambium.NIP44_ENCRYPT;dev.forgesworn.cambium.NIP04_DECRYPT;dev.forgesworn.cambium.NIP44_DECRYPT;dev.forgesworn.cambium.PING;dev.forgesworn.cambium.DECRYPT_ZAP_EVENT"

@@ -2,6 +2,7 @@ package dev.forgesworn.cambium
 
 import android.Manifest
 import android.app.AlertDialog
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
@@ -16,6 +17,7 @@ import com.journeyapps.barcodescanner.ScanOptions
 import dev.forgesworn.cambium.databinding.ActivityMainBinding
 import dev.forgesworn.cambium.databinding.ItemConnectedAppBinding
 import dev.forgesworn.cambium.databinding.ItemPairingBinding
+import dev.forgesworn.cambium.log.ActivityLogActivity
 import dev.forgesworn.cambium.pairing.AppPermissionState
 import dev.forgesworn.cambium.pairing.BunkerUri
 import dev.forgesworn.cambium.pairing.BunkerUriParser
@@ -70,6 +72,7 @@ class MainActivity : AppCompatActivity() {
         binding.pairButton.setOnClickListener { onPairClicked() }
         binding.scanButton.setOnClickListener { onScanClicked() }
         binding.unpairAllButton.setOnClickListener { onUnpairAllClicked() }
+        binding.activityLogButton.setOnClickListener { startActivity(Intent(this, ActivityLogActivity::class.java)) }
 
         render()
     }

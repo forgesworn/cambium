@@ -40,6 +40,16 @@ sealed interface HeartwoodResult<out T> {
     data class Failure(val error: HeartwoodError) : HeartwoodResult<Nothing>
 }
 
+/** Wraps a [HeartwoodResult] with whether it was answered from [DecryptCache] without ever
+ * reaching the worker, or came from a real call against Heartwood -- [HeartwoodSession.trySilent]/
+ * [HeartwoodSession.withClient] return this instead of a bare [HeartwoodResult] so a caller (the
+ * activity log) can record an accurate signed-vs-answered-from-cache outcome rather than guessing. */
+sealed interface HeartwoodOutcome<out T> {
+    val result: HeartwoodResult<T>
+    data class Cached<T>(override val result: HeartwoodResult<T>) : HeartwoodOutcome<T>
+    data class Fresh<T>(override val result: HeartwoodResult<T>) : HeartwoodOutcome<T>
+}
+
 sealed interface HeartwoodError {
     /** [HeartwoodClient.connect] has not been called (or failed) this session. */
     data object NotConnected : HeartwoodError
@@ -185,13 +195,13 @@ object HeartwoodSession {
         pairing: Pairing,
         cacheable: CacheableDecrypt? = null,
         operation: suspend (HeartwoodClient) -> HeartwoodResult<String>,
-    ): HeartwoodResult<String>? = sessionFor(pairing).trySilent(pairing, cacheable, operation)
+    ): HeartwoodOutcome<String>? = sessionFor(pairing).trySilent(pairing, cacheable, operation)
 
     suspend fun withClient(
         pairing: Pairing,
         cacheable: CacheableDecrypt? = null,
         operation: suspend (HeartwoodClient) -> HeartwoodResult<String>,
-    ): HeartwoodResult<String> = sessionFor(pairing).withClient(pairing, cacheable, operation)
+    ): HeartwoodOutcome<String> = sessionFor(pairing).withClient(pairing, cacheable, operation)
 
     /** Drops one identity's session and decrypt cache. Call after removing that one pairing, and
      * after refreshing an existing pairing's connection details (relays/secret), so the next call
@@ -298,8 +308,8 @@ object HeartwoodSession {
             pairing: Pairing,
             cacheable: CacheableDecrypt?,
             operation: suspend (HeartwoodClient) -> HeartwoodResult<String>,
-        ): HeartwoodResult<String>? {
-            cachedResult(cacheable)?.let { return it }
+        ): HeartwoodOutcome<String>? {
+            cachedResult(cacheable)?.let { return HeartwoodOutcome.Cached(it) }
 
             if (!reserveSlot()) {
                 recordShed()
@@ -307,20 +317,20 @@ object HeartwoodSession {
             }
             val result = submitAndAwait(pairing, SILENT_TIMEOUT_MILLIS, operation)
             recordCacheOutcome(cacheable, result)
-            return result
+            return result?.let { HeartwoodOutcome.Fresh(it) }
         }
 
         suspend fun withClient(
             pairing: Pairing,
             cacheable: CacheableDecrypt?,
             operation: suspend (HeartwoodClient) -> HeartwoodResult<String>,
-        ): HeartwoodResult<String> {
-            cachedResult(cacheable)?.let { return it }
+        ): HeartwoodOutcome<String> {
+            cachedResult(cacheable)?.let { return HeartwoodOutcome.Cached(it) }
 
             queueDepth.incrementAndGet()
             val result = submitAndAwait(pairing, INTENT_TIMEOUT_MILLIS, operation)
             recordCacheOutcome(cacheable, result)
-            return result ?: HeartwoodResult.Failure(HeartwoodError.Timeout)
+            return HeartwoodOutcome.Fresh(result ?: HeartwoodResult.Failure(HeartwoodError.Timeout))
         }
 
         suspend fun shutdown() {
