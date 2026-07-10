@@ -170,6 +170,21 @@
             android:layout_weight="2" />
     </LinearLayout>
 
+    <!-- Shown only while the picker's current selection differs from the app's existing bound
+         identity (see SignerActivity's identityPicker selection listener): a routine
+         re-approval never shows this, since the picker defaults to the existing binding. -->
+    <TextView
+        android:id="@+id/identityRebindHint"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:fontFamily="monospace"
+        android:textColor="@color/danger"
+        android:textSize="11sp"
+        android:visibility="gone"
+        tools:text="Currently bound to Living room Heartwood"
+        tools:visibility="visible" />
+
     <LinearLayout
         android:id="@+id/decisionGroup"
         android:layout_width="match_parent"

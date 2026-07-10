@@ -2,6 +2,7 @@ package dev.forgesworn.cambium.nip55
 
 import android.content.Intent
 import android.os.Bundle
+import android.widget.AdapterView
 import android.widget.ArrayAdapter
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
@@ -110,7 +111,7 @@ class SignerActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         onBackPressedDispatcher.addCallback(this, silentBackPressBlock)
         pairingStore = PairingStore(this)
-        activityLogStore = ActivityLogStore(this)
+        activityLogStore = ActivityLogStore.getInstance(this)
         appLockStore = AppLockStore(this)
 
         callerPermission = callingPackage?.let(pairingStore::permission)
@@ -256,24 +257,42 @@ class SignerActivity : AppCompatActivity() {
 
         // Only worth showing once there is more than one pairing to choose between; with exactly
         // one, Approve always means that one pairing, same as before Cambium supported more.
-        // Default selection prefers the caller's *existing* bound identity over a current_user
-        // match: this sheet only shows for an already-approved caller when their current_user
-        // named an identity we don't have (see decideSilent/handleIncomingIntent), so a
-        // current_user match here would never actually exist -- defaulting to pairings[0] in that
-        // case would silently rebind the app to a different identity than it already had if the
-        // user just taps Approve out of habit, without noticing the picker moved. A brand-new
-        // caller (no existing binding) falls back to the current_user match, same as before.
+        // Default selection precedence: the request's current_user match, else the caller's
+        // existing bound identity, else the first pairing. In practice a current_user match can
+        // never coexist with a *different* existing binding here -- this sheet only shows for an
+        // already-approved caller when their current_user named an identity we don't have (see
+        // decideSilent/handleIncomingIntent) -- but identityRebindHint below still compares
+        // whatever ends up selected against the binding directly, so a user who manually moves
+        // the picker away from it sees a clear warning before Approve would silently rebind the
+        // app, rather than relying on the precedence alone to prevent that.
+        val boundPubkeyHex = callerPermission?.boundIdentityPubkeyHex
         binding.identityRow.isVisible = pairings.size > 1
+        binding.identityRebindHint.isVisible = false
         if (pairings.size > 1) {
             binding.identityPicker.adapter = ArrayAdapter(
                 this,
                 android.R.layout.simple_spinner_dropdown_item,
                 pairings.map { it.displayLabel() },
             )
-            val preferredPubkeyHex = callerPermission?.boundIdentityPubkeyHex
-                ?: IdentityRouting.normaliseCurrentUser(request.currentUser)
+            val preferredPubkeyHex = IdentityRouting.normaliseCurrentUser(request.currentUser) ?: boundPubkeyHex
             val defaultIndex = pairings.indexOfFirst { it.signerPubkeyHex.equals(preferredPubkeyHex, ignoreCase = true) }
-            binding.identityPicker.setSelection(defaultIndex.takeIf { it >= 0 } ?: 0)
+                .takeIf { it >= 0 } ?: 0
+            binding.identityPicker.setSelection(defaultIndex)
+
+            val boundPairing = boundPubkeyHex?.let { hex -> pairings.firstOrNull { it.signerPubkeyHex.equals(hex, ignoreCase = true) } }
+            fun updateRebindHint(position: Int) {
+                val differs = boundPairing != null && pairings.getOrNull(position)?.signerPubkeyHex != boundPairing.signerPubkeyHex
+                binding.identityRebindHint.isVisible = differs
+                if (differs) {
+                    binding.identityRebindHint.text = getString(R.string.approval_identity_rebind_hint, boundPairing!!.displayLabel())
+                }
+            }
+            updateRebindHint(defaultIndex)
+            binding.identityPicker.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+                override fun onItemSelected(parent: AdapterView<*>?, view: android.view.View?, position: Int, id: Long) =
+                    updateRebindHint(position)
+                override fun onNothingSelected(parent: AdapterView<*>?) = Unit
+            }
         }
 
         // Display only, per NIP-55's optional get_public_key `permissions` extra: Heartwood's own

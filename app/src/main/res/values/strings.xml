@@ -37,6 +37,7 @@
     <string name="approval_method_label">Request</string>
     <string name="approval_kind_label">Event kind</string>
     <string name="approval_identity_label">Identity</string>
+    <string name="approval_identity_rebind_hint">Currently bound to %1$s</string>
     <string name="approval_permissions_label">Requested</string>
     <string name="approval_permissions_note">Heartwood\'s own policy still decides what actually gets signed.</string>
     <string name="approval_approve">Approve</string>

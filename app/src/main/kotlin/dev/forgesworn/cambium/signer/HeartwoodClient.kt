@@ -224,7 +224,8 @@ object HeartwoodSession {
     // its thread -- would then be silently overwritten in the map and leaked, since nothing ever
     // held a reference to shut it down again. computeIfAbsent is atomic per key: the second
     // caller blocks until the first's factory has already returned and been stored.
-    private fun sessionFor(pairing: Pairing): Session = sessions.computeIfAbsent(pairing.signerPubkeyHex) { Session() }
+    private fun sessionFor(pairing: Pairing): Session =
+        sessions.computeIfAbsent(pairing.signerPubkeyHex) { signerPubkeyHex -> Session(signerPubkeyHex) }
 
     /**
      * One dedicated worker + decrypt cache for exactly one Heartwood identity. Two problems
@@ -266,7 +267,12 @@ object HeartwoodSession {
      * partitioned per pairing: a decrypt cached while talking to identity A can never answer a
      * request routed to identity B, since B has its own, entirely separate cache instance.
      */
-    private class Session {
+    private class Session(signerPubkeyHex: String) {
+        // Short, log-friendly tag identifying which identity this Session belongs to -- the
+        // registry's map key lives in the outer HeartwoodSession object, not here, so without
+        // this a Session has no way to name itself in its own log lines (see recordShed).
+        private val tag = signerPubkeyHex.take(8)
+
         private val workerDispatcher = Executors.newSingleThreadExecutor { runnable ->
             Thread(runnable, "heartwood-worker").apply { isDaemon = true }
         }.asCoroutineDispatcher()
@@ -402,7 +408,7 @@ object HeartwoodSession {
             val now = System.currentTimeMillis()
             val last = lastShedLogAt.get()
             if (now - last >= SHED_LOG_INTERVAL_MILLIS && lastShedLogAt.compareAndSet(last, now)) {
-                Log.w(TAG, "shed: queue full x$count in the last minute (MAX_QUEUED=$MAX_QUEUED)")
+                Log.w(TAG, "shed ($tag): queue full x$count in the last minute (MAX_QUEUED=$MAX_QUEUED)")
                 shedCount.set(0)
             }
         }

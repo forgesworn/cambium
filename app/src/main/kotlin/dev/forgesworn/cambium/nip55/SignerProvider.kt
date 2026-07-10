@@ -105,7 +105,7 @@ class SignerProvider : ContentProvider() {
     override fun onCreate(): Boolean {
         val ctx = requireNotNull(context)
         pairingStore = PairingStore(ctx)
-        activityLogStore = ActivityLogStore(ctx)
+        activityLogStore = ActivityLogStore.getInstance(ctx)
         return true
     }
 

@@ -29,7 +29,7 @@ class ActivityLogActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         binding = ActivityLogBinding.inflate(layoutInflater)
         setContentView(binding.root)
-        store = ActivityLogStore(this)
+        store = ActivityLogStore.getInstance(this)
 
         binding.logToggle.isChecked = store.isEnabled()
         binding.logToggle.setOnCheckedChangeListener { _, checked -> store.setEnabled(checked) }
