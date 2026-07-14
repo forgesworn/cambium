@@ -20,7 +20,6 @@ import dev.forgesworn.cambium.log.ActivityLogStore
 import dev.forgesworn.cambium.nip57.PrivateZap
 import dev.forgesworn.cambium.nip57.ZapDecodeResult
 import dev.forgesworn.cambium.pairing.AppPermission
-import dev.forgesworn.cambium.pairing.AppPermissionState
 import dev.forgesworn.cambium.pairing.IdentityRouting
 import dev.forgesworn.cambium.pairing.Pairing
 import dev.forgesworn.cambium.pairing.PairingStore
@@ -58,7 +57,7 @@ private const val EXTRA_REJECTED = "rejected"
  * Heartwood call at all -- either way, at most a sub-second flash. The visible Approve/Decline
  * sheet and the "asking your signer" progress overlay exist only for a caller with no remembered
  * choice yet (matches Amber's remembered-choice UX), or for an approved caller whose identity
- * routing cannot be resolved silently -- see [decideSilent] and [IdentityRouting]. [silent] is
+ * routing cannot be resolved silently -- see [IntentGate] and [IdentityRouting]. [silent] is
  * decided once, in `onCreate`, and reused for the lifetime of this activity instance -- not
  * re-evaluated in [onNewIntent], since switching from a visible theme to an invisible one after
  * the window already exists is unreliable (nor the reverse: an invisible window can't reliably
@@ -89,16 +88,16 @@ class SignerActivity : AppCompatActivity() {
     private lateinit var pairingStore: PairingStore
     private lateinit var activityLogStore: ActivityLogStore
     private lateinit var appLockStore: AppLockStore
-    private var request: Nip55Request? = null
     private var callerPermission: AppPermission? = null
 
     /**
      * Decided once in `onCreate`, before any window setup -- see the class doc for why it can't
      * be re-evaluated afterwards. No longer a plain function of [callerPermission] alone the way
-     * it was pre-0.3.0: an approved caller is only silent if [decideSilent] finds that the first
-     * intent's identity routing will actually resolve without asking. Set directly rather than
-     * computed, since it depends on that one-time decision, not on a field that stays constant
-     * for the rest of the instance's lifetime.
+     * it was pre-0.3.0: an approved caller is only silent if the first intent's [IntentGate.plan]
+     * finds that its identity routing will actually resolve without asking -- see
+     * [IntentGate.silentFor]. Set directly rather than computed, since it depends on that
+     * one-time decision, not on a field that stays constant for the rest of the instance's
+     * lifetime.
      */
     private var silent = false
 
@@ -115,8 +114,9 @@ class SignerActivity : AppCompatActivity() {
         appLockStore = AppLockStore(this)
 
         callerPermission = callingPackage?.let(pairingStore::permission)
-        val decision = decideSilent(intent)
-        silent = decision.silent
+        val parsed = Nip55Request.from(intent.toRawSignerIntent())
+        val plan = IntentGate.plan(callerPermission, pairingStore.pairings(), parsed, canAsk = true)
+        silent = IntentGate.silentFor(callerPermission, plan)
         if (silent) {
             // Must happen before setContentView (and there is no content view to set here) for
             // the transparent/non-dimmed theme to actually take effect on the window.
@@ -128,43 +128,18 @@ class SignerActivity : AppCompatActivity() {
             setContentView(binding.root)
         }
 
-        handleIncomingIntent(intent, decision)
+        handleIncomingIntent(intent, FirstIntent(parsed, plan))
     }
 
-    /** [decideSilent]'s findings, reused by the very first [handleIncomingIntent] call so it does
-     * not immediately re-parse [Intent] and re-run [IdentityRouting.resolve] against the exact
-     * same intent decideSilent just did. `null` fields mean decideSilent never got that far (the
-     * caller was DENIED, unresolved, or nothing was paired) -- [handleIncomingIntent] computes
-     * those fresh itself in that case, same as it always has. */
-    private data class SilentDecision(
-        val silent: Boolean,
+    /** The first intent's parse and [IntentGate.plan], computed in `onCreate` (where the plan
+     * also picked the window theme, via [IntentGate.silentFor]) and reused by the very first
+     * [handleIncomingIntent] call, so it does not re-parse the same intent and re-run identity
+     * routing against it immediately afterwards. `onNewIntent`-delivered requests compute both
+     * fresh, with `canAsk = !silent` -- see [IntentGate.plan]. */
+    private data class FirstIntent(
         val parsed: Nip55Request?,
-        val routed: IdentityRouting.Result?,
+        val plan: IntentGate.Plan,
     )
-
-    /**
-     * A remembered DENIED caller is always silent: rejected outright, no Heartwood call, nothing
-     * to show. A remembered APPROVED caller is silent only if [intent]'s identity routing (see
-     * [IdentityRouting]) will actually resolve to a pairing without asking -- an approved caller
-     * whose `current_user` cannot be resolved must fall back to the visible sheet rather than
-     * guess an identity, which is only possible if the theme was chosen correctly here, before
-     * `onCreate` finishes. An unparsable intent, or nothing paired at all, is also silent: both
-     * end in an immediate reject with no UI needed either way. Everything else -- no remembered
-     * choice yet, or an approved caller whose routing does not resolve -- needs the visible sheet.
-     */
-    private fun decideSilent(intent: Intent): SilentDecision {
-        val permission = callerPermission ?: return SilentDecision(silent = false, parsed = null, routed = null)
-        if (permission.state == AppPermissionState.DENIED) {
-            return SilentDecision(silent = true, parsed = null, routed = null)
-        }
-
-        val pairings = pairingStore.pairings()
-        if (pairings.isEmpty()) return SilentDecision(silent = true, parsed = null, routed = null)
-        val parsed = Nip55Request.from(intent.toRawSignerIntent())
-            ?: return SilentDecision(silent = true, parsed = null, routed = null)
-        val routed = IdentityRouting.resolve(parsed.currentUser, permission.boundIdentityPubkeyHex, pairings)
-        return SilentDecision(silent = routed is IdentityRouting.Result.Resolved, parsed = parsed, routed = routed)
-    }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
@@ -172,7 +147,7 @@ class SignerActivity : AppCompatActivity() {
         handleIncomingIntent(intent, precomputed = null)
     }
 
-    private fun handleIncomingIntent(intent: Intent, precomputed: SilentDecision?) {
+    private fun handleIncomingIntent(intent: Intent, precomputed: FirstIntent?) {
         // A stray back-press must only ever be blocked while a forwarding call is actually in
         // flight, never across a whole activity lifetime -- reset before working out what this
         // intent even is.
@@ -185,43 +160,41 @@ class SignerActivity : AppCompatActivity() {
         }
 
         val raw = intent.toRawSignerIntent()
-        val parsed = precomputed?.parsed ?: Nip55Request.from(raw)
+        // Not an elvis on precomputed.parsed: a precomputed null parse means the first intent was
+        // unparsable, not that it needs parsing again.
+        val parsed = if (precomputed != null) precomputed.parsed else Nip55Request.from(raw)
         if (parsed == null) {
             rejectAndFinish(raw.id)
             return
         }
-        request = parsed
 
         val pairings = pairingStore.pairings()
-        if (pairings.isEmpty()) {
-            if (!silent) Toast.makeText(this, R.string.error_not_paired, Toast.LENGTH_LONG).show()
-            rejectAndFinish(parsed.id)
-            return
-        }
-
-        val permission = callerPermission
-        when (permission?.state) {
-            AppPermissionState.DENIED -> {
-                logActivity(parsed, identityLabel = null, outcome = ActivityLogEntry.Outcome.REJECTED_USER)
-                rejectAndFinish(parsed.id)
-            }
-            AppPermissionState.APPROVED -> {
-                val routed = precomputed?.routed
-                    ?: IdentityRouting.resolve(parsed.currentUser, permission.boundIdentityPubkeyHex, pairings)
-                when {
-                    routed is IdentityRouting.Result.Resolved -> handle(routed.pairing, parsed)
-                    !silent -> showApprovalSheet(pairings, parsed, callingPackage)
-                    else -> {
-                        // A later onNewIntent-delivered request from an approved caller whose
-                        // current_user cannot be resolved: the window is already invisible-themed
-                        // from the first intent (see decideSilent), so a reliable visible sheet
-                        // isn't possible here. Reject rather than silently guessing an identity.
-                        logActivity(parsed, identityLabel = null, outcome = ActivityLogEntry.Outcome.FAILED)
-                        rejectAndFinish(parsed.id)
-                    }
+        val plan = precomputed?.plan
+            ?: IntentGate.plan(callerPermission, pairings, parsed, canAsk = !silent)
+        when (plan) {
+            is IntentGate.Plan.Forward -> handle(plan.pairing, parsed)
+            IntentGate.Plan.AskUser -> showApprovalSheet(pairings, parsed, callingPackage)
+            is IntentGate.Plan.Reject -> when (plan.reason) {
+                // Unreachable once parsed is known non-null (above); listed so the dispatch stays
+                // exhaustive over every reason.
+                IntentGate.RejectReason.MALFORMED_REQUEST -> rejectAndFinish(parsed.id)
+                IntentGate.RejectReason.NOTHING_PAIRED -> {
+                    if (!silent) Toast.makeText(this, R.string.error_not_paired, Toast.LENGTH_LONG).show()
+                    rejectAndFinish(parsed.id)
+                }
+                IntentGate.RejectReason.DENIED_CALLER -> {
+                    logActivity(parsed, identityLabel = null, outcome = ActivityLogEntry.Outcome.REJECTED_USER)
+                    rejectAndFinish(parsed.id)
+                }
+                IntentGate.RejectReason.UNRESOLVED_IDENTITY -> {
+                    // A later onNewIntent-delivered request from an approved caller whose
+                    // current_user cannot be resolved: the window is already invisible-themed
+                    // from the first intent (see IntentGate.plan's canAsk), so a reliable visible
+                    // sheet isn't possible here. Reject rather than silently guessing an identity.
+                    logActivity(parsed, identityLabel = null, outcome = ActivityLogEntry.Outcome.FAILED)
+                    rejectAndFinish(parsed.id)
                 }
             }
-            null -> showApprovalSheet(pairings, parsed, callingPackage)
         }
     }
 
@@ -261,7 +234,7 @@ class SignerActivity : AppCompatActivity() {
         // existing bound identity, else the first pairing. In practice a current_user match can
         // never coexist with a *different* existing binding here -- this sheet only shows for an
         // already-approved caller when their current_user named an identity we don't have (see
-        // decideSilent/handleIncomingIntent) -- but identityRebindHint below still compares
+        // IntentGate.plan/handleIncomingIntent) -- but identityRebindHint below still compares
         // whatever ends up selected against the binding directly, so a user who manually moves
         // the picker away from it sees a clear warning before Approve would silently rebind the
         // app, rather than relying on the precedence alone to prevent that.

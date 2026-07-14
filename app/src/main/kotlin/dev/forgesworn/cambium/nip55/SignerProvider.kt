@@ -12,7 +12,6 @@ import dev.forgesworn.cambium.log.ActivityLogEntry
 import dev.forgesworn.cambium.log.ActivityLogStore
 import dev.forgesworn.cambium.nip57.PrivateZap
 import dev.forgesworn.cambium.nip57.ZapDecodeResult
-import dev.forgesworn.cambium.pairing.AppPermissionState
 import dev.forgesworn.cambium.pairing.IdentityRouting
 import dev.forgesworn.cambium.pairing.Pairing
 import dev.forgesworn.cambium.pairing.PairingStore
@@ -22,8 +21,6 @@ import dev.forgesworn.cambium.signer.HeartwoodOutcome
 import dev.forgesworn.cambium.signer.HeartwoodResult
 import dev.forgesworn.cambium.signer.HeartwoodSession
 import dev.forgesworn.cambium.signer.displayLabel
-import dev.forgesworn.cambium.signer.isDeterministicDecryptFailure
-import dev.forgesworn.cambium.signer.isPolicyRefusal
 import kotlinx.coroutines.runBlocking
 
 /**
@@ -175,8 +172,8 @@ class SignerProvider : ContentProvider() {
         val payload = requirePayload(caller, projection) ?: return@withApprovedCaller null
 
         val eventKind = extractEventKind(payload)
-        if (eventKind == NIP37_DRAFT_KIND) {
-            Log.i(TAG, "silent sign_event from $caller declined: draft (kind $NIP37_DRAFT_KIND)")
+        if (ProviderGate.isDeclinedDraft(eventKind)) {
+            Log.i(TAG, "silent sign_event from $caller declined: draft (kind ${ProviderGate.NIP37_DRAFT_KIND})")
             return@withApprovedCaller rejectedCursor()
         }
 
@@ -264,31 +261,23 @@ class SignerProvider : ContentProvider() {
         forward(caller, pairing, method, eventKind = null, payload, otherPubkey.orEmpty(), includeEventAndSignature = false, cacheable, call)
     }
 
-    private sealed interface CallerResolution {
-        data class Approved(val packageName: String, val boundIdentityPubkeyHex: String?) : CallerResolution
-        data object Denied : CallerResolution
-        data object Unresolved : CallerResolution
-    }
-
-    private fun resolveCaller(): CallerResolution {
+    /** [ProviderGate.resolveCaller] plus the diagnostic logging for each refusal path -- the
+     * decision itself is the pure, JVM-tested table in [ProviderGate]. */
+    private fun resolveCaller(): ProviderGate.Caller {
         val caller = callingPackage
-        if (caller == null) {
-            Log.w(TAG, "silent query refused: calling package unresolvable")
-            return CallerResolution.Unresolved
-        }
-        return when (val permission = pairingStore.permission(caller)) {
-            null -> {
-                Log.i(TAG, "silent query from unapproved caller $caller; deferring to intent")
-                CallerResolution.Unresolved
-            }
-            else -> when (permission.state) {
-                AppPermissionState.APPROVED -> CallerResolution.Approved(caller, permission.boundIdentityPubkeyHex)
-                AppPermissionState.DENIED -> {
-                    Log.i(TAG, "silent query from denied caller $caller; answering rejected")
-                    CallerResolution.Denied
+        val resolution = ProviderGate.resolveCaller(caller, pairingStore::permission)
+        when (resolution) {
+            is ProviderGate.Caller.Approved -> Unit
+            ProviderGate.Caller.Rejected ->
+                Log.i(TAG, "silent query from denied caller $caller; answering rejected")
+            ProviderGate.Caller.Defer ->
+                if (caller == null) {
+                    Log.w(TAG, "silent query refused: calling package unresolvable")
+                } else {
+                    Log.i(TAG, "silent query from unapproved caller $caller; deferring to intent")
                 }
-            }
         }
+        return resolution
     }
 
     /** Runs [block] for an approved caller, passing its bound identity along; answers `rejected`
@@ -296,9 +285,9 @@ class SignerProvider : ContentProvider() {
      * caller with no remembered choice yet, or one that could not be resolved. */
     private inline fun withApprovedCaller(block: (caller: String, boundIdentityPubkeyHex: String?) -> Cursor?): Cursor? =
         when (val resolution = resolveCaller()) {
-            is CallerResolution.Approved -> block(resolution.packageName, resolution.boundIdentityPubkeyHex)
-            CallerResolution.Denied -> rejectedCursor()
-            CallerResolution.Unresolved -> null
+            is ProviderGate.Caller.Approved -> block(resolution.packageName, resolution.boundIdentityPubkeyHex)
+            ProviderGate.Caller.Rejected -> rejectedCursor()
+            ProviderGate.Caller.Defer -> null
         }
 
     /** Resolves which pairing this request should route to -- see the class doc's `currentUser`
@@ -362,22 +351,23 @@ class SignerProvider : ContentProvider() {
             return null
         }
 
-        val result = outcome.result
-        return when (result) {
-            is HeartwoodResult.Success -> {
+        // Never a Success here on the two non-Result branches -- answerFor maps every Success to
+        // Answer.Result -- so this is only for the failure log lines below.
+        val failureError = (outcome.result as? HeartwoodResult.Failure)?.error
+        return when (val answer = ProviderGate.answerFor(outcome)) {
+            is ProviderGate.Answer.Result -> {
                 Log.i(TAG, "silent forward for $caller answered in ${elapsed}ms")
                 logActivityUnlessCached(caller, method, eventKind, pairing, outcome)
-                buildResultCursor(result.value, includeEventAndSignature)
+                buildResultCursor(answer.value, includeEventAndSignature)
             }
-            is HeartwoodResult.Failure -> {
-                if (isPolicyRefusal(result.error) || isDeterministicDecryptFailure(result.error)) {
-                    Log.i(TAG, "silent forward for $caller refused after ${elapsed}ms (${result.error}); answering rejected")
-                    logActivityUnlessCached(caller, method, eventKind, pairing, outcome)
-                    rejectedCursor()
-                } else {
-                    Log.w(TAG, "silent forward for $caller failed after ${elapsed}ms (${result.error}); deferring to intent")
-                    null
-                }
+            ProviderGate.Answer.Rejected -> {
+                Log.i(TAG, "silent forward for $caller refused after ${elapsed}ms ($failureError); answering rejected")
+                logActivityUnlessCached(caller, method, eventKind, pairing, outcome)
+                rejectedCursor()
+            }
+            ProviderGate.Answer.Defer -> {
+                Log.w(TAG, "silent forward for $caller failed after ${elapsed}ms ($failureError); deferring to intent")
+                null
             }
         }
     }
@@ -439,13 +429,6 @@ class SignerProvider : ContentProvider() {
         private const val COLUMN_SIGNATURE = "signature"
         private const val COLUMN_REJECTED = "rejected"
         private const val PONG = "pong"
-
-        // NIP-37 draft events. Amethyst auto-saves a draft roughly every 2s while the user is
-        // typing a reply; forwarding each one to a 1-2s hardware round trip is what buried real
-        // requests behind a flood of drafts in testing. Declined silently and permanently --
-        // clients treat the `rejected` column as terminal, no intent fallback -- rather than
-        // forwarded. Hardcoded on for now; a settings toggle can replace this later.
-        private const val NIP37_DRAFT_KIND = 31234
 
         const val GET_PUBLIC_KEY_AUTHORITY = "dev.forgesworn.cambium.GET_PUBLIC_KEY"
         const val PING_AUTHORITY = "dev.forgesworn.cambium.PING"
