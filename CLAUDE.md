@@ -83,37 +83,42 @@ Amethyst / Primal / Voyage ...
   `Result.Ambiguous` for the same reason. Both callers collapse every non-`Resolved` outcome to
   "defer/ask" -- `SignerProvider` has no way to ask which identity was meant from the silent path
   at all, and `SignerActivity` can only show the picker on the *first* intent of an activity
-  instance (see `SignerActivity`'s `decideSilent`).
+  instance (see `nip55/IntentGate.kt`).
 - `signer/HeartwoodClient.kt` -- **the only file that imports `rust.nostr.sdk`**. Wraps
   `NostrConnect` (rust-nostr's NIP-46 client) behind the `HeartwoodClient` interface so the
   implementation can be swapped or faked without touching pairing storage or the NIP-55 surface.
-  Also hosts `ClientKeys` (ephemeral keypair generation), `npubDisplay`, and `HeartwoodSession` for
-  the same reason: they are rust-nostr operations, so everything else calls into this file instead
-  of importing `rust.nostr.sdk` directly. `Pairing.displayLabel()` (`label` if the user set one,
-  else `npubDisplay(signerPubkeyHex)`) lives here too, next to `npubDisplay` -- the one place
-  display falls back, so `MainActivity`'s pairing list, its connected-apps rows, and the approval
-  sheet's identity picker all agree on what a pairing is called.
-
-  `HeartwoodSession` is a registry of per-identity sessions, keyed by signer pubkey, shared by
-  `SignerActivity` and `SignerProvider` -- from 0.3.0 on Cambium pairs more than one Heartwood
-  identity, and each one's NIP-46 connection, admission control, and decrypt cache must stay fully
-  isolated: a burst against identity A must never shed or slow down identity B, and a decrypt
-  cached while talking to A must never leak into B's answers. The private `Session` class is
-  exactly the single-pairing design this object used to *be* before 0.3.0, now instantiated once
-  per signer pubkey (`sessions.computeIfAbsent(pairing.signerPubkeyHex) { Session(it) }`) instead of
-  once for the whole app -- every invariant below still holds, just scoped to one identity's worker
-  instead of the app's only worker. A live test against a real device showed a fresh session per
-  request cost multiple seconds each, hence keeping one warm at all. `computeIfAbsent`
-  specifically, not Kotlin's `getOrPut` extension: `getOrPut` is plain get-then-put with no
-  atomicity of its own even on a `ConcurrentHashMap`, so two threads racing it for the same
-  brand-new identity (a first-time burst of concurrent requests against a freshly paired identity
-  is exactly the trigger) could each construct a `Session` (spinning up its own worker thread)
-  before either `put()` ran -- the loser's `Session`, and its thread, would be silently overwritten
-  in the map and leaked, with nothing left holding a reference to ever shut it down.
-  `computeIfAbsent` is atomic per key on a real `ConcurrentHashMap`. `Session` takes the signer
-  pubkey as a constructor parameter purely to give itself a short log tag (`recordShed`'s "shed:
-  queue full" line otherwise had no way to say *which* identity's queue) -- the registry's map key
-  lives in the outer `HeartwoodSession` object, not in `Session` itself.
+  Also hosts `ClientKeys` (ephemeral keypair generation) and `npubDisplay` for the same reason:
+  they are rust-nostr operations, so everything else calls into this file instead of importing
+  `rust.nostr.sdk` directly. `Pairing.displayLabel()` (`label` if the user set one, else
+  `npubDisplay(signerPubkeyHex)`) lives here too, next to `npubDisplay` -- the one place display
+  falls back, so `MainActivity`'s pairing list, its connected-apps rows, and the approval sheet's
+  identity picker all agree on what a pairing is called. `HeartwoodSession` is now just the app's
+  process-wide `SessionRegistry` instance (below), wired to `RustNostrHeartwoodClient` and logcat
+  -- it exists so `SignerActivity` and `SignerProvider` agree on a single instance without either
+  owning it; all actual behaviour lives in `SessionRegistry`.
+- `signer/SessionRegistry.kt` -- pure Kotlin (no Android, no rust-nostr), JVM-tested
+  (`SessionRegistryTest`, against a fake `HeartwoodClient` -- the NIP-46 client is injected via
+  the constructor's `clientFactory`, log lines via `logWarning`, and both timeouts are
+  constructor parameters so tests can shrink them): the registry of per-identity sessions, keyed
+  by signer pubkey -- from 0.3.0 on Cambium pairs more than one Heartwood identity, and each
+  one's NIP-46 connection, admission control, and decrypt cache must stay fully isolated: a burst
+  against identity A must never shed or slow down identity B, and a decrypt cached while talking
+  to A must never leak into B's answers. The private `Session` class is exactly the single-pairing
+  design `HeartwoodSession` used to *be* before 0.3.0, now instantiated once per signer pubkey
+  (`sessions.computeIfAbsent(pairing.signerPubkeyHex) { Session(it) }`) instead of once for the
+  whole app -- every invariant below still holds, just scoped to one identity's worker instead of
+  the app's only worker. A live test against a real device showed a fresh session per request cost
+  multiple seconds each, hence keeping one warm at all. `computeIfAbsent` specifically, not
+  Kotlin's `getOrPut` extension: `getOrPut` is plain get-then-put with no atomicity of its own
+  even on a `ConcurrentHashMap`, so two threads racing it for the same brand-new identity (a
+  first-time burst of concurrent requests against a freshly paired identity is exactly the
+  trigger) could each construct a `Session` (spinning up its own worker thread) before either
+  `put()` ran -- the loser's `Session`, and its thread, would be silently overwritten in the map
+  and leaked, with nothing left holding a reference to ever shut it down. `computeIfAbsent` is
+  atomic per key on a real `ConcurrentHashMap`. `Session` takes the signer pubkey as a
+  constructor parameter purely to give itself a short log tag (`recordShed`'s "shed: queue full"
+  line otherwise had no way to say *which* identity's queue) -- the registry's map key lives in
+  the sessions map, not in `Session` itself.
 
   `trySilent`/`withClient` return a `HeartwoodOutcome<String>` (`.result` is the same
   `HeartwoodResult<String>` either call always returned pre-0.3.0), not a bare `HeartwoodResult`,
@@ -173,6 +178,22 @@ Amethyst / Primal / Voyage ...
 - `nip55/Nip55Request.kt` -- pure Kotlin parser from a plain `RawSignerIntent` data class to a
   sealed `Nip55Request`. JVM-testable; the actual `android.content.Intent` mapping is a single
   private extension function in `SignerActivity.kt`.
+- `nip55/IntentGate.kt` -- pure Kotlin (no Android), JVM-tested: `SignerActivity`'s decision
+  table. `plan(permission, pairings, parsed, canAsk)` returns a sealed `Plan` --
+  `Forward(pairing)`, `AskUser`, or `Reject(reason)` -- and `silentFor(permission, plan)` decides
+  whether the first intent's window needs decorations at all. Extracted so the look-ahead that
+  picks the window theme and the dispatch that later acts on the request consume one shared
+  decision and can never disagree; `canAsk` is what makes an unresolvable identity ask on the
+  first intent but reject on a later one arriving on an already-invisible window. A caller with
+  no remembered choice is never silent even when the plan is already a rejection -- first contact
+  keeps the visible window so a not-paired mistake gets its toast rather than a silent no-op.
+- `nip55/ProviderGate.kt` -- pure Kotlin (no Android), JVM-tested: `SignerProvider`'s decision
+  tables. `resolveCaller` is the caller tri-state (approved-with-binding / terminal rejected /
+  defer-to-intent); `answerFor` maps a forward's `HeartwoodOutcome` onto the three-way cursor
+  contract (only a policy refusal or a deterministic decrypt failure is terminal -- everything
+  else defers, since a terminal answer to a repairable failure would block a request a retry
+  could have served); `isDeclinedDraft` holds the NIP-37 draft-decline constant. The provider
+  keeps its diagnostic logging around these calls.
 - `nip55/SignerActivity.kt` -- exported activity handling `nostrsigner:` intents. Genuinely
   invisible for a caller with *any* remembered choice, approved or denied: `Theme.Cambium.Invisible`
   is swapped in via `setTheme` before any window setup, no content view is ever set. An approved
@@ -184,20 +205,21 @@ Amethyst / Primal / Voyage ...
   user dismisses the first (e.g. `sign_event` right after `get_public_key`).
 
   `silent` is decided once in `onCreate`, before any window setup, and is no longer a plain
-  function of the caller's remembered choice alone the way it was pre-0.3.0: `decideSilent` also
-  has to look ahead at whether the *first* intent's identity routing (see `IdentityRouting`) will
-  actually resolve. An approved caller whose `current_user` cannot be resolved must fall back to
-  the visible sheet rather than guess an identity -- which is only possible if the invisible theme
+  function of the caller's remembered choice alone the way it was pre-0.3.0: the first intent's
+  `IntentGate.plan` (see `nip55/IntentGate.kt`) also looks ahead at whether its identity routing
+  (see `IdentityRouting`) will actually resolve, and `IntentGate.silentFor` turns that plan into
+  the verdict. An approved caller whose `current_user` cannot be resolved must fall back to the
+  visible sheet rather than guess an identity -- which is only possible if the invisible theme
   was never applied in the first place, since switching a visible theme for an invisible one (or
   the reverse) after the window already exists is unreliable either way. A later `onNewIntent`-
   delivered request that hits the same routing failure on an already-silent-themed window instead
-  rejects outright (`handleIncomingIntent`'s `else` branch) -- there is no reliable way to grow a
-  sheet's decorations onto an invisible window after the fact, so it cannot fall back to asking the
-  way the first intent could. `decideSilent` returns a `SilentDecision` (its parsed `Nip55Request`
-  and `IdentityRouting.Result`, alongside the `silent` verdict itself), which the very first
-  `handleIncomingIntent` call reuses instead of re-parsing the same intent and re-running routing
-  against it a second time immediately afterwards; `onNewIntent`-delivered requests still compute
-  both fresh, since `SilentDecision` only ever describes the *first* intent.
+  rejects outright (`IntentGate.plan` with `canAsk = false` returns
+  `Reject(UNRESOLVED_IDENTITY)`) -- there is no reliable way to grow a sheet's decorations onto an
+  invisible window after the fact, so it cannot fall back to asking the way the first intent
+  could. `onCreate` hands its parse and plan to the very first `handleIncomingIntent` call as a
+  `FirstIntent`, so it does not re-parse the same intent and re-run routing against it a second
+  time immediately afterwards; `onNewIntent`-delivered requests compute both fresh, with
+  `canAsk = !silent`.
 
   The approval sheet (shown only for "ask", or for an approved caller whose routing did not
   resolve on the first intent) has an "always deny this app" link below the normal Approve/Decline
@@ -210,7 +232,7 @@ Amethyst / Primal / Voyage ...
   *existing* bound identity, else the first pairing. In practice a `current_user` match can never
   coexist with a *different* existing binding here -- this sheet only ever shows for an
   already-approved caller when their `current_user` named an identity we don't have (see
-  `decideSilent` above) -- but the picker does not rely on precedence alone to prevent a silent
+  `IntentGate.plan` above) -- but the picker does not rely on precedence alone to prevent a silent
   rebind: `identityRebindHint` (a calm one-line warning, "Currently bound to `<label>`") compares
   whatever ends up selected against `AppPermission.boundIdentityPubkeyHex` directly, via the
   picker's own `OnItemSelectedListener`, and shows whenever they differ -- covering a user
@@ -260,7 +282,8 @@ Amethyst / Primal / Voyage ...
   or a deterministic decrypt failure (see `DecryptCache.kt`'s `isDeterministicDecryptFailure`, also
   used for an invalid decrypted zap -- see below) answers a `rejected` cursor rather than `null`,
   so a client stops re-escalating a blocked or unrecoverable request to the visible flow every
-  couple of seconds. All three are answered with a distinct `rejected` cursor column that clients
+  couple of seconds; that outcome-to-cursor mapping is `ProviderGate.answerFor`, pure and
+  JVM-tested. All three are answered with a distinct `rejected` cursor column that clients
   should treat as terminal (no intent fallback). `NIP04_DECRYPT`/`NIP44_DECRYPT` results, and
   `DECRYPT_ZAP_EVENT`'s under its own `CacheableDecrypt.Method.ZAP` namespace, are cached by
   `HeartwoodSession` before admission control -- see its class doc. Everything else that cannot be
@@ -273,7 +296,8 @@ Amethyst / Primal / Voyage ...
   A caller with a *remembered denial* gets `rejected` immediately, for every authority, without
   ever resolving a pairing or touching the queue -- distinct from a caller with no remembered
   choice yet (`null`, "try the intent", where they see the approval sheet). `resolveCaller`/
-  `withApprovedCaller` centralise this tri-state check so every `query*` method gets it uniformly,
+  `withApprovedCaller` centralise this tri-state check (the table itself is
+  `ProviderGate.resolveCaller`, pure and JVM-tested) so every `query*` method gets it uniformly,
   and now also carry the caller's bound identity (`AppPermission.boundIdentityPubkeyHex`) through
   to `requirePairing`, which resolves it against `projection`'s `current_user` (index 2) via
   `IdentityRouting.resolve` -- same precedence as the intent path. A `current_user` naming an
@@ -320,7 +344,9 @@ Amethyst / Primal / Voyage ...
   rather than misclassified as "no anon tag at all".
 - `nip55/EventJson.kt` -- tiny shared helpers (`extractEventKind`, `extractEventSignatureHex`) used
   by both `SignerActivity` (approval sheet, legacy `signature` extra) and `SignerProvider` (the
-  `signature` cursor column for forwarded `SIGN_EVENT`).
+  `signature` cursor column for forwarded `SIGN_EVENT`). kotlinx.serialization rather than
+  `org.json`, for the same reason as `nip57/PrivateZap.kt` -- `org.json` is a non-functional stub
+  on the host JVM -- so this stays genuinely JVM-tested, including against adversarial event JSON.
 - `pairing/QrPairingScan.kt` -- pure Kotlin (no Android, no zxing), same JVM-testable pattern as
   `BunkerUri.kt`: turns a raw scan result string into `Accepted`/`Rejected`/`Cancelled`. `null`
   (zxing's cancelled-scan result) maps to `Cancelled` (no error shown); a `nostrconnect://` link
@@ -523,13 +549,10 @@ Amethyst / Primal / Voyage ...
   decrypted plaintext is checked for `"kind": 9733` but its signature is not verified.
 - The decrypt cache (`DecryptCache`) has no eviction on staleness beyond LRU size -- there is no
   defence against a cached plaintext outliving its usefulness if the counterparty rotates keys.
-  Partitioning per pairing (each `HeartwoodSession.Session` owns its own `DecryptCache` instance)
-  is a structural guarantee verifiable by reading the constructor, not something with its own
-  automated test -- `HeartwoodSession` cannot be unit tested at all: any exercise of it eventually
-  constructs a real `RustNostrHeartwoodClient`, which needs rust-nostr's per-ABI native library and
-  cannot load on a host JVM (see `signer/HeartwoodClient.kt`'s "only file that imports
-  `rust.nostr.sdk`" note). This predates 0.3.0 -- the single-session design was never unit tested
-  either -- and is unchanged by moving to one session per identity.
+  (Partitioning per pairing, along with the rest of the session invariants -- per-identity
+  shedding, single-worker connection reuse, callers unable to cancel in-flight work -- *is* now
+  unit-tested: `SessionRegistry` takes its NIP-46 client via an injected factory, so
+  `SessionRegistryTest` exercises all of it on the host JVM against a fake client.)
 - All pairings share one Cambium client keypair (`PairingStore.ensureClientKeys`) rather than one
   per identity -- a deliberate simplification (Cambium presents one NIP-46 client identity to every
   bunker it talks to), not a limitation flagged as a gap to close, but worth knowing if a future
@@ -537,9 +560,17 @@ Amethyst / Primal / Voyage ...
 - NIP-55 single-intent batch requests (the `results` JSON-array response) -- currently each
   intent is handled individually, though `SignerActivity` does handle multiple *separate* intents
   arriving in sequence via `onNewIntent`.
-- The NIP-37 draft-decline (kind 31234) is a hardcoded constant in `SignerProvider`, not a user
-  setting; `HeartwoodSession`'s queue depth (3), timeouts (15s silent, 20s intent), and
-  `DecryptCache`'s size (512 entries) are likewise hardcoded rather than configurable. The queue
+- NIP-55 `get_relays` is not implemented, and cannot be meaningfully implemented today:
+  rust-nostr 0.44.2's `NostrConnect` exposes no NIP-46 `get_relays` RPC (checked with `javap`
+  against the AAR, same method as the keep-alive ping check -- its full remote surface is
+  `bunkerUri`/`getPublicKey`/`signEvent`/nip04/nip44, plus a local synchronous `relays()`
+  accessor that returns the NIP-46 *transport* relays, which would be the semantically wrong
+  answer to a client asking for the user's relay list). Structural until upstream adds the RPC,
+  like sender-side private zaps.
+- The NIP-37 draft-decline (kind 31234) is a hardcoded constant in `ProviderGate`, not a user
+  setting; `SessionRegistry`'s queue depth (3), timeouts (15s silent, 20s intent -- both
+  constructor parameters, but only tests override them), and `DecryptCache`'s size (512 entries)
+  are likewise hardcoded rather than configurable. The queue
   depth in particular has not been revisited since the cache landed -- the shed-count log line
   (tag `HeartwoodSession`, about once a minute when shedding) exists specifically to gather real
   data on whether 3 is still the right number now that repeat decrypts rarely reach the queue.
