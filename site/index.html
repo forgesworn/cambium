@@ -1,0 +1,318 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cambium — the Android signer that holds no keys</title>
+<meta name="description" content="Cambium is an Android NIP-55 signer that holds no user keys. Every signature is answered by your Heartwood hardware signer over Nostr relays. GrapheneOS-first, no Google services, MIT.">
+<link rel="canonical" href="https://cambium.forgesworn.dev/">
+<meta property="og:title" content="Cambium — the Android signer that holds no keys">
+<meta property="og:description" content="A NIP-55 signer that is not one: every request is forwarded to your Heartwood hardware signer over NIP-46. Nothing on the phone can sign anything.">
+<meta property="og:url" content="https://cambium.forgesworn.dev/">
+<meta property="og:type" content="website">
+<meta name="theme-color" content="#0c0a07">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="preload" href="/fonts/fraunces-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/fonts/jetbrains-mono-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+
+<header class="masthead">
+  <a class="wordmark" href="/">CAMBIUM</a>
+  <nav class="mastnav" aria-label="Sections">
+    <a href="#gap">Why</a>
+    <a href="#security">Security</a>
+    <a href="#inside">Inside</a>
+    <a href="#pairing">Pairing</a>
+    <a href="#install">Install</a>
+    <a class="ext" href="https://github.com/forgesworn/cambium">GitHub</a>
+  </nav>
+</header>
+
+<main>
+
+<!-- ======================= HERO ======================= -->
+<section class="hero">
+  <div class="hero-copy">
+    <p class="kicker reveal r1">An Android NIP&#8209;55 signer for Heartwood</p>
+    <h1 class="reveal r2">The signer that<br>holds <em>no keys.</em></h1>
+    <p class="lede reveal r3">
+      Cambium registers as a signer on your phone, but it is not one. Every request —
+      every signature, every decrypt — travels over Nostr relays to your
+      <a href="https://github.com/forgesworn/heartwood-esp32">Heartwood</a> hardware signer
+      and is answered there. Compromise the phone and you hold the ability to <em>ask</em>;
+      the answer still comes from hardware, behind its own policy and a physical button.
+    </p>
+    <div class="cta-row reveal r4">
+      <a class="btn btn-primary" href="https://github.com/forgesworn/cambium/releases">Get the signed APK</a>
+      <a class="btn btn-ghost" href="https://github.com/forgesworn/cambium">Read the source</a>
+    </div>
+    <p class="hero-meta reveal r5">Android&nbsp;8.1+ &nbsp;·&nbsp; GrapheneOS-first &nbsp;·&nbsp; no Google services &nbsp;·&nbsp; MIT</p>
+  </div>
+
+  <!-- Fig. 1 — the architecture, drawn as what the name means -->
+  <figure class="plate reveal r3" aria-labelledby="fig1-caption">
+    <svg viewBox="0 0 800 566" role="img" aria-label="Tree cross-section: clients at the bark, Cambium as the thin living ring, relays as sapwood, Heartwood at the core">
+      <!-- bark (clients) -->
+      <circle class="ring bark d1" cx="400" cy="288" r="244"/>
+      <circle class="ring bark thin d2" cx="400" cy="288" r="236"/>
+      <!-- cambium: the living layer -->
+      <circle class="ring cambium-glow d3" cx="400" cy="288" r="222"/>
+      <circle class="ring cambium d3" cx="400" cy="288" r="222"/>
+      <!-- sapwood (relays) -->
+      <ellipse class="ring sap d4" cx="400" cy="288" rx="198" ry="196" transform="rotate(3 400 288)"/>
+      <circle class="ring sap faint d5" cx="400" cy="288" r="178"/>
+      <ellipse class="ring sap d6" cx="400" cy="288" rx="157" ry="159" transform="rotate(-4 400 288)"/>
+      <circle class="ring sap faint d7" cx="400" cy="288" r="137"/>
+      <ellipse class="ring sap d8" cx="400" cy="288" rx="118" ry="116" transform="rotate(6 400 288)"/>
+      <!-- heartwood -->
+      <circle class="heart-fill d9" cx="400" cy="288" r="92"/>
+      <circle class="ring heart d9" cx="400" cy="288" r="92"/>
+      <circle class="ring heart thin d10" cx="400" cy="288" r="64"/>
+      <circle class="heart-core d10" cx="400" cy="288" r="4"/>
+
+      <!-- leader: clients (bark ring, NE, label clear of the rings) -->
+      <polyline class="leader d11" points="573,116 640,58 794,58"/>
+      <circle class="leader-dot d11" cx="573" cy="116" r="3"/>
+      <text class="lbl d11" x="794" y="49" text-anchor="end">CLIENTS</text>
+      <text class="lbl-sub d11" x="794" y="76" text-anchor="end">Amethyst · Primal · Voyage</text>
+
+      <!-- leader: cambium (green ring, SE) -->
+      <polyline class="leader cambium-leader d12" points="609,364 700,456 794,456"/>
+      <circle class="leader-dot cambium-dot d12" cx="609" cy="364" r="3.5"/>
+      <text class="lbl cambium-lbl d12" x="794" y="447" text-anchor="end">CAMBIUM</text>
+      <text class="lbl-sub d12" x="794" y="474" text-anchor="end">this app — the living layer</text>
+
+      <!-- leader: relays (sapwood band, SW) -->
+      <polyline class="leader d13" points="283,405 180,508 6,508"/>
+      <circle class="leader-dot d13" cx="283" cy="405" r="3"/>
+      <text class="lbl d13" x="6" y="499" text-anchor="start">RELAYS</text>
+      <text class="lbl-sub d13" x="6" y="526" text-anchor="start">NIP-46, sealed in NIP-44</text>
+
+      <!-- leader: heartwood (core rim, NW) -->
+      <polyline class="leader d14" points="335,223 170,58 6,58"/>
+      <circle class="leader-dot heart-dot d14" cx="335" cy="223" r="3.5"/>
+      <text class="lbl heart-lbl d14" x="6" y="49" text-anchor="start">HEARTWOOD</text>
+      <text class="lbl-sub d14" x="6" y="76" text-anchor="start">keys live here, and only here</text>
+    </svg>
+    <figcaption id="fig1-caption">
+      <span class="fig-no">Fig. 1</span> — Cross-section of a signing request.
+      The phone is the layer, not the wood.
+    </figcaption>
+  </figure>
+</section>
+
+<!-- ======================= 01 · THE GAP ======================= -->
+<section class="section" id="gap">
+  <div class="section-head">
+    <span class="section-no">01</span>
+    <h2>The gap it fills</h2>
+  </div>
+  <div class="section-body two-col">
+    <p>
+      Amethyst, Primal, Voyage and most other Amber-compatible Android clients cannot log in
+      to a remote <a href="https://github.com/nostr-protocol/nips/blob/master/46.md">NIP&#8209;46</a>
+      bunker directly. All of them can sign in with any installed
+      <a href="https://github.com/nostr-protocol/nips/blob/master/55.md">NIP&#8209;55</a> external signer.
+    </p>
+    <p>
+      Cambium sits between the two: it registers as a signer, translates each NIP&#8209;55 intent
+      into a NIP&#8209;46 request against your Heartwood, and hands the response straight back.
+      The name follows the tree — cambium is the living layer between bark and wood.
+    </p>
+  </div>
+</section>
+
+<!-- ======================= 02 · SECURITY MODEL ======================= -->
+<section class="section" id="security">
+  <div class="section-head">
+    <span class="section-no">02</span>
+    <h2>Security model</h2>
+  </div>
+  <dl class="spec-rows">
+    <div class="spec-row">
+      <dt>Nothing to steal</dt>
+      <dd>No user secrets ever touch the phone. Cambium stores the pairing — Heartwood's public
+      key, its relay list, the connection secret — and its own ephemeral NIP&#8209;46 client keypair.
+      The identity key is not here to find.</dd>
+    </div>
+    <div class="spec-row">
+      <dt>Encrypted at rest</dt>
+      <dd>What little it does store lives in Android Keystore-backed encrypted preferences,
+      never in plain files.</dd>
+    </div>
+    <div class="spec-row">
+      <dt>Hardware is the authority</dt>
+      <dd>Per-app approval on the phone is a convenience filter. Heartwood's own policy engine
+      and physical confirmation button decide what actually gets signed — Cambium can refuse
+      on its behalf, never grant.</dd>
+    </div>
+    <div class="spec-row">
+      <dt>Sealed in transit</dt>
+      <dd>Every NIP&#8209;46 payload is NIP&#8209;44-encrypted end to end. Relays route envelopes;
+      they read nothing.</dd>
+    </div>
+  </dl>
+</section>
+
+<!-- ======================= 03 · WHAT'S INSIDE ======================= -->
+<section class="section" id="inside">
+  <div class="section-head">
+    <span class="section-no">03</span>
+    <h2>What's inside</h2>
+  </div>
+  <ul class="feature-grid">
+    <li>
+      <h3>Several identities, no guessing</h3>
+      <p>Pair more than one Heartwood. NIP&#8209;55's <code>current_user</code> selects the identity
+      per request; a request naming an identity Cambium does not hold is refused, never
+      silently substituted.</p>
+    </li>
+    <li>
+      <h3>Genuinely invisible</h3>
+      <p>Once an app is approved, its requests run with no flash, no dimmed overlay, no popup —
+      a silent provider path plus a truly transparent window for the rest.</p>
+    </li>
+    <li>
+      <h3>Remembers what cannot change</h3>
+      <p>Repeat decrypts are answered from a per-identity cache instead of costing a hardware
+      round trip each time you scroll past the same message.</p>
+    </li>
+    <li>
+      <h3>Burst-proof</h3>
+      <p>Each identity gets its own queue with admission control. A chatty client hammering one
+      identity cannot slow down, or shed, another.</p>
+    </li>
+    <li>
+      <h3>An honest activity log</h3>
+      <p>What was asked, by which app, answered how, by which identity. Metadata only — never
+      an event body, plaintext or ciphertext. Yours to clear, or switch off.</p>
+    </li>
+    <li>
+      <h3>App lock that knows its place</h3>
+      <p>An optional biometric gate on the management screen and approval decisions. Background
+      signing for already-approved apps keeps working with the phone locked — that is the point
+      of a proxy.</p>
+    </li>
+    <li>
+      <h3>Keeps the line warm</h3>
+      <p>An optional foreground service holds the relay session between requests, so silent
+      signing skips the reconnect penalty. Off by default; survives reboots when on.</p>
+    </li>
+    <li>
+      <h3>Private zaps, honestly scoped</h3>
+      <p>Zaps sent privately <em>to</em> you decrypt (DIP&#8209;03, recipient path). Viewing your own
+      sent private zaps needs the raw key hashed directly — impossible over NIP&#8209;46, so Cambium
+      does not pretend otherwise.</p>
+    </li>
+    <li>
+      <h3>De-Googled by default</h3>
+      <p>No Play services, no Firebase, no analytics, no push servers. Built for GrapheneOS;
+      runs on any Android 8.1 or later.</p>
+    </li>
+  </ul>
+</section>
+
+<!-- ======================= 04 · PAIRING ======================= -->
+<section class="section" id="pairing">
+  <div class="section-head">
+    <span class="section-no">04</span>
+    <h2>Pairing takes a minute</h2>
+  </div>
+  <ol class="steps">
+    <li>
+      <span class="step-no">i</span>
+      <p>Install Cambium on your phone.</p>
+    </li>
+    <li>
+      <span class="step-no">ii</span>
+      <p>In <a href="https://sapwood.forgesworn.dev">Sapwood</a>, choose
+      <em>Connect an app</em> and name it. It shows a <code>bunker://</code> URI as a QR code.</p>
+    </li>
+    <li>
+      <span class="step-no">iii</span>
+      <p>In Cambium, scan it — a successful scan pairs immediately. No camera? Paste the URI
+      text instead; the camera is never required.</p>
+    </li>
+    <li>
+      <span class="step-no">iv</span>
+      <p>In any Amber-compatible client, log in with an external signer and pick Cambium.
+      Approve the app once; every signature still comes from your hardware.</p>
+    </li>
+  </ol>
+  <p class="aside">
+    Honest numbers: a signature is one relay round trip — roughly half a second to a couple
+    of seconds, depending on your relays. Repeat decrypts skip the trip entirely.
+  </p>
+</section>
+
+<!-- ======================= 05 · INSTALL & VERIFY ======================= -->
+<section class="section" id="install">
+  <div class="section-head">
+    <span class="section-no">05</span>
+    <h2>Install, then verify</h2>
+  </div>
+  <div class="section-body">
+    <p>
+      Download the signed APK from
+      <a href="https://github.com/forgesworn/cambium/releases">GitHub Releases</a>, or point
+      <a href="https://github.com/ImranR98/Obtainium">Obtainium</a> at the repository for
+      automatic update tracking. Before installing, check the signing certificate with
+      <a href="https://github.com/soupslurpr/AppVerifier">AppVerifier</a>:
+    </p>
+    <pre class="fingerprint"><code>dev.forgesworn.cambium
+9E:A1:88:EF:A9:01:5F:7E:7F:90:E1:88:8F:58:6F:52:
+7B:2A:0E:8A:6D:CD:B3:99:1E:41:FB:4F:14:EE:EF:C6</code></pre>
+    <p class="aside">
+      Releases before 0.2.0 were never published; the 0.2.0 key is the trust root.
+    </p>
+  </div>
+</section>
+
+<!-- ======================= THE TREE ======================= -->
+<section class="section family">
+  <div class="section-head">
+    <span class="section-no">§</span>
+    <h2>The whole tree</h2>
+  </div>
+  <div class="family-row">
+    <a class="family-card" href="https://github.com/forgesworn/heartwood-esp32">
+      <span class="family-ring heart-swatch"></span>
+      <h3>Heartwood</h3>
+      <p>The hardware signer. Wi&#8209;Fi-standalone, policy engine, physical button.
+      Keys live here, and only here.</p>
+    </a>
+    <a class="family-card" href="https://sapwood.forgesworn.dev">
+      <span class="family-ring sap-swatch"></span>
+      <h3>Sapwood</h3>
+      <p>Flashing and management. Provisions your Heartwood and issues the
+      <code>bunker://</code> pairings.</p>
+    </a>
+    <span class="family-card current">
+      <span class="family-ring cambium-swatch"></span>
+      <h3>Cambium</h3>
+      <p>The living layer on your phone. Signs nothing, forwards everything —
+      you are here.</p>
+    </span>
+  </div>
+</section>
+
+</main>
+
+<footer class="colophon">
+  <p class="colophon-links">
+    <a href="https://github.com/forgesworn/cambium">Source</a> ·
+    <a href="https://github.com/forgesworn/cambium/releases">Releases</a> ·
+    <a href="https://github.com/forgesworn/cambium/blob/main/CHANGELOG.md">Changelog</a> ·
+    <a href="https://github.com/sponsors/TheCryptoDonkey">Sponsor</a> ·
+    <a href="https://forgesworn.dev">forgesworn.dev</a>
+  </p>
+  <p class="colophon-note">
+    MIT licence. This page is static: no scripts, no cookies, no analytics, no third-party
+    requests — the fonts are served from this domain. Like the app, it asks for nothing.
+  </p>
+</footer>
+
+</body>
+</html>
