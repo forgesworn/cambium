@@ -1,0 +1,4 @@
+- Multiple identities: pair each hardware signer identity separately. Apps bind to an identity at approval; NIP-55 current_user selects the identity per request. Cambium never substitutes identities silently. Each identity gets its own isolated connection, queue and decrypt cache.
+- Activity log: an on-phone, metadata-only record of signer activity. No content is ever stored.
+- App lock: optional biometric gate on management and approvals.
+- 0.2.x pairings migrate automatically.

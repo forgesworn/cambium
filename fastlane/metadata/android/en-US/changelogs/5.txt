@@ -1,0 +1,6 @@
+Polish on the 0.3.1 fixes.
+
+- The approval sheet warns live whenever the selected identity differs from the app's existing binding, including when the picker is moved by hand.
+- Activity log writing is a single process-wide writer fed by a non-blocking queue.
+- Queue-shed log lines name which identity's queue is shedding.
+- Faster hex encoding on the request path.

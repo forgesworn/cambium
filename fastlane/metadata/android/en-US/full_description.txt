@@ -1,0 +1,22 @@
+Cambium is an Android NIP-55 signer that holds no user keys. Every signing request is proxied to a paired Heartwood hardware signer over NIP-46 (Nostr relays), and the response is handed straight back to the requesting app.
+
+Amethyst, Primal and most other Amber-compatible Android Nostr clients cannot log in to a remote NIP-46 bunker directly, but they all support signing in via any installed NIP-55 external signer. Cambium fills that gap: it registers as a signer, but it is not one. It is a thin proxy that turns NIP-55 intents into NIP-46 requests against your hardware signer.
+
+Security model:
+
+- No user secrets ever touch the phone. Cambium stores only the bunker pairing (the paired signer's public key, its relay list, and the per-pairing connection secret) and Cambium's own ephemeral NIP-46 client keypair. Compromising the phone exposes the ability to request signatures — which the hardware signer's policy engine and physical confirmation button still gate — never the identity key itself.
+- All pairing state lives in Android Keystore-backed encrypted storage.
+- Per-app approval is tracked locally, in addition to whatever the hardware signer's own policy enforces. The signer remains the authority on what actually gets signed.
+- All NIP-46 payloads are NIP-44-encrypted.
+
+Features:
+
+- Pair by QR scan or pasted bunker:// URI; multiple identities, each fully isolated.
+- NIP-55 intent handling: get_public_key, sign_event, nip04/nip44 encrypt and decrypt, decrypt_zap_event (private zaps, recipient path), current_user identity selection.
+- A silent content-provider path answers already-approved apps without any visible popup.
+- Persistent per-app approval or denial, with a connected-apps list to review and forget choices.
+- Optional keep-warm foreground service so silent signing skips the reconnect penalty.
+- A metadata-only activity log (app, method, event kind, identity, outcome — never any content).
+- Optional biometric or device-credential app lock on the management screen and approval decisions.
+
+No Google Play services, no Firebase, no analytics. Runs on any Android 8.1+ device, including GrapheneOS.

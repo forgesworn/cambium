@@ -1,0 +1,1 @@
+NIP-55 signer that holds no keys: signing is proxied to a NIP-46 hardware bunker

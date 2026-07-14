@@ -1,0 +1,29 @@
+# Zapstore publishing config, consumed by zsp (https://github.com/zapstore/zsp).
+# Publish a new release (after the GitHub release exists) with:
+#   SIGN_WITH=<nsec1... | bunker://...> zsp publish zapstore.yaml
+# Dry-run without a key (unsigned events to stdout):
+#   SIGN_WITH=<npub1...> zsp publish --offline zapstore.yaml
+name: Cambium
+repository: https://github.com/forgesworn/cambium
+summary: NIP-55 signer that holds no keys — signing is proxied to a NIP-46 hardware bunker
+description: |
+  Cambium is an Android NIP-55 signer that holds no user keys. Every signing
+  request is proxied to a paired Heartwood hardware signer over NIP-46 (Nostr
+  relays), and the response is handed straight back to the requesting app.
+
+  Amethyst, Primal and most other Amber-compatible clients cannot log in to a
+  remote NIP-46 bunker directly, but they all support NIP-55 external signers.
+  Cambium fills that gap: it registers as a signer, but it is not one.
+
+  No user secrets ever touch the phone. Compromising the phone exposes only the
+  ability to request signatures — which the hardware signer's policy engine and
+  physical confirmation button still gate — never the identity key itself.
+
+  No Google Play services, no Firebase, no analytics. Runs on any Android 8.1+
+  device, including GrapheneOS.
+license: MIT
+website: https://cambium.forgesworn.dev
+tags: [nostr, signer, nip55, nip46, security]
+icon: ./fastlane/metadata/android/en-US/images/icon.png
+release_notes: ./CHANGELOG.md
+supported_nips: ["44", "46", "55"]

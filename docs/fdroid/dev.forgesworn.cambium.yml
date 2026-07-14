@@ -1,0 +1,34 @@
+# Draft fdroiddata metadata for Cambium, to be submitted as
+# metadata/dev.forgesworn.cambium.yml in a merge request to
+# https://gitlab.com/fdroid/fdroiddata (see docs/DISTRIBUTION.md for the process).
+# Summary/Description/changelogs/icon are picked up from this repo's
+# fastlane/metadata/android/en-US/ automatically.
+
+Categories:
+  - Internet
+  - Security
+License: MIT
+AuthorName: Forgesworn
+WebSite: https://cambium.forgesworn.dev
+SourceCode: https://github.com/forgesworn/cambium
+IssueTracker: https://github.com/forgesworn/cambium/issues
+Changelog: https://github.com/forgesworn/cambium/blob/HEAD/CHANGELOG.md
+Donate: https://github.com/sponsors/TheCryptoDonkey
+
+AutoName: Cambium
+
+RepoType: git
+Repo: https://github.com/forgesworn/cambium.git
+
+Builds:
+  - versionName: 0.3.2
+    versionCode: 5
+    commit: v0.3.2
+    subdir: app
+    gradle:
+      - yes
+
+AutoUpdateMode: Version
+UpdateCheckMode: Tags ^v[0-9]+\.[0-9]+\.[0-9]+$
+CurrentVersion: 0.3.2
+CurrentVersionCode: 5

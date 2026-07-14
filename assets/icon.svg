@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 108">
+  <!-- Store icon: the launcher's adaptive-icon artwork (growth ring between bark and wood)
+       rendered on its full canvas. Source of truth for every raster store icon in this repo;
+       regenerate with: rsvg-convert -w 512 -h 512 assets/icon.svg -o <target>.png -->
+  <rect width="108" height="108" fill="#0D0F0E"/>
+  <path d="M54,20 C70,20 82,36 82,54 C82,72 70,88 54,88" stroke="#6FBF8B" stroke-width="6" fill="none" stroke-linecap="round"/>
+  <path d="M54,34 C64,34 70,44 70,54 C70,64 64,74 54,74" stroke="#6FBF8B" stroke-width="6" fill="none" stroke-linecap="round"/>
+  <path d="M45,54 a5,5 0 1,0 -10,0 a5,5 0 1,0 10,0" fill="#6FBF8B"/>
+</svg>

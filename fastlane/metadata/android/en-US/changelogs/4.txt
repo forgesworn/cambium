@@ -1,0 +1,6 @@
+Fix release from the completed 0.3.0 review.
+
+- Session creation is now atomic; a first-time burst against a newly paired identity can no longer leak duplicate workers.
+- The identity picker defaults to the app's existing binding and says when a different identity is selected, so a re-approval cannot silently rebind an app.
+- Activity log writes are serialised and never block the request path.
+- Removing the last pairing stops the keep-warm service immediately.

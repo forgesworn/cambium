@@ -1,0 +1,8 @@
+First signed release.
+
+- decrypt_zap_event: private zaps sent to your identity now decrypt (DIP-03, recipient path).
+- Keep connection warm: optional foreground service holds the signer session between requests.
+- Persistent denial with an "always deny this app" action and a connected-apps list.
+- The first-approval sheet shows the permissions a client asked for at login.
+- Decrypt results are cached, so re-reads answer instantly.
+- Approved apps' requests process genuinely invisibly.

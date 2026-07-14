@@ -55,8 +55,12 @@ request goes out to Heartwood and back.
 
 Grab the signed APK from [GitHub Releases](https://github.com/forgesworn/cambium/releases), or
 point [Obtainium](https://github.com/ImranR98/Obtainium) at this repository for automatic update
-tracking. Chrome is not needed; Cambium runs on any Android 8.1+ device, including GrapheneOS
-(no Google Play services, no Firebase, no analytics).
+tracking (one-tap add: `obtainium://add/https://github.com/forgesworn/cambium`). Chrome is not
+needed; Cambium runs on any Android 8.1+ device, including GrapheneOS (no Google Play services,
+no Firebase, no analytics).
+
+Zapstore and F-Droid listings are prepared and in flight; per-store status and details live in
+[docs/DISTRIBUTION.md](docs/DISTRIBUTION.md).
 
 Verify the APK signature with [AppVerifier](https://github.com/soupslurpr/AppVerifier) before
 installing:
@@ -104,6 +108,12 @@ asks Heartwood to decrypt it, the same as any other nip04_decrypt.
 sender-side path needs an ephemeral key derived as `sha256(your raw private key + note id +
 created_at)` -- that requires the raw private key itself, which a NIP-46 remote signer like
 Heartwood never exposes over the wire. Attempting it just fails as an ordinary decrypt error.
+
+## Support
+
+If Cambium is useful to you, support development via
+[GitHub Sponsors](https://github.com/sponsors/TheCryptoDonkey) or
+[Strike](https://strike.me/thedonkey).
 
 ## Licence
 
