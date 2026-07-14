@@ -3,6 +3,10 @@ package dev.forgesworn.cambium.nip55
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.long
 
 class EventJsonTest {
 
@@ -80,5 +84,32 @@ class EventJsonTest {
     @Test
     fun `malformed json has no signature`() {
         assertNull(extractEventSignatureHex("{truncated"))
+    }
+
+    // -- ensureCreatedAt --
+
+    @Test
+    fun `a missing created_at is defaulted, other fields untouched`() {
+        // Primal's login sign_event arrives exactly like this: no created_at at all.
+        val withDefault = ensureCreatedAt(
+            """{"pubkey":"c3d4","tags":[],"kind":30078,"content":"{}"}""",
+            nowEpochSeconds = 1720000123,
+        )
+        val obj = Json.parseToJsonElement(withDefault).jsonObject
+        assertEquals(1720000123, obj["created_at"]?.jsonPrimitive?.long)
+        assertEquals(30078, obj["kind"]?.jsonPrimitive?.long?.toInt())
+        assertEquals("c3d4", obj["pubkey"]?.jsonPrimitive?.content)
+    }
+
+    @Test
+    fun `a present created_at is never overwritten`() {
+        val untouched = ensureCreatedAt(signedEvent, nowEpochSeconds = 9999999999)
+        assertEquals(signedEvent, untouched)
+    }
+
+    @Test
+    fun `malformed json passes through unchanged for rust-nostr to reject`() {
+        assertEquals("not json at all", ensureCreatedAt("not json at all", nowEpochSeconds = 1))
+        assertEquals("""[{"kind":1}]""", ensureCreatedAt("""[{"kind":1}]""", nowEpochSeconds = 1))
     }
 }

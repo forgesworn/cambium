@@ -1,6 +1,7 @@
 package dev.forgesworn.cambium.signer
 
 import android.util.Log
+import dev.forgesworn.cambium.nip55.normaliseUnsignedEvent
 import dev.forgesworn.cambium.pairing.Pairing
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
@@ -54,8 +55,13 @@ private inline fun <T> heartwoodCatch(block: () -> T): HeartwoodResult<T> = try 
 } catch (e: TimeoutCancellationException) {
     HeartwoodResult.Failure(HeartwoodError.Timeout)
 } catch (e: NostrSdkException) {
+    // Logged because the NIP-55 surface deliberately answers callers without error detail
+    // (silent path: no UI at all) -- without this line a protocol failure is invisible
+    // everywhere, which is what made the Primal created_at interop bug expensive to find.
+    Log.w("HeartwoodSession", "rust-nostr call failed", e)
     HeartwoodResult.Failure(HeartwoodError.Protocol(e.message ?: "rust-nostr error"))
 } catch (e: IllegalArgumentException) {
+    Log.w("HeartwoodSession", "rust-nostr rejected input", e)
     HeartwoodResult.Failure(HeartwoodError.InvalidInput(e.message ?: "invalid input"))
 }
 
@@ -109,7 +115,12 @@ class RustNostrHeartwoodClient : HeartwoodClient {
     }
 
     override suspend fun signEvent(eventJson: String): HeartwoodResult<String> = withSession { client ->
-        val unsigned = UnsignedEvent.fromJson(eventJson)
+        // Missing created_at/tags are de-facto valid NIP-55 (Amber fills them; Primal omits
+        // both) but rust-nostr's parser rejects each, so they are defaulted before the FFI
+        // boundary -- see nip55/EventJson.kt's normaliseUnsignedEvent.
+        val unsigned = UnsignedEvent.fromJson(
+            normaliseUnsignedEvent(eventJson, nowEpochSeconds = System.currentTimeMillis() / 1000L),
+        )
         client.signEvent(unsigned).asJson()
     }
 
@@ -160,6 +171,17 @@ object ClientKeys {
 fun npubDisplay(pubkeyHex: String): String = runCatching {
     PublicKey.parse(pubkeyHex).toBech32()
 }.getOrElse { "${pubkeyHex.take(8)}…${pubkeyHex.takeLast(8)}" }
+
+/**
+ * Bech32 "npub" form of a hex pubkey for the NIP-55 wire. Amber answers `get_public_key`
+ * with an npub and clients depend on that exact shape -- Primal's login input (verified
+ * against its source and live behaviour, July 2026) treats a raw 64-hex result as a
+ * candidate *private* key and derives a phantom identity from it -- so the npub form is
+ * load-bearing, not cosmetic. Unlike [npubDisplay] there is no truncated fallback: a value
+ * that does not parse must fail loudly rather than go out on the wire; callers only pass
+ * keys already validated at pairing time.
+ */
+fun npubWire(pubkeyHex: String): String = PublicKey.parse(pubkeyHex).toBech32()
 
 /** [Pairing.label] if the user set one, else a truncated npub -- the one place display falls
  * back, so `MainActivity`'s pairing list and connected-apps rows agree on what a pairing is called. */

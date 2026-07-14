@@ -29,6 +29,7 @@ import dev.forgesworn.cambium.signer.HeartwoodError
 import dev.forgesworn.cambium.signer.HeartwoodResult
 import dev.forgesworn.cambium.signer.HeartwoodSession
 import dev.forgesworn.cambium.signer.displayLabel
+import dev.forgesworn.cambium.signer.npubWire
 import kotlinx.coroutines.launch
 
 private const val EXTRA_TYPE = "type"
@@ -333,8 +334,10 @@ class SignerActivity : AppCompatActivity() {
 
         if (request is Nip55Request.GetPublicKey) {
             // Answered from the pairing record: no relay round trip needed once paired.
+            // npub, not hex: Amber answers get_public_key with an npub and clients rely on
+            // that shape (see npubWire's doc for the Primal failure a hex answer causes).
             logActivity(request, pairing.displayLabel(), ActivityLogEntry.Outcome.SIGNED)
-            respondSuccess(request, pairing.signerPubkeyHex, isPublicKeyRequest = true)
+            respondSuccess(request, npubWire(pairing.signerPubkeyHex), isPublicKeyRequest = true)
             return
         }
 

@@ -14,7 +14,7 @@ what store metadata points at (F-Droid's `Donate:` field takes one URL).
 |---|---|---|
 | GitHub Releases | **Live** (v0.2.0 onward) | Ours (the 0.2.0 trust root) |
 | Obtainium | **Live** via GitHub Releases | Ours |
-| Zapstore | Config ready and dry-run verified; needs one signed publish | Ours |
+| Zapstore | **Live** (0.3.2, published 2026-07-14) | Ours |
 | F-Droid | **MR open: [fdroiddata!42875](https://gitlab.com/fdroid/fdroiddata/-/merge_requests/42875)** — awaiting review | F-Droid's own key |
 | IzzyOnDroid (optional extra) | Eligible; their tracker moved to Codeberg (account needed) | Ours |
 | Accrescent | **Blocked externally** — registration is allowlist-only | Ours |
@@ -38,13 +38,18 @@ Nothing to maintain — Obtainium tracks GitHub Releases directly. One-tap add l
 obtainium://add/https://github.com/forgesworn/cambium
 ```
 
-## Zapstore (one manual publish away)
+## Zapstore (live)
 
-`zapstore.yaml` at the repo root is the publishing config, verified end-to-end with an offline
-dry-run against the real v0.3.2 APK (`zsp` extracted the correct app ID, version, icon, and the
-same SHA-256 the release notes state). The CLI is `zsp` (`go install github.com/zapstore/zsp@latest`).
+**First published 2026-07-14 (v0.3.2), signed via a Heartwood `bunker://` connection** — the
+release events (kind 32267 app, 30063 release, 3063 file) are on `wss://relay.zapstore.dev`
+under `npub1mgvlrnf…` and the APK on Zapstore's CDN is byte-identical to the GitHub release
+(same SHA-256). App page:
 
-To publish (needs the Forgesworn Nostr key — this is the one human step):
+https://zapstore.dev/apps/naddr1qqtxgetk9enx7un8v4ehwmmjdchxxctdvf5h2mgprpmhxue69uhhyetvv9uju7npwpehgmmjv5hxgetkqgsd5x03e56tajjyhe6d5jesdkw3mkrtvdpua72vugkyn3h4nqtwt0grqsqqqlstem32ln
+
+`zapstore.yaml` at the repo root is the publishing config. The CLI is `zsp`
+(`go install github.com/zapstore/zsp@latest`). To publish each future release, after the GitHub
+release is up:
 
 ```bash
 SIGN_WITH=<nsec1... | bunker://...> zsp publish zapstore.yaml
