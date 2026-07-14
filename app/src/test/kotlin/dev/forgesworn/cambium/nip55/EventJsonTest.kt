@@ -86,12 +86,12 @@ class EventJsonTest {
         assertNull(extractEventSignatureHex("{truncated"))
     }
 
-    // -- ensureCreatedAt --
+    // -- normaliseUnsignedEvent --
 
     @Test
     fun `a missing created_at is defaulted, other fields untouched`() {
         // Primal's login sign_event arrives exactly like this: no created_at at all.
-        val withDefault = ensureCreatedAt(
+        val withDefault = normaliseUnsignedEvent(
             """{"pubkey":"c3d4","tags":[],"kind":30078,"content":"{}"}""",
             nowEpochSeconds = 1720000123,
         )
@@ -102,14 +102,37 @@ class EventJsonTest {
     }
 
     @Test
-    fun `a present created_at is never overwritten`() {
-        val untouched = ensureCreatedAt(signedEvent, nowEpochSeconds = 9999999999)
+    fun `missing tags are defaulted to an empty array`() {
+        // Primal's wallet-operation sign_event arrives like this: no tags field at all.
+        val withDefault = normaliseUnsignedEvent(
+            """{"pubkey":"c3d4","created_at":1720000000,"kind":10000300,"content":"{}"}""",
+            nowEpochSeconds = 1720000123,
+        )
+        val obj = Json.parseToJsonElement(withDefault).jsonObject
+        assertEquals("[]", obj["tags"]?.toString())
+        assertEquals(1720000000, obj["created_at"]?.jsonPrimitive?.long)
+    }
+
+    @Test
+    fun `an event missing both fields gains both`() {
+        val withDefaults = normaliseUnsignedEvent(
+            """{"pubkey":"c3d4","kind":1,"content":"hello"}""",
+            nowEpochSeconds = 42,
+        )
+        val obj = Json.parseToJsonElement(withDefaults).jsonObject
+        assertEquals(42, obj["created_at"]?.jsonPrimitive?.long)
+        assertEquals("[]", obj["tags"]?.toString())
+    }
+
+    @Test
+    fun `a complete event is never rewritten`() {
+        val untouched = normaliseUnsignedEvent(signedEvent, nowEpochSeconds = 9999999999)
         assertEquals(signedEvent, untouched)
     }
 
     @Test
     fun `malformed json passes through unchanged for rust-nostr to reject`() {
-        assertEquals("not json at all", ensureCreatedAt("not json at all", nowEpochSeconds = 1))
-        assertEquals("""[{"kind":1}]""", ensureCreatedAt("""[{"kind":1}]""", nowEpochSeconds = 1))
+        assertEquals("not json at all", normaliseUnsignedEvent("not json at all", nowEpochSeconds = 1))
+        assertEquals("""[{"kind":1}]""", normaliseUnsignedEvent("""[{"kind":1}]""", nowEpochSeconds = 1))
     }
 }
