@@ -16,3 +16,6 @@ local.properties
 *.keystore
 *.p12
 keystore.properties
+
+# Browser-session artefacts (Playwright MCP)
+.playwright-mcp/
