@@ -1,0 +1,8 @@
+[    1313ms] [LOG] %cWelcome to GitLab!%c
+
+Does this page need fixes or improvements? Open an issue or contribute a merge request to help make GitLab more lovable. At GitLab, everyone can contribute!
+
+🤝 Contribute to GitLab: https://about.gitlab.com/community/contribute/
+🔎 Create a new GitLab issue: https://gitlab.com/gitlab-org/gitlab/-/issues/new
+🚀 We like your curiosity! Help us improve GitLab by joining the team: https://about.gitlab.com/jobs/ padding-top: 0.5em; font-size: 2em; padding-bottom: 0.5em; @ https://gitlab.com/assets/webpack/sentry.31c7170b.chunk.js:0
+[    2322ms] [WARNING] Canvas2D: Multiple readback operations using getImageData are faster with the willReadFrequently attribute set to true. See: https://html.spec.whatwg.org/multipage/canvas.html#concept-canvas-will-read-frequently @ https://gitlab.com/assets/webpack/main.5d0d7314.chunk.js:26

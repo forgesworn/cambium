@@ -1,0 +1,177 @@
+- generic [ref=f33e1]:
+  - banner [ref=f33e2]:
+    - link "Skip to main content" [ref=f33e3] [cursor=pointer]:
+      - /url: "#content-body"
+    - link "Homepage" [ref=f33e6] [cursor=pointer]:
+      - /url: /
+    - button "Search or go to… /" [ref=f33e14] [cursor=pointer]:
+      - generic [ref=f33e15]:
+        - generic [ref=f33e18]: Search or go to…
+        - generic [ref=f33e19]: /
+    - generic [ref=f33e20]:
+      - button "Create new…" [ref=f33e22] [cursor=pointer]
+      - generic [ref=f33e27]:
+        - link "0 Assigned work items" [ref=f33e28] [cursor=pointer]:
+          - /url: /dashboard/issues?assignee_username=TheCryptoDonkey
+          - generic [ref=f33e31]: "0"
+        - link "0 Merge requests" [ref=f33e33] [cursor=pointer]:
+          - /url: /dashboard/merge_requests
+          - generic [ref=f33e36]: "0"
+        - link "0 To-do items" [ref=f33e37] [cursor=pointer]:
+          - /url: /dashboard/todos
+          - generic [ref=f33e40]: "0"
+      - link "The Crypto Donkey user’s menu" [ref=f33e44] [cursor=pointer]:
+        - /url: /TheCryptoDonkey
+  - generic [ref=f33e48]:
+    - navigation [ref=f33e50]:
+      - heading "Primary navigation" [level=2] [ref=f33e51]
+      - generic [ref=f33e52]:
+        - generic [ref=f33e53]: Project
+        - generic [ref=f33e55]:
+          - list [ref=f33e56]:
+            - listitem [ref=f33e57]:
+              - link "Data" [ref=f33e58] [cursor=pointer]:
+                - /url: /fdroid/fdroiddata
+                - img "avatar" [ref=f33e61]
+          - generic [ref=f33e64]:
+            - button "Pinned" [expanded] [ref=f33e65] [cursor=pointer]
+            - list [ref=f33e74]:
+              - listitem [ref=f33e75]:
+                - link "Work items" [ref=f33e76] [cursor=pointer]:
+                  - /url: /fdroid/fdroiddata/-/work_items
+                  - generic [ref=f33e83]: "33"
+                - button "Unpin Work items"
+              - listitem [ref=f33e85]:
+                - link "Merge requests" [ref=f33e86] [cursor=pointer]:
+                  - /url: /fdroid/fdroiddata/-/merge_requests
+                  - generic [ref=f33e93]: "459"
+                - button "Unpin Merge requests"
+          - separator [ref=f33e95]
+          - list "Project" [ref=f33e96]:
+            - listitem [ref=f33e97]:
+              - button "Manage" [ref=f33e98] [cursor=pointer]
+            - listitem [ref=f33e106]:
+              - button "Plan" [ref=f33e107] [cursor=pointer]
+            - listitem [ref=f33e115]:
+              - button "Code" [ref=f33e116] [cursor=pointer]
+            - listitem [ref=f33e124]:
+              - button "Build" [ref=f33e125] [cursor=pointer]
+            - listitem [ref=f33e133]:
+              - button "Deploy" [ref=f33e134] [cursor=pointer]
+            - listitem [ref=f33e142]:
+              - button "Analyze" [ref=f33e143] [cursor=pointer]
+        - generic [ref=f33e151]:
+          - link "Upgrade subscription" [ref=f33e152] [cursor=pointer]:
+            - /url: /groups/forgesworn/-/billings
+          - button "Help" [ref=f33e159] [cursor=pointer]
+        - button "Collapse sidebar" [ref=f33e165] [cursor=pointer]
+    - generic [ref=f33e172]:
+      - navigation "Breadcrumb" [ref=f33e176]:
+        - list [ref=f33e177]:
+          - listitem [ref=f33e178]:
+            - link "F-Droid" [ref=f33e179] [cursor=pointer]:
+              - /url: /fdroid
+            - text: /
+          - listitem [ref=f33e181]:
+            - link "Data" [ref=f33e182] [cursor=pointer]:
+              - /url: /fdroid/fdroiddata
+            - text: /
+          - listitem [ref=f33e184]:
+            - link "Fork project" [ref=f33e185] [cursor=pointer]:
+              - /url: /fdroid/fdroiddata/-/forks/new
+      - main [ref=f33e189]:
+        - generic [ref=f33e190]:
+          - generic [ref=f33e191]:
+            - heading "Fork project" [level=4] [ref=f33e193]
+            - paragraph [ref=f33e194]: A fork is a copy of a project. Forking a repository allows you to make changes without affecting the original project.
+          - generic [ref=f33e196]:
+            - group [ref=f33e197]:
+              - generic [ref=f33e198]: Project name
+              - generic [ref=f33e199]:
+                - textbox "Project name" [ref=f33e200]: Data
+                - generic [ref=f33e201]: Start with a letter, digit, emoji, or underscore.
+            - generic [ref=f33e202]:
+              - group [ref=f33e204]:
+                - generic [ref=f33e205]: Project URL
+                - group [ref=f33e207]:
+                  - generic "https://gitlab.com/" [ref=f33e208]
+                  - button "Project URL TheCryptoDonkey" [active] [ref=f33e352] [cursor=pointer]:
+                    - generic [ref=f33e212]: TheCryptoDonkey
+              - group [ref=f33e217]:
+                - generic [ref=f33e218]: Project slug
+                - textbox "Project slug" [ref=f33e220]: fdroiddata
+            - paragraph [ref=f33e221]:
+              - text: Want to organize several dependent projects under the same namespace?
+              - link "Create a group" [ref=f33e222] [cursor=pointer]:
+                - /url: /groups/new
+            - group [ref=f33e223]:
+              - generic [ref=f33e224]: Project description (optional)
+              - textbox "Project description (optional)" [ref=f33e226]: Data for the main F-Droid repository at https://f-droid.org
+            - group [ref=f33e227]:
+              - generic [ref=f33e228]:
+                - generic [ref=f33e229]: Branches to include
+                - radiogroup "branches" [ref=f33e230]:
+                  - generic [ref=f33e231]:
+                    - radio "All branches" [checked] [ref=f33e232]
+                    - generic [ref=f33e233] [cursor=pointer]: All branches
+                  - generic [ref=f33e235]:
+                    - radio "Only the default branch master" [ref=f33e236]
+                    - generic [ref=f33e238] [cursor=pointer]:
+                      - text: Only the default branch
+                      - code [ref=f33e239]: master
+            - group [ref=f33e240]:
+              - generic [ref=f33e241]:
+                - generic [ref=f33e242]:
+                  - text: Visibility level
+                  - link [ref=f33e243] [cursor=pointer]:
+                    - /url: /help/user/public_access.md
+                - radiogroup "visibility" [ref=f33e246]:
+                  - generic [ref=f33e247]:
+                    - radio "Private Project access must be granted explicitly to each user. If this project is part of a group, access will be granted to members of the group." [ref=f33e248]
+                    - generic [ref=f33e249] [cursor=pointer]:
+                      - generic [ref=f33e250]: Private
+                      - paragraph [ref=f33e253]: Project access must be granted explicitly to each user. If this project is part of a group, access will be granted to members of the group.
+                  - generic [ref=f33e254]:
+                    - radio "Internal The project can be accessed by any logged in user." [disabled] [ref=f33e255]
+                    - generic [ref=f33e256]:
+                      - generic [ref=f33e257]: Internal
+                      - paragraph [ref=f33e260]: The project can be accessed by any logged in user.
+                  - generic [ref=f33e261]:
+                    - radio "Public The project can be accessed without any authentication." [checked] [ref=f33e262]
+                    - generic [ref=f33e263] [cursor=pointer]:
+                      - generic [ref=f33e264]: Public
+                      - paragraph [ref=f33e267]: The project can be accessed without any authentication.
+            - generic [ref=f33e268]:
+              - button "Fork project" [ref=f33e269] [cursor=pointer]
+              - link "Cancel" [ref=f33e271] [cursor=pointer]:
+                - /url: /fdroid/fdroiddata
+    - generic [ref=f33e274]:
+      - separator "Resize AI panel" [ref=f33e275]
+      - complementary "GitLab Duo Agent Platform" [ref=f33e276]:
+        - generic [ref=f33e278]:
+          - heading "GitLab Duo Agent Platform" [level=3] [ref=f33e282]
+          - generic [ref=f33e284]:
+            - button "Maximize panel" [ref=f33e285] [cursor=pointer]
+            - button "Close panel" [ref=f33e288] [cursor=pointer]
+        - complementary [ref=f33e292]:
+          - generic [ref=f33e293]:
+            - generic [ref=f33e296]:
+              - generic [ref=f33e297]: G
+              - heading "GitLab Duo Agentic Chat" [level=3] [ref=f33e299]
+            - generic [ref=f33e302]:
+              - img "GitLab Duo AI assistant" [ref=f33e303]
+              - heading "GitLab Duo Agent Platform is turned off" [level=2] [ref=f33e304]
+              - paragraph [ref=f33e306]:
+                - text: GitLab Duo is disabled for this project.
+                - link "Learn more" [ref=f33e307] [cursor=pointer]:
+                  - /url: /help/user/duo_agent_platform/_index
+                - text: .
+              - generic [ref=f33e308]:
+                - generic [ref=f33e309]: Get GitLab Duo turned on
+                - paragraph [ref=f33e313]: An Owner, Maintainer, or administrator can turn on GitLab Duo for this project.
+          - generic [ref=f33e318]:
+            - textbox "Chat prompt input" [disabled] [ref=f33e322]:
+              - /placeholder: Let's work through this together...
+            - button "Send chat message." [disabled] [ref=f33e325]
+      - navigation "Duo controls" [ref=f33e328]:
+        - button "GitLab Duo Agent Platform" [ref=f33e330] [cursor=pointer]

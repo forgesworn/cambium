@@ -1,0 +1,134 @@
+- generic [ref=f56e1]:
+  - banner [active] [ref=f56e2]:
+    - link "Skip to main content" [ref=f56e3] [cursor=pointer]:
+      - /url: "#content-body"
+    - link "Homepage" [ref=f56e6] [cursor=pointer]:
+      - /url: /
+    - button "Search or go to… /" [ref=f56e14] [cursor=pointer]:
+      - generic [ref=f56e15]:
+        - generic [ref=f56e18]: Search or go to…
+        - generic [ref=f56e19]: /
+    - generic [ref=f56e20]:
+      - button "Create new…" [ref=f56e22] [cursor=pointer]
+      - generic [ref=f56e27]:
+        - link "0 Assigned work items" [ref=f56e28] [cursor=pointer]:
+          - /url: /dashboard/issues?assignee_username=TheCryptoDonkey
+          - generic [ref=f56e31]: "0"
+        - link "0 Merge requests" [ref=f56e33] [cursor=pointer]:
+          - /url: /dashboard/merge_requests
+          - generic [ref=f56e36]: "0"
+        - link "0 To-do items" [ref=f56e37] [cursor=pointer]:
+          - /url: /dashboard/todos
+          - generic [ref=f56e40]: "0"
+      - link "The Crypto Donkey user’s menu" [ref=f56e44] [cursor=pointer]:
+        - /url: /TheCryptoDonkey
+  - generic [ref=f56e48]:
+    - navigation [ref=f56e50]:
+      - heading "Primary navigation" [level=2] [ref=f56e51]
+      - generic [ref=f56e52]:
+        - generic [ref=f56e53]: Project
+        - generic [ref=f56e55]:
+          - list [ref=f56e56]:
+            - listitem [ref=f56e57]:
+              - link "Data" [ref=f56e58] [cursor=pointer]:
+                - /url: /TheCryptoDonkey/fdroiddata
+                - img "avatar" [ref=f56e61]
+          - generic [ref=f56e64]:
+            - button "Pinned" [expanded] [ref=f56e65] [cursor=pointer]
+            - list [ref=f56e74]:
+              - listitem [ref=f56e75]:
+                - link "Work items" [ref=f56e76] [cursor=pointer]:
+                  - /url: /TheCryptoDonkey/fdroiddata/-/work_items
+                  - generic [ref=f56e83]: "0"
+                - button "Unpin Work items"
+          - separator [ref=f56e85]
+          - list "Project" [ref=f56e86]:
+            - listitem [ref=f56e87]:
+              - button "Manage" [ref=f56e88] [cursor=pointer]
+            - listitem [ref=f56e96]:
+              - button "Plan" [ref=f56e97] [cursor=pointer]
+            - listitem [ref=f56e105]:
+              - button "AI" [ref=f56e106] [cursor=pointer]
+            - listitem [ref=f56e114]:
+              - button "Build" [ref=f56e115] [cursor=pointer]
+            - listitem [ref=f56e123]:
+              - button "Deploy" [ref=f56e124] [cursor=pointer]
+            - listitem [ref=f56e132]:
+              - button "Operate" [ref=f56e133] [cursor=pointer]
+            - listitem [ref=f56e141]:
+              - button "Monitor" [ref=f56e142] [cursor=pointer]
+            - listitem [ref=f56e150]:
+              - button "Analyze" [ref=f56e151] [cursor=pointer]
+            - listitem [ref=f56e159]:
+              - button "Settings" [ref=f56e160] [cursor=pointer]
+        - generic [ref=f56e168]:
+          - link "Upgrade subscription" [ref=f56e169] [cursor=pointer]:
+            - /url: /groups/forgesworn/-/billings
+          - button "Help" [ref=f56e176] [cursor=pointer]
+        - button "Collapse sidebar" [ref=f56e182] [cursor=pointer]
+    - generic [ref=f56e189]:
+      - navigation "Breadcrumb" [ref=f56e193]:
+        - list [ref=f56e194]:
+          - listitem [ref=f56e195]:
+            - link "The Crypto Donkey" [ref=f56e196] [cursor=pointer]:
+              - /url: /TheCryptoDonkey
+            - text: /
+          - listitem [ref=f56e197]:
+            - link "Data" [ref=f56e198] [cursor=pointer]:
+              - /url: /TheCryptoDonkey/fdroiddata
+            - text: /
+          - listitem [ref=f56e200]:
+            - link "Forking in progress" [ref=f56e201] [cursor=pointer]:
+              - /url: /TheCryptoDonkey/fdroiddata/-/import
+      - main [ref=f56e205]:
+        - generic [ref=f56e207]:
+          - heading "Forking in progress" [level=2] [ref=f56e208]:
+            - status [ref=f56e209]:
+              - generic [ref=f56e211]: Loading
+          - paragraph [ref=f56e213]: Please wait and do not make any changes to the repository until import is complete. You can refresh this page at any time.
+    - generic [ref=f56e215]:
+      - separator "Resize AI panel" [ref=f56e216]
+      - complementary "GitLab Duo Agent Platform" [ref=f56e217]:
+        - generic [ref=f56e219]:
+          - heading "GitLab Duo Agent Platform" [level=3] [ref=f56e223]
+          - generic [ref=f56e225]:
+            - button "Maximize panel" [ref=f56e226] [cursor=pointer]
+            - button "Close panel" [ref=f56e229] [cursor=pointer]
+        - complementary [ref=f56e233]:
+          - generic [ref=f56e234]:
+            - generic [ref=f56e237]:
+              - generic [ref=f56e238]: G
+              - heading "GitLab Duo Agentic Chat" [level=3] [ref=f56e240]
+            - generic [ref=f56e243]:
+              - img "GitLab Duo AI assistant" [ref=f56e244]
+              - heading "Try GitLab Duo Agent Platform" [level=2] [ref=f56e245]
+              - paragraph [ref=f56e246]:
+                - text: Start your free
+                - strong [ref=f56e247]: 30-day trial
+                - text: now to accelerate your software delivery. Automate tasks with AI agents, from searching projects to creating commits.
+              - generic [ref=f56e248]:
+                - link "Start a Free Trial" [ref=f56e249] [cursor=pointer]:
+                  - /url: /-/trials/new?glm_content=chat+panel&glm_source=gitlab.com
+                - link "Learn more" [ref=f56e251] [cursor=pointer]:
+                  - /url: /help/user/duo_agent_platform/_index.md
+              - generic [ref=f56e253]:
+                - generic [ref=f56e254]: Complete multi-step tasks with flows
+                - generic [ref=f56e256]:
+                  - generic [ref=f56e261]:
+                    - generic [ref=f56e262]: Review a merge request
+                    - generic [ref=f56e263]: Identify code improvements
+                  - generic [ref=f56e268]:
+                    - generic [ref=f56e269]: Fix a failing pipeline
+                    - generic [ref=f56e270]: Analyze pipeline failures and get fix suggestions
+              - heading "Chat with a specialized agent" [level=3] [ref=f56e271]
+              - paragraph [ref=f56e272]: "With a trial you can chat with AI agents tailored to your development workflow, such as the following agents:"
+              - generic [ref=f56e273]:
+                - generic [ref=f56e274]: Security Agent
+                - generic [ref=f56e278]: Planning Agent
+                - generic [ref=f56e282]: Data Analyst
+          - generic [ref=f56e290]:
+            - textbox "Chat prompt input" [disabled] [ref=f56e294]:
+              - /placeholder: Let's work through this together...
+            - button "Send chat message." [disabled] [ref=f56e297]
+      - navigation "Duo controls" [ref=f56e300]:
+        - button "GitLab Duo Agent Platform" [ref=f56e302] [cursor=pointer]

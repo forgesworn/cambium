@@ -1,0 +1,8 @@
+[     986ms] [LOG] %cWelcome to GitLab!%c
+
+Does this page need fixes or improvements? Open an issue or contribute a merge request to help make GitLab more lovable. At GitLab, everyone can contribute!
+
+🤝 Contribute to GitLab: https://about.gitlab.com/community/contribute/
+🔎 Create a new GitLab issue: https://gitlab.com/gitlab-org/gitlab/-/issues/new
+🚀 We like your curiosity! Help us improve GitLab by joining the team: https://about.gitlab.com/jobs/ padding-top: 0.5em; font-size: 2em; padding-bottom: 0.5em; @ https://gitlab.com/assets/webpack/sentry.31c7170b.chunk.js:0
+[   99561ms] [ERROR] Failed to load resource: the server responded with a status of 403 () @ https://gitlab.com/api/v4/projects/IzzyOnDroid%2Frepo/issues:0

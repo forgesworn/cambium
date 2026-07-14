@@ -15,8 +15,8 @@ what store metadata points at (F-Droid's `Donate:` field takes one URL).
 | GitHub Releases | **Live** (v0.2.0 onward) | Ours (the 0.2.0 trust root) |
 | Obtainium | **Live** via GitHub Releases | Ours |
 | Zapstore | Config ready and dry-run verified; needs one signed publish | Ours |
-| F-Droid | Fastlane metadata in repo; needs an fdroiddata merge request | F-Droid's own key |
-| IzzyOnDroid (optional extra) | Eligible; needs one submission issue | Ours |
+| F-Droid | **MR open: [fdroiddata!42875](https://gitlab.com/fdroid/fdroiddata/-/merge_requests/42875)** — awaiting review | F-Droid's own key |
+| IzzyOnDroid (optional extra) | Eligible; their tracker moved to Codeberg (account needed) | Ours |
 | Accrescent | **Blocked externally** — registration is allowlist-only | Ours |
 
 ## GitHub Releases (live)
@@ -74,15 +74,14 @@ Everything F-Droid reads from the app repo is now in place: `fastlane/metadata/a
 `org.rust-nostr:nostr-sdk`, whose prebuilt native AAR has direct precedent: Amber is in official
 F-Droid with comparable prebuilt native dependencies from Maven Central.
 
-The submission itself lives in F-Droid's repo, not ours:
-
-1. Fork https://gitlab.com/fdroid/fdroiddata (GitLab account needed).
-2. Add `metadata/dev.forgesworn.cambium.yml` — the ready draft is
-   `docs/fdroid/dev.forgesworn.cambium.yml` in this repo.
-3. Optionally sanity-check locally: `fdroid readmeta` and `fdroid checkupdates dev.forgesworn.cambium`
-   from an fdroidserver checkout.
-4. Open a merge request titled "New app: Cambium". Review typically takes days to a few weeks;
-   reviewers may adjust the build recipe (e.g. a JDK 21 install block, as Amber's entry carries).
+The submission is **done** (2026-07-14): the merge request is
+[fdroiddata!42875](https://gitlab.com/fdroid/fdroiddata/-/merge_requests/42875), filed from the
+fork `TheCryptoDonkey/fdroiddata` (branch `cambium`) under the GitLab account `TheCryptoDonkey`
+(created that day via GitHub OAuth). `fdroid lint dev.forgesworn.cambium` passes locally
+(fdroidserver 2.4.5); the fork's own pipeline cannot run until the new GitLab account is
+verified for shared runners, which reviewers were told on the MR. Review typically takes days
+to a few weeks; reviewers may adjust the build recipe (e.g. a JDK 21 install block, as Amber's
+entry carries). Future releases need no new MR — `AutoUpdateMode: Version` tracks our tags.
 
 Two caveats to state in the MR and be aware of:
 
@@ -98,9 +97,11 @@ Two caveats to state in the MR and be aware of:
 
 Not an Amber channel, but popular with the GrapheneOS crowd and served through F-Droid clients.
 It indexes our own signed release APKs straight from GitHub Releases (no rebuild, no re-signing,
-usually indexed within days). The 19.6 MB APK is within their per-app size budget. To submit:
-open an "App inclusion" issue at https://gitlab.com/IzzyOnDroid/repo/-/issues naming the GitHub
-repo. Nothing in-repo is missing.
+usually indexed within days). The 19.6 MB APK is within their per-app size budget. Their old
+GitLab tracker is now read-only — submissions moved to
+https://codeberg.org/IzzyOnDroid/repodata (open an issue with the app-inclusion template; a
+Codeberg account is needed). Ready-to-paste text is in `docs/fdroid/merge-request.md`. Nothing
+in-repo is missing.
 
 ## Accrescent (externally blocked, prerequisites met)
 

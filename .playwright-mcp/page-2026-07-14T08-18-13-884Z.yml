@@ -1,0 +1,38 @@
+- generic [ref=f27e3]:
+  - generic [ref=f27e6]:
+    - heading "Welcome to GitLab" [level=2] [ref=f27e7]
+    - paragraph [ref=f27e8]: Set up your GitLab environment and answer a few questions to personalize your experience.
+    - generic [ref=f27e10]:
+      - generic [ref=f27e11]:
+        - group [ref=f27e12]:
+          - generic [ref=f27e13]: Company name
+          - textbox "Company name" [ref=f27e15]: Forgesworn
+        - group [ref=f27e17]:
+          - generic [ref=f27e18]:
+            - text: Group name
+            - generic [ref=f27e19]: A group is your workspace for managing members and settings
+          - textbox "Group name A group is your workspace for managing members and settings" [ref=f27e21]: forgesworn
+        - group [ref=f27e23]:
+          - generic [ref=f27e24]:
+            - text: Project name
+            - generic [ref=f27e25]: A project is a Git repository plus extra features for collaboration
+          - textbox "Project name A project is a Git repository plus extra features for collaboration" [ref=f27e27]: scratch
+        - separator [ref=f27e29]
+        - group [ref=f27e30]:
+          - generic [ref=f27e31]: Role
+          - combobox "Role Software Developer" [ref=f27e148] [cursor=pointer]:
+            - generic [ref=f27e36]: Software Developer
+        - group [ref=f27e41]:
+          - generic [ref=f27e42]: Who will be using GitLab?
+          - combobox "Who will be using GitLab? Just me" [ref=f27e93] [cursor=pointer]:
+            - generic [ref=f27e47]: Just me
+        - group [ref=f27e52]:
+          - generic [ref=f27e53]: What's your reason for joining GitLab?
+          - combobox "What's your reason for joining GitLab? A different reason" [ref=f27e116] [cursor=pointer]:
+            - generic [ref=f27e58]: A different reason
+        - group [ref=f27e63]:
+          - generic [ref=f27e64]: Country or region
+          - button "Country or region United Kingdom of Great Britain and Northern Ireland" [active] [ref=f27e879] [cursor=pointer]:
+            - generic [ref=f27e69]: United Kingdom of Great Britain and Northern Ireland
+      - button "Continue" [ref=f27e74] [cursor=pointer]
+  - heading "Let's get set up" [level=2] [ref=f27e82]

@@ -1,0 +1,55 @@
+- generic [ref=f27e3]:
+  - generic [ref=f27e6]:
+    - heading "Welcome to GitLab" [level=2] [ref=f27e7]
+    - paragraph [ref=f27e8]: Set up your GitLab environment and answer a few questions to personalize your experience.
+    - generic [ref=f27e10]:
+      - generic [ref=f27e11]:
+        - group [ref=f27e12]:
+          - generic [ref=f27e13]: Company name
+          - textbox "Company name" [ref=f27e15]: Forgesworn
+        - group [ref=f27e17]:
+          - generic [ref=f27e18]:
+            - text: Group name
+            - generic [ref=f27e19]: A group is your workspace for managing members and settings
+          - textbox "Group name A group is your workspace for managing members and settings" [ref=f27e21]: forgesworn
+        - group [ref=f27e23]:
+          - generic [ref=f27e24]:
+            - text: Project name
+            - generic [ref=f27e25]: A project is a Git repository plus extra features for collaboration
+          - textbox "Project name A project is a Git repository plus extra features for collaboration" [ref=f27e27]: scratch
+        - separator [ref=f27e29]
+        - group [ref=f27e30]:
+          - generic [ref=f27e31]: Role
+          - generic [ref=f27e32]:
+            - generic [ref=f27e34]:
+              - combobox "Role Select a role" [expanded] [ref=f27e35] [cursor=pointer]:
+                - generic [ref=f27e36]: Select a role
+              - listbox "Select a role" [ref=f27e120]:
+                - listitem
+                - option "Software Developer" [active] [ref=f27e121] [cursor=pointer]
+                - option "Development Team Lead" [ref=f27e124] [cursor=pointer]
+                - option "DevOps Engineer" [ref=f27e127] [cursor=pointer]
+                - option "Systems Administrator" [ref=f27e130] [cursor=pointer]
+                - option "Security Analyst" [ref=f27e133] [cursor=pointer]
+                - option "Data Analyst" [ref=f27e136] [cursor=pointer]
+                - option "Product Manager" [ref=f27e139] [cursor=pointer]
+                - option "Product Designer" [ref=f27e142] [cursor=pointer]
+                - option "Other" [ref=f27e145] [cursor=pointer]
+                - listitem
+            - generic [ref=f27e40]: Role is required.
+        - group [ref=f27e41]:
+          - generic [ref=f27e42]: Who will be using GitLab?
+          - combobox "Who will be using GitLab? Just me" [ref=f27e93] [cursor=pointer]:
+            - generic [ref=f27e47]: Just me
+        - group [ref=f27e52]:
+          - generic [ref=f27e53]: What's your reason for joining GitLab?
+          - combobox "What's your reason for joining GitLab? A different reason" [ref=f27e116] [cursor=pointer]:
+            - generic [ref=f27e58]: A different reason
+        - group [ref=f27e63]:
+          - generic [ref=f27e64]: Country or region
+          - generic [ref=f27e65]:
+            - button "Country or region Select a country or region" [ref=f27e68] [cursor=pointer]:
+              - generic [ref=f27e69]: Select a country or region
+            - generic [ref=f27e73]: Country or region is required.
+      - button "Continue" [ref=f27e74] [cursor=pointer]
+  - heading "Let's get set up" [level=2] [ref=f27e82]
