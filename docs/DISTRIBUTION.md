@@ -6,9 +6,9 @@ GrapheneOS project recommends (Accrescent; Obtainium again). GrapheneOS's own Ap
 first-party GrapheneOS apps only, so it is not a target.
 
 Licence: MIT (`LICENSE`, detected by GitHub). Donations: GitHub Sponsors
-(`https://github.com/sponsors/TheCryptoDonkey`) and Strike (`https://strike.me/thedonkey`), both
-declared in `.github/FUNDING.yml`; the Sponsors URL is what store metadata points at (F-Droid's
-`Donate:` field takes one URL).
+(`https://github.com/sponsors/TheCryptoDonkey`), Geyser (`https://geyser.fund/project/forgesworn`)
+and Ko-fi (`https://ko-fi.com/brays`), all declared in `.github/FUNDING.yml`; the Sponsors URL is
+what store metadata points at (F-Droid's `Donate:` field takes one URL).
 
 | Channel | Status | Signature users get |
 |---|---|---|

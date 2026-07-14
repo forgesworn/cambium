@@ -112,8 +112,8 @@ Heartwood never exposes over the wire. Attempting it just fails as an ordinary d
 ## Support
 
 If Cambium is useful to you, support development via
-[GitHub Sponsors](https://github.com/sponsors/TheCryptoDonkey) or
-[Strike](https://strike.me/thedonkey).
+[GitHub Sponsors](https://github.com/sponsors/TheCryptoDonkey),
+[Geyser](https://geyser.fund/project/forgesworn) or [Ko-fi](https://ko-fi.com/brays).
 
 ## Licence
 
