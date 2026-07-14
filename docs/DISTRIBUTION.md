@@ -53,7 +53,12 @@ SIGN_WITH=<nsec1... | bunker://...> zsp publish zapstore.yaml
 `SIGN_WITH` also accepts a `bunker://` URI, so the release events can be signed by Heartwood
 itself rather than a raw nsec on this machine — fitting, and worth doing. Publishing signs three
 Nostr events (kind 32267 app metadata, 30063 release, 3063 file metadata) under that npub and
-uploads the APK to Zapstore's Blossom CDN. Zaps on Zapstore flow to the publishing npub.
+uploads the APK to Zapstore's Blossom CDN.
+
+Publisher identity: `npub1mgvlrnf5hm9yf0n5mf9nqmvarhvxkc6remu5ec3vf8r0txqkuk7su0e7q2`
+(NIP-05 `darren@600.wtf`, verified to resolve to this key). Zaps on Zapstore flow to the
+publishing npub's profile Lightning address — before the first publish, check the kind-0
+profile carries `lud16: profusemeat89@walletofsatoshi.com` so zaps actually route.
 
 Afterwards, consider `zsp identity --link-key` (NIP-C1) to link the APK signing certificate to
 the npub, which upgrades Cambium's verification status in the Zapstore client.
