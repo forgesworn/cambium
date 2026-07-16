@@ -56,8 +56,8 @@ request goes out to Heartwood and back.
 Grab the signed APK from [GitHub Releases](https://github.com/forgesworn/cambium/releases), or
 point [Obtainium](https://github.com/ImranR98/Obtainium) at this repository for automatic update
 tracking (one-tap add: `obtainium://add/https://github.com/forgesworn/cambium`). Chrome is not
-needed; Cambium runs on any Android 8.1+ device, including GrapheneOS (no Google Play services,
-no Firebase, no analytics).
+needed; Cambium runs on any 64-bit Android 8.1+ device, including GrapheneOS (no Google Play
+services, no Firebase, no analytics).
 
 Also on [Zapstore](https://zapstore.dev/apps/naddr1qqtxgetk9enx7un8v4ehwmmjdchxxctdvf5h2mgprpmhxue69uhhyetvv9uju7npwpehgmmjv5hxgetkqgsd5x03e56tajjyhe6d5jesdkw3mkrtvdpua72vugkyn3h4nqtwt0grqsqqqlstem32ln),
 signed with the same key as the GitHub releases. An F-Droid listing is under review
