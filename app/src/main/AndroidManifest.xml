@@ -66,6 +66,7 @@
 
         <activity
             android:name=".log.ActivityLogActivity"
+            android:excludeFromRecents="true"
             android:exported="false"
             android:theme="@style/Theme.Cambium" />
 

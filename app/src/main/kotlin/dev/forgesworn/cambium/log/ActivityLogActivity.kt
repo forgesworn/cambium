@@ -5,6 +5,8 @@ import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.isVisible
 import dev.forgesworn.cambium.R
+import dev.forgesworn.cambium.applock.AppLockPrompt
+import dev.forgesworn.cambium.applock.AppLockStore
 import dev.forgesworn.cambium.databinding.ActivityLogBinding
 import dev.forgesworn.cambium.databinding.ItemActivityLogEntryBinding
 import dev.forgesworn.cambium.displayNameFor
@@ -19,28 +21,69 @@ import java.time.format.DateTimeFormatter
  * occasionally-opened diagnostic screen, not a live feed, so the simplicity of a manual
  * `LinearLayout` outweighs `RecyclerView`'s added adapter/view-holder machinery for now, the same
  * trade-off `MainActivity`'s connected-apps list already makes at a smaller scale.
+ *
+ * Gated behind the same app lock as `MainActivity` (see [AppLockPrompt.requiresAuthenticationNow]),
+ * checked in [onResume] with a locked-state screen replacing the content exactly as there: the
+ * log is metadata only, but "which apps used which identity, when" is still exactly what the lock
+ * exists to keep from a casual phone-holder, and a gate that covers every screen but this one
+ * would be a false promise. The manifest keeps this activity out of recents for the same reason.
  */
 class ActivityLogActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityLogBinding
     private lateinit var store: ActivityLogStore
+    private lateinit var appLockStore: AppLockStore
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityLogBinding.inflate(layoutInflater)
         setContentView(binding.root)
         store = ActivityLogStore.getInstance(this)
+        appLockStore = AppLockStore(this)
 
         binding.logToggle.isChecked = store.isEnabled()
         binding.logToggle.setOnCheckedChangeListener { _, checked -> store.setEnabled(checked) }
         binding.clearButton.setOnClickListener { onClearClicked() }
+        binding.unlockButton.setOnClickListener { promptUnlock() }
 
-        render()
+        // As in MainActivity, the lock check lives in onResume (which always runs right after
+        // onCreate, before anything is drawn) -- render() is deliberately not called here, so a
+        // locked phone never even reads the log into memory.
     }
 
     override fun onResume() {
         super.onResume()
-        render()
+        if (AppLockPrompt.requiresAuthenticationNow(this, appLockStore)) {
+            showLocked()
+        } else {
+            binding.lockedSection.isVisible = false
+            binding.contentSection.isVisible = true
+            render()
+        }
+    }
+
+    /** Mirrors `MainActivity.showLocked`: the prompt is triggered immediately; `unlockButton` is
+     * the manual retry if it gets dismissed or fails. */
+    private fun showLocked() {
+        binding.contentSection.isVisible = false
+        binding.lockedSection.isVisible = true
+        promptUnlock()
+    }
+
+    private fun promptUnlock() {
+        AppLockPrompt.authenticate(
+            activity = this,
+            title = getString(R.string.app_lock_prompt_title),
+            onSuccess = {
+                appLockStore.recordAuthenticated()
+                binding.lockedSection.isVisible = false
+                binding.contentSection.isVisible = true
+                render()
+            },
+            onFailure = {
+                // Stay locked; unlockButton lets the user retry without leaving the activity.
+            },
+        )
     }
 
     private fun render() {
