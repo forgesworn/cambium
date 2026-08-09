@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.3 (2026-08-09)
+
+Security fixes from a full review.
+
+- A `current_user` naming one of your other paired identities no longer forwards silently: an
+  approval only ever covers the identity it was granted for, so a cross-identity request now
+  asks (with the rebind warning) instead of signing as an identity the approval never covered.
+- The activity log screen is now behind the app lock like everything else, and no longer
+  appears in recents.
+
 ## 0.3.2 (2026-07-10)
 
 Polish on the 0.3.1 fixes.
