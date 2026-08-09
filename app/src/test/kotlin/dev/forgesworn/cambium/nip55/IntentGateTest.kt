@@ -73,9 +73,25 @@ class IntentGateTest {
     }
 
     @Test
-    fun `an explicit current_user match wins over the binding`() {
+    fun `an explicit current_user naming the caller's own bound identity still forwards silently`() {
+        val plan = IntentGate.plan(approvedForA, listOf(pairingA, pairingB), request(currentUser = pubkeyHexA), canAsk = true)
+        assertEquals(pubkeyHexA, assertIs<IntentGate.Plan.Forward>(plan).pairing.signerPubkeyHex)
+    }
+
+    @Test
+    fun `an explicit current_user naming a different paired identity asks, never forwards silently`() {
+        // The approval was granted for identity A only; honouring B without asking would let any
+        // approved app reach every paired identity. The sheet's picker defaults to the requested
+        // identity, so Approve there rebinds deliberately, with the rebind hint visible.
         val plan = IntentGate.plan(approvedForA, listOf(pairingA, pairingB), request(currentUser = pubkeyHexB), canAsk = true)
-        assertEquals(pubkeyHexB, assertIs<IntentGate.Plan.Forward>(plan).pairing.signerPubkeyHex)
+        assertIs<IntentGate.Plan.AskUser>(plan)
+        assertFalse(IntentGate.silentFor(approvedForA, plan))
+    }
+
+    @Test
+    fun `the same cross-identity current_user on a window that cannot ask is rejected instead`() {
+        val plan = IntentGate.plan(approvedForA, listOf(pairingA, pairingB), request(currentUser = pubkeyHexB), canAsk = false)
+        assertEquals(IntentGate.RejectReason.UNRESOLVED_IDENTITY, assertIs<IntentGate.Plan.Reject>(plan).reason)
     }
 
     @Test

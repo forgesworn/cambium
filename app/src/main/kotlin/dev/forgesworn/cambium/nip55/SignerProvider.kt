@@ -69,11 +69,14 @@ import kotlinx.coroutines.runBlocking
  *
  * `currentUser` (index 2) is resolved to a pairing via [IdentityRouting.resolve] in
  * [requirePairing], same precedence as the intent path: an explicit `current_user` wins if it
- * names an identity we have, else the caller's bound identity, else the sole pairing. A
- * `current_user` naming an identity we don't have, or no identity resolving at all (more than one
- * pairing, no `current_user`, no binding -- should not normally happen for an approved caller,
- * since approving always binds), both answer `null` here -- there is no way to ask which identity
- * was meant from the silent path, so it defers to the intent rather than guessing.
+ * names an identity we have, else the caller's bound identity, else the sole pairing. The silent
+ * path only ever honours a resolution that matches the caller's *bound* identity
+ * ([IdentityRouting.isBoundIdentity]) -- a `current_user` naming one of our other pairings
+ * answers `null` here, since the approval only covers the identity it was granted for and there
+ * is no way to ask from the silent path. A `current_user` naming an identity we don't have, or
+ * no identity resolving at all (more than one pairing, no `current_user`, no binding -- should
+ * not normally happen for an approved caller, since approving always binds), likewise answers
+ * `null`: it defers to the intent rather than guessing.
  *
  * NIP04_DECRYPT and NIP44_DECRYPT results (successes and deterministic failures alike) are cached
  * by [HeartwoodSession] itself -- see its class doc -- since Amethyst was observed re-requesting
@@ -301,7 +304,17 @@ class SignerProvider : ContentProvider() {
             return null
         }
         return when (val routed = IdentityRouting.resolve(rawCurrentUser, boundIdentityPubkeyHex, pairings)) {
-            is IdentityRouting.Result.Resolved -> routed.pairing
+            is IdentityRouting.Result.Resolved ->
+                if (IdentityRouting.isBoundIdentity(routed.pairing, boundIdentityPubkeyHex)) {
+                    routed.pairing
+                } else {
+                    // The caller's current_user named one of our *other* pairings: its approval
+                    // only covers the bound identity, so this defers to the intent path (which
+                    // can ask) rather than silently signing as an identity the approval never
+                    // covered. See IdentityRouting's class doc.
+                    Log.w(TAG, "silent query from $caller resolved to an identity other than its bound one; deferring to intent")
+                    null
+                }
             IdentityRouting.Result.UnknownCurrentUser -> {
                 Log.w(TAG, "silent query from $caller named a current_user we don't have; deferring to intent")
                 null

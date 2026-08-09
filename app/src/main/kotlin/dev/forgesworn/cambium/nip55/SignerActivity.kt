@@ -189,9 +189,11 @@ class SignerActivity : AppCompatActivity() {
                 }
                 IntentGate.RejectReason.UNRESOLVED_IDENTITY -> {
                     // A later onNewIntent-delivered request from an approved caller whose
-                    // current_user cannot be resolved: the window is already invisible-themed
-                    // from the first intent (see IntentGate.plan's canAsk), so a reliable visible
-                    // sheet isn't possible here. Reject rather than silently guessing an identity.
+                    // current_user cannot be resolved -- or resolved to an identity other than
+                    // its bound one (see IdentityRouting.isBoundIdentity): the window is already
+                    // invisible-themed from the first intent (see IntentGate.plan's canAsk), so a
+                    // reliable visible sheet isn't possible here. Reject rather than silently
+                    // guessing an identity, or signing as one the approval never covered.
                     logActivity(parsed, identityLabel = null, outcome = ActivityLogEntry.Outcome.FAILED)
                     rejectAndFinish(parsed.id)
                 }
@@ -232,13 +234,15 @@ class SignerActivity : AppCompatActivity() {
         // Only worth showing once there is more than one pairing to choose between; with exactly
         // one, Approve always means that one pairing, same as before Cambium supported more.
         // Default selection precedence: the request's current_user match, else the caller's
-        // existing bound identity, else the first pairing. In practice a current_user match can
-        // never coexist with a *different* existing binding here -- this sheet only shows for an
-        // already-approved caller when their current_user named an identity we don't have (see
-        // IntentGate.plan/handleIncomingIntent) -- but identityRebindHint below still compares
-        // whatever ends up selected against the binding directly, so a user who manually moves
-        // the picker away from it sees a clear warning before Approve would silently rebind the
-        // app, rather than relying on the precedence alone to prevent that.
+        // existing bound identity, else the first pairing. For an already-approved caller this
+        // sheet shows precisely when their current_user could not be honoured silently -- either
+        // it named an identity we don't have, or it named one of our *other* pairings (see
+        // IntentGate.plan/IdentityRouting.isBoundIdentity) -- so the picker defaulting to the
+        // current_user match is exactly the identity the app asked for, and identityRebindHint
+        // below compares whatever ends up selected against the binding directly: a user about to
+        // rebind the app to a different identity (whether because the app asked or because they
+        // moved the picker themselves) sees a clear warning before Approve would do that,
+        // rather than relying on the precedence alone to prevent a silent rebind.
         val boundPubkeyHex = callerPermission?.boundIdentityPubkeyHex
         binding.identityRow.isVisible = pairings.size > 1
         binding.identityRebindHint.isVisible = false

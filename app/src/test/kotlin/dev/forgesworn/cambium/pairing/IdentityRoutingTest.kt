@@ -3,8 +3,10 @@ package dev.forgesworn.cambium.pairing
 import dev.forgesworn.cambium.nip57.Bech32
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class IdentityRoutingTest {
 
@@ -125,5 +127,23 @@ class IdentityRoutingTest {
         val result = IdentityRouting.resolve(pubkeyHexA.uppercase(), boundIdentityPubkeyHex = null, pairings = listOf(pairingA, pairingB))
 
         assertEquals(pubkeyHexA, assertIs<IdentityRouting.Result.Resolved>(result).pairing.signerPubkeyHex)
+    }
+
+    // -- isBoundIdentity --
+
+    @Test
+    fun `a pairing matching the binding is the bound identity, case-insensitively`() {
+        assertTrue(IdentityRouting.isBoundIdentity(pairingA, pubkeyHexA))
+        assertTrue(IdentityRouting.isBoundIdentity(pairingA, pubkeyHexA.uppercase()))
+    }
+
+    @Test
+    fun `a different pairing is not the bound identity`() {
+        assertFalse(IdentityRouting.isBoundIdentity(pairingB, pubkeyHexA))
+    }
+
+    @Test
+    fun `a null binding binds nothing -- an approved caller should never have one, so it fails closed`() {
+        assertFalse(IdentityRouting.isBoundIdentity(pairingA, null))
     }
 }

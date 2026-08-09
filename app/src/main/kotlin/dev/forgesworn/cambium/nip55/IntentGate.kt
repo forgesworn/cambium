@@ -40,9 +40,11 @@ object IntentGate {
         /** The caller has a remembered denial. Logged as `REJECTED_USER`. */
         DENIED_CALLER,
 
-        /** An approved caller whose identity routing did not resolve, on a window that can no
-         * longer ask (see [plan]'s `canAsk`). Logged as `FAILED` -- rejecting is safer than
-         * guessing an identity the request did not name. */
+        /** An approved caller whose identity routing did not resolve -- or resolved to an
+         * identity other than its bound one (see [IdentityRouting.isBoundIdentity]) -- on a
+         * window that can no longer ask (see [plan]'s `canAsk`). Logged as `FAILED` -- rejecting
+         * is safer than guessing an identity the request did not name, or silently signing as an
+         * identity the approval never covered. */
         UNRESOLVED_IDENTITY,
     }
 
@@ -50,8 +52,10 @@ object IntentGate {
      * Decides what [parsed] should do for a caller with [permission] (null = no remembered
      * choice). Precedence mirrors what `SignerActivity.handleIncomingIntent` always did:
      * unparsable, then nothing-paired, then the remembered choice; an approved caller routes via
-     * [IdentityRouting.resolve] and forwards only on [IdentityRouting.Result.Resolved] -- any
-     * other routing outcome asks rather than guesses.
+     * [IdentityRouting.resolve] and forwards only on a [IdentityRouting.Result.Resolved] that
+     * matches its bound identity ([IdentityRouting.isBoundIdentity]) -- any other routing
+     * outcome, including a `current_user` naming one of our *other* pairings, asks rather than
+     * guesses (or silently signing as an identity the approval never covered).
      *
      * [canAsk] is true for the first intent of an activity instance, where the window's theme is
      * still decided by what this returns, and false for a later `onNewIntent`-delivered request
@@ -72,7 +76,17 @@ object IntentGate {
             AppPermissionState.DENIED -> Plan.Reject(RejectReason.DENIED_CALLER)
             AppPermissionState.APPROVED ->
                 when (val routed = IdentityRouting.resolve(parsed.currentUser, permission.boundIdentityPubkeyHex, pairings)) {
-                    is IdentityRouting.Result.Resolved -> Plan.Forward(routed.pairing)
+                    // A Resolved that names an identity *other* than the caller's bound one is
+                    // not honoured silently: the approval was granted for one specific identity,
+                    // so a current_user pointing at another paired identity asks (or rejects on a
+                    // window that can no longer ask) rather than signing as an identity the
+                    // approval never covered. See IdentityRouting's class doc.
+                    is IdentityRouting.Result.Resolved ->
+                        if (IdentityRouting.isBoundIdentity(routed.pairing, permission.boundIdentityPubkeyHex)) {
+                            Plan.Forward(routed.pairing)
+                        } else {
+                            if (canAsk) Plan.AskUser else Plan.Reject(RejectReason.UNRESOLVED_IDENTITY)
+                        }
                     else -> if (canAsk) Plan.AskUser else Plan.Reject(RejectReason.UNRESOLVED_IDENTITY)
                 }
         }

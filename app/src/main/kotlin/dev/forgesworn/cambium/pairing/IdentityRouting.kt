@@ -8,14 +8,22 @@ import dev.forgesworn.cambium.toHex
  * now that Cambium can hold more than one. Pure Kotlin -- no Android -- so the precedence rules
  * and `current_user` normalisation are JVM-testable independent of `SignerActivity`/`SignerProvider`.
  *
- * Precedence, matching Amber's own `current_user` convention: an explicit `current_user` extra
- * wins outright if it names a pairing we have; otherwise the calling app's remembered
- * [AppPermission.boundIdentityPubkeyHex] is used; otherwise the sole pairing, if there is exactly
- * one. Deliberately never guesses beyond that: a `current_user` that names an identity we do not
- * have is [Result.UnknownCurrentUser] rather than silently falling through to the bound identity
- * or the sole pairing -- signing with a different identity than the caller explicitly asked for
- * would be worse than refusing. Two or more pairings with neither a matching `current_user` nor a
- * binding is [Result.Ambiguous] for the same reason.
+ * Precedence: an explicit `current_user` extra wins outright if it names a pairing we have;
+ * otherwise the calling app's remembered [AppPermission.boundIdentityPubkeyHex] is used;
+ * otherwise the sole pairing, if there is exactly one. Deliberately never guesses beyond that:
+ * a `current_user` that names an identity we do not have is [Result.UnknownCurrentUser] rather
+ * than silently falling through to the bound identity or the sole pairing -- signing with a
+ * different identity than the caller explicitly asked for would be worse than refusing. Two or
+ * more pairings with neither a matching `current_user` nor a binding is [Result.Ambiguous] for
+ * the same reason.
+ *
+ * Precedence is only half the access-control story, though: a `current_user` match that resolves
+ * to an identity *other* than the caller's bound one must not be served silently -- the
+ * remembered approval was granted for one specific identity, and honouring a different one
+ * without asking would let any approved app reach every paired identity. Callers therefore gate
+ * a `Resolved` on [isBoundIdentity]: only a match with the binding forwards without asking (both
+ * `IntentGate.plan` and `SignerProvider.requirePairing` do this); anything else asks on the
+ * intent path and defers to it on the provider path.
  */
 object IdentityRouting {
 
@@ -57,6 +65,15 @@ object IdentityRouting {
             ?.takeIf { it.size == PUBKEY_BYTES }
             ?.toHex()
     }
+
+    /**
+     * Whether [pairing] is the identity a caller's remembered approval is bound to. A `Resolved`
+     * that fails this check (a `current_user` naming one of our *other* pairings) must be asked
+     * about or refused, never served silently -- see the class doc. A null binding (which an
+     * approved caller should never have -- approving always binds) fails closed.
+     */
+    fun isBoundIdentity(pairing: Pairing, boundIdentityPubkeyHex: String?): Boolean =
+        boundIdentityPubkeyHex != null && pairing.signerPubkeyHex.equals(boundIdentityPubkeyHex, ignoreCase = true)
 
     private fun Char.isHexDigit(): Boolean = this in '0'..'9' || this in 'a'..'f' || this in 'A'..'F'
 
