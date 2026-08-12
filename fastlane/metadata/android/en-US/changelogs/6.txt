@@ -1,0 +1,4 @@
+Security fixes from a full review.
+
+- A current_user naming one of your other paired identities no longer forwards silently: an approval only covers the identity it was granted for, so a cross-identity request now asks instead of signing as an identity the approval never covered.
+- The activity log screen is behind the app lock like everything else, and no longer appears in recents.
