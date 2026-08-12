@@ -117,7 +117,7 @@ If Cambium is useful to you, support development via
 [GitHub Sponsors](https://github.com/sponsors/TheCryptoDonkey),
 [Geyser](https://geyser.fund/project/forgesworn) or [Ko-fi](https://ko-fi.com/brays),
 or zap sats over Lightning: `profusemeat89@walletofsatoshi.com`
-(Nostr: `darren@600.wtf`).
+(Nostr: `npub1mgvlrnf5hm9yf0n5mf9nqmvarhvxkc6remu5ec3vf8r0txqkuk7su0e7q2`).
 
 ## Licence
 
