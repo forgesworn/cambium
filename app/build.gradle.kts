@@ -25,8 +25,8 @@ android {
         applicationId = "dev.forgesworn.cambium"
         minSdk = 27
         targetSdk = 35
-        versionCode = 6
-        versionName = "0.3.3"
+        versionCode = 7
+        versionName = "0.3.4"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -80,6 +80,14 @@ android {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
+    }
+
+    // AGP embeds an encrypted Play Store dependency block in the APK signing block by default.
+    // Only Google can read it, and F-Droid's scanner rejects any published binary carrying it
+    // (it failed the inclusion MR's "check apk" job), so it must never be in a release APK.
+    dependenciesInfo {
+        includeInApk = false
+        includeInBundle = false
     }
 }
 

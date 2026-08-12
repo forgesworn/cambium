@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.4 (2026-08-12)
+
+F-Droid inclusion fix. No behaviour changes.
+
+- Release APKs no longer embed the Play Store dependency metadata block (an encrypted blob only
+  Google can read). F-Droid's scanner rejects binaries carrying it, and it served no purpose for
+  an app that is not on the Play Store.
+
 ## 0.3.3 (2026-08-09)
 
 Security fixes from a full review.

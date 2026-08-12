@@ -1,0 +1,3 @@
+F-Droid inclusion fix. No behaviour changes.
+
+- Release APKs no longer embed the Play Store dependency metadata block (an encrypted blob only Google can read), which F-Droid's scanner rejects.
