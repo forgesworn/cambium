@@ -14,7 +14,7 @@ what store metadata points at (F-Droid's `Donate:` field takes one URL).
 |---|---|---|
 | GitHub Releases | **Live** (v0.2.0 onward) | Ours (the 0.2.0 trust root) |
 | Obtainium | **Live** via GitHub Releases | Ours |
-| Zapstore | **Live** (0.3.5, published 2026-08-13) | Ours |
+| Zapstore | **Live** (0.3.6, published 2026-08-13) | Ours |
 | F-Droid | **MR open: [fdroiddata!42875](https://gitlab.com/fdroid/fdroiddata/-/merge_requests/42875)** — reviewed ("mostly ready"), in the test queue; the recipe must track each new release until merge | F-Droid's own key |
 | IzzyOnDroid (optional extra) | Eligible; their tracker moved to Codeberg (account needed) | Ours |
 | Accrescent | **Blocked externally** — registration is allowlist-only | Ours |
@@ -52,7 +52,7 @@ https://zapstore.dev/apps/naddr1qqtxgetk9enx7un8v4ehwmmjdchxxctdvf5h2mgprpmhxue6
 release is up:
 
 ```bash
-SIGN_WITH=<nsec1... | bunker://...> zsp publish zapstore.yaml
+SIGN_WITH=<nsec1... | bunker://...> zsp publish --quiet --skip-preview zapstore.yaml
 ```
 
 `SIGN_WITH` also accepts a `bunker://` URI, so the release events can be signed by Heartwood
@@ -89,7 +89,11 @@ fork `TheCryptoDonkey/fdroiddata` (branch `cambium`) under the GitLab account `T
 (fdroidserver 2.4.5); the fork's own pipeline cannot run until the new GitLab account is
 verified for shared runners, which reviewers were told on the MR. Review typically takes days
 to a few weeks; reviewers may adjust the build recipe (e.g. a JDK 21 install block, as Amber's
-entry carries). Future releases need no new MR — `AutoUpdateMode: Version` tracks our tags.
+entry carries). Future releases need no new MR, but **while the MR is still open the recipe has
+to track each new release** — add a `Builds:` entry for the new tag and bump
+`CurrentVersion`/`CurrentVersionCode`, in `docs/fdroid/dev.forgesworn.cambium.yml` here and in the
+`cambium` branch of the `TheCryptoDonkey/fdroiddata` fork. Only once it is merged does
+`AutoUpdateMode: Version` take over and track our tags unattended.
 
 Two caveats to state in the MR and be aware of:
 
@@ -98,8 +102,9 @@ Two caveats to state in the MR and be aware of:
   later alternative — reproducible builds with `Binaries:` + `AllowedAPKSigningKeys`, so F-Droid
   ships our signature — is worth pursuing once the build is proven bit-reproducible, but is not
   a prerequisite for listing.
-- `AutoUpdateMode: Version` means future tagged releases are picked up automatically; only the
-  first listing needs a human.
+- `AutoUpdateMode: Version` means future tagged releases are picked up automatically **once the
+  MR is merged**; only the first listing needs a human. Until then, every release needs the recipe
+  updating by hand (see above).
 
 ## IzzyOnDroid (optional, low effort)
 
@@ -134,5 +139,10 @@ Everything on our side is already satisfied, so when it opens this is quick:
 1. Bump `versionCode`/`versionName`, update `CHANGELOG.md`, and add
    `fastlane/metadata/android/en-US/changelogs/<versionCode>.txt`.
 2. Tag `vX.Y.Z`, build, publish the GitHub release (APK + SHA256SUMS + AppVerifier block).
-3. `SIGN_WITH=... zsp publish zapstore.yaml`.
-4. Obtainium, F-Droid and IzzyOnDroid pick the release up automatically.
+3. `SIGN_WITH=... zsp publish --quiet --skip-preview zapstore.yaml`, with someone at the Heartwood
+   to confirm the signing request.
+4. While fdroiddata!42875 is still open, add a `Builds:` entry for the new tag and bump
+   `CurrentVersion`/`CurrentVersionCode` in `docs/fdroid/dev.forgesworn.cambium.yml`, and push the
+   same change to the `cambium` branch of the fdroiddata fork.
+5. Obtainium and IzzyOnDroid pick the release up automatically; F-Droid does too, once the MR in
+   step 4 is merged.
