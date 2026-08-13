@@ -30,7 +30,7 @@ Builds:
 
   - versionName: 0.3.6
     versionCode: 9
-    commit: v0.3.6
+    commit: 08526c4fd74846da1dba1c498241a04961e56617
     subdir: app
     gradle:
       - yes
