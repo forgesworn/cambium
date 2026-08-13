@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.4.0 (2026-08-13)
+
 - Websites can now use Cambium through NIP-55 `nostrsigner:` links. Cambium parses the browser
   request parameters, asks for an explicit one-shot approval, and returns a signature, signed
   event, or `Signer1` gzip envelope through a validated HTTPS callback. When there is no callback,
@@ -9,6 +11,9 @@
 - Browser requests never inherit or create a remembered permission for Chrome (or any other
   browser). The approval sheet identifies the callback host and makes the one-shot boundary clear.
   Native Android intent and content-provider permissions are unchanged.
+- Minimal NIP-55 web events now sign correctly when they omit `pubkey`, `created_at`, or `tags`,
+  as the specification's own example does. Cambium fills the pubkey from the exact paired identity
+  proved by the NIP-46 handshake before passing the event to rust-nostr.
 
 ## 0.3.6 (2026-08-13)
 

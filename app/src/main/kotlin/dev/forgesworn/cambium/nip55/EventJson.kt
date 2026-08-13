@@ -29,19 +29,27 @@ internal fun extractEventSignatureHex(eventJson: String): String? = runCatching 
 }.getOrNull()
 
 /**
- * Returns [eventJson] with `created_at` defaulted to [nowEpochSeconds] and `tags` to `[]`
- * when either field is absent. NIP-55 clients omit both from `sign_event` payloads and Amber
- * quietly fills the gaps at signing time, so omission is de-facto valid on this wire --
- * Primal's login event arrives without `created_at` and its wallet-operation event without
- * `tags` (both verified live, July 2026) -- but rust-nostr's `UnsignedEvent.fromJson` rejects
- * each omission outright ("missing field ..."). Defaulting them here keeps the de-facto
- * contract without touching the FFI boundary. Anything that does not parse as a JSON object
- * is returned unchanged: rust-nostr's own parser stays the single authority on what is
- * malformed, and so are missing fields with no safe default (pubkey, kind, content).
+ * Returns [eventJson] with `pubkey` defaulted to [signerPubkeyHex], `created_at` to
+ * [nowEpochSeconds], and `tags` to `[]` when any are absent. NIP-55's own web example sends only
+ * `kind` and `content`; Amber fills the signer-owned fields, and Primal also omits `created_at`
+ * or `tags` in live requests. rust-nostr's `UnsignedEvent.fromJson` rejects each omission before
+ * the request can reach Heartwood, so the compatibility defaults belong immediately before that
+ * FFI boundary. [signerPubkeyHex] comes from the successful NIP-46 handshake for this exact
+ * per-identity session, not from ambient UI state, so it cannot silently select another pairing.
+ * An explicit event pubkey is preserved for rust-nostr/Heartwood to validate as before.
+ *
+ * Anything that does not parse as a JSON object is returned unchanged: rust-nostr's own parser
+ * stays the single authority on what is malformed, as it does for missing `kind` or `content`,
+ * which have no safe defaults.
  */
-internal fun normaliseUnsignedEvent(eventJson: String, nowEpochSeconds: Long): String = runCatching {
+internal fun normaliseUnsignedEvent(
+    eventJson: String,
+    signerPubkeyHex: String,
+    nowEpochSeconds: Long,
+): String = runCatching {
     val obj = Json.parseToJsonElement(eventJson).jsonObject
     val defaults = buildMap {
+        if ("pubkey" !in obj) put("pubkey", JsonPrimitive(signerPubkeyHex))
         if ("created_at" !in obj) put("created_at", JsonPrimitive(nowEpochSeconds))
         if ("tags" !in obj) put("tags", JsonArray(emptyList()))
     }
