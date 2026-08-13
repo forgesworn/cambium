@@ -1,0 +1,3 @@
+Pairing fix. No other behaviour changes.
+
+- Cambium can now pair with signers that answer connect by echoing the bunker URI's secret, which is what current NIP-46 specifies. Only the older "ack" reply was accepted before, so pairing with such a signer ended in "Unexpected response".

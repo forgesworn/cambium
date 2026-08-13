@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.3.6 (2026-08-13)
+
+Pairing fix. Cambium could not pair with a signer that answers `connect` by echoing the bunker
+URI's secret, which is what current NIP-46 specifies and what Heartwood's firmware does.
+
+- The rust-nostr dependency moves from 0.44.2 to 0.44.8. The older build accepted only the
+  literal `ack` as a `connect` result and refused the secret echo, so pairing ended in
+  "Unexpected response" against a spec-following signer. Both forms are accepted now, so
+  signers on either convention pair. Verified against live hardware and against `nak bunker`,
+  which still answers `ack`.
+
 ## 0.3.5 (2026-08-13)
 
 Review hygiene from F-Droid inclusion feedback. No behaviour changes.
