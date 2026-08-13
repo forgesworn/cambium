@@ -14,8 +14,8 @@ what store metadata points at (F-Droid's `Donate:` field takes one URL).
 |---|---|---|
 | GitHub Releases | **Live** (v0.2.0 onward) | Ours (the 0.2.0 trust root) |
 | Obtainium | **Live** via GitHub Releases | Ours |
-| Zapstore | **Live** (0.3.2, published 2026-07-14) | Ours |
-| F-Droid | **MR open: [fdroiddata!42875](https://gitlab.com/fdroid/fdroiddata/-/merge_requests/42875)** — awaiting review | F-Droid's own key |
+| Zapstore | **Live** (0.3.5, published 2026-08-13) | Ours |
+| F-Droid | **MR open: [fdroiddata!42875](https://gitlab.com/fdroid/fdroiddata/-/merge_requests/42875)** — reviewed ("mostly ready"), in the test queue; the recipe must track each new release until merge | F-Droid's own key |
 | IzzyOnDroid (optional extra) | Eligible; their tracker moved to Codeberg (account needed) | Ours |
 | Accrescent | **Blocked externally** — registration is allowlist-only | Ours |
 
@@ -65,8 +65,11 @@ Publisher identity: `npub1mgvlrnf5hm9yf0n5mf9nqmvarhvxkc6remu5ec3vf8r0txqkuk7su0
 publishing npub's profile Lightning address — before the first publish, check the kind-0
 profile carries `lud16: profusemeat89@walletofsatoshi.com` so zaps actually route.
 
-Afterwards, consider `zsp identity --link-key` (NIP-C1) to link the APK signing certificate to
-the npub, which upgrades Cambium's verification status in the Zapstore client.
+The NIP-C1 key link (`zsp identity --link-key`, tying the APK signing certificate to the npub)
+was published 2026-08-13: kind 30509 on the zapstore, damus and primal relays, expiring
+2027-08-13 — renew it then. Headless note: `zsp identity` has no quiet mode, so sign with
+`--offline | nak event <relays>` and feed `--verify` the npub on stdin; the JKS must be
+converted to a temporary PKCS12 for it (`keytool -importkeystore`), deleted after use.
 
 Each future release: run the same command after the GitHub release is up (the config pulls the
 latest release), or add it as a release-checklist step.
