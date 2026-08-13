@@ -24,8 +24,9 @@ by the build itself failing several times over the course of review.
 ## Architecture
 
 ```
-Amethyst / Primal / Voyage ...
-        | NIP-55 (intent + content provider)
+Android apps              Websites
+        | NIP-55 native      | nostrsigner: callback / clipboard
+        +--------------------+
      Cambium
         | NIP-46 over relays (NIP-44 envelopes)
    Nostr relay(s)  <--  Heartwood (WiFi-standalone)
@@ -178,6 +179,12 @@ Amethyst / Primal / Voyage ...
 - `nip55/Nip55Request.kt` -- pure Kotlin parser from a plain `RawSignerIntent` data class to a
   sealed `Nip55Request`. JVM-testable; the actual `android.content.Intent` mapping is a single
   private extension function in `SignerActivity.kt`.
+- `nip55/WebNip55Request.kt` -- pure Kotlin, JVM-tested browser transport boundary. It recognises
+  the query-parameter form of `nostrsigner:`, percent-decodes payload and options, validates return
+  type/compression and permits callbacks only to HTTPS origins (plus loopback HTTP for local
+  development). `WebNip55ResultBuilder` extracts an event signature or returns the complete event,
+  builds `Signer1` + base64(gzip(event)) when requested, and produces either a callback URI or a
+  clipboard action. It contains no Android classes so the actual wire strings are tested directly.
 - `nip55/IntentGate.kt` -- pure Kotlin (no Android), JVM-tested: `SignerActivity`'s decision
   table. `plan(permission, pairings, parsed, canAsk)` returns a sealed `Plan` --
   `Forward(pairing)`, `AskUser`, or `Reject(reason)` -- and `silentFor(permission, plan)` decides
@@ -203,6 +210,15 @@ Amethyst / Primal / Voyage ...
   remembered choice yet) appearing on every subsequent request otherwise, not just at login.
   `singleTop` with `onNewIntent` handling, since a client can fire a second request before the
   user dismisses the first (e.g. `sign_event` right after `get_public_key`).
+
+  The same activity also handles NIP-55 browser links. `IncomingNip55RequestParser` separates web
+  query parameters from native extras before the decision table runs. Web requests are always
+  passed to `IntentGate` with no package permission, so they always ask visibly and can never
+  inherit or create approval for the browser package. The sheet names the validated callback host,
+  hides "always deny", and states that approval is one-shot. On success, the activity opens the
+  validated callback or copies the result to the clipboard; rejection has no result payload because
+  NIP-55 defines no browser rejection callback. A web request racing into an already-invisible
+  native `singleTop` instance fails closed rather than trying to reuse its theme or permission.
 
   `silent` is decided once in `onCreate`, before any window setup, and is no longer a plain
   function of the caller's remembered choice alone the way it was pre-0.3.0: the first intent's

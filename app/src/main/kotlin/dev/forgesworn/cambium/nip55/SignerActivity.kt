@@ -1,6 +1,10 @@
 package dev.forgesworn.cambium.nip55
 
+import android.content.ActivityNotFoundException
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.widget.AdapterView
 import android.widget.ArrayAdapter
@@ -89,11 +93,10 @@ class SignerActivity : AppCompatActivity() {
     private lateinit var pairingStore: PairingStore
     private lateinit var activityLogStore: ActivityLogStore
     private lateinit var appLockStore: AppLockStore
-    private var callerPermission: AppPermission? = null
 
     /**
      * Decided once in `onCreate`, before any window setup -- see the class doc for why it can't
-     * be re-evaluated afterwards. No longer a plain function of [callerPermission] alone the way
+     * be re-evaluated afterwards. No longer a plain function of the caller permission alone the way
      * it was pre-0.3.0: an approved caller is only silent if the first intent's [IntentGate.plan]
      * finds that its identity routing will actually resolve without asking -- see
      * [IntentGate.silentFor]. Set directly rather than computed, since it depends on that
@@ -114,10 +117,14 @@ class SignerActivity : AppCompatActivity() {
         activityLogStore = ActivityLogStore.getInstance(this)
         appLockStore = AppLockStore(this)
 
-        callerPermission = callingPackage?.let(pairingStore::permission)
-        val parsed = Nip55Request.from(intent.toRawSignerIntent())
-        val plan = IntentGate.plan(callerPermission, pairingStore.pairings(), parsed, canAsk = true)
-        silent = IntentGate.silentFor(callerPermission, plan)
+        val requestContext = requestContextFor(intent)
+        val plan = IntentGate.plan(
+            requestContext.permission,
+            pairingStore.pairings(),
+            requestContext.incoming.parsed,
+            canAsk = true,
+        )
+        silent = IntentGate.silentFor(requestContext.permission, plan)
         if (silent) {
             // Must happen before setContentView (and there is no content view to set here) for
             // the transparent/non-dimmed theme to actually take effect on the window.
@@ -129,7 +136,7 @@ class SignerActivity : AppCompatActivity() {
             setContentView(binding.root)
         }
 
-        handleIncomingIntent(intent, FirstIntent(parsed, plan))
+        handleIncomingIntent(intent, FirstIntent(requestContext, plan))
     }
 
     /** The first intent's parse and [IntentGate.plan], computed in `onCreate` (where the plan
@@ -138,9 +145,36 @@ class SignerActivity : AppCompatActivity() {
      * routing against it immediately afterwards. `onNewIntent`-delivered requests compute both
      * fresh, with `canAsk = !silent` -- see [IntentGate.plan]. */
     private data class FirstIntent(
-        val parsed: Nip55Request?,
+        val context: RequestContext,
         val plan: IntentGate.Plan,
     )
+
+    private data class RequestContext(
+        val incoming: IncomingNip55Request,
+        val permission: AppPermission?,
+        val nativeCallingPackage: String?,
+    ) {
+        val web: Nip55Transport.Web? get() = incoming.transport as? Nip55Transport.Web
+        val logCaller: String
+            get() {
+                val webTransport = web
+                return when {
+                    webTransport?.callbackOrigin != null -> "web:${webTransport.callbackOrigin}"
+                    webTransport != null -> "web:clipboard"
+                    else -> nativeCallingPackage ?: "unknown"
+                }
+            }
+    }
+
+    private fun requestContextFor(intent: Intent): RequestContext {
+        val incoming = IncomingNip55RequestParser.parse(intent.dataString, intent.toRawSignerIntent())
+        val nativeCallingPackage = callingPackage.takeIf { incoming.transport.canUsePackagePermission }
+        return RequestContext(
+            incoming = incoming,
+            permission = nativeCallingPackage?.let(pairingStore::permission),
+            nativeCallingPackage = nativeCallingPackage,
+        )
+    }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
@@ -160,32 +194,43 @@ class SignerActivity : AppCompatActivity() {
             binding.progressGroup.isVisible = false
         }
 
-        val raw = intent.toRawSignerIntent()
-        // Not an elvis on precomputed.parsed: a precomputed null parse means the first intent was
+        val context = precomputed?.context ?: requestContextFor(intent)
+        // Not an elvis on precomputed parsed data: a precomputed null parse means the first intent was
         // unparsable, not that it needs parsing again.
-        val parsed = if (precomputed != null) precomputed.parsed else Nip55Request.from(raw)
+        val parsed = context.incoming.parsed
         if (parsed == null) {
-            rejectAndFinish(raw.id)
+            if (context.web != null && !silent) {
+                Toast.makeText(this, R.string.error_invalid_web_request, Toast.LENGTH_LONG).show()
+            }
+            rejectAndFinish(context)
+            return
+        }
+
+        // A web request must always have a visible, one-shot approval. If it races into an
+        // already-invisible native activity via singleTop, fail closed instead of signing under
+        // the browser package's remembered native permission or trying to mutate the window.
+        if (context.web != null && silent && precomputed == null) {
+            rejectAndFinish(context)
             return
         }
 
         val pairings = pairingStore.pairings()
         val plan = precomputed?.plan
-            ?: IntentGate.plan(callerPermission, pairings, parsed, canAsk = !silent)
+            ?: IntentGate.plan(context.permission, pairings, parsed, canAsk = !silent)
         when (plan) {
-            is IntentGate.Plan.Forward -> handle(plan.pairing, parsed)
-            IntentGate.Plan.AskUser -> showApprovalSheet(pairings, parsed, callingPackage)
+            is IntentGate.Plan.Forward -> handle(plan.pairing, parsed, context)
+            IntentGate.Plan.AskUser -> showApprovalSheet(pairings, parsed, context)
             is IntentGate.Plan.Reject -> when (plan.reason) {
                 // Unreachable once parsed is known non-null (above); listed so the dispatch stays
                 // exhaustive over every reason.
-                IntentGate.RejectReason.MALFORMED_REQUEST -> rejectAndFinish(parsed.id)
+                IntentGate.RejectReason.MALFORMED_REQUEST -> rejectAndFinish(context)
                 IntentGate.RejectReason.NOTHING_PAIRED -> {
                     if (!silent) Toast.makeText(this, R.string.error_not_paired, Toast.LENGTH_LONG).show()
-                    rejectAndFinish(parsed.id)
+                    rejectAndFinish(context)
                 }
                 IntentGate.RejectReason.DENIED_CALLER -> {
-                    logActivity(parsed, identityLabel = null, outcome = ActivityLogEntry.Outcome.REJECTED_USER)
-                    rejectAndFinish(parsed.id)
+                    logActivity(parsed, context, identityLabel = null, outcome = ActivityLogEntry.Outcome.REJECTED_USER)
+                    rejectAndFinish(context)
                 }
                 IntentGate.RejectReason.UNRESOLVED_IDENTITY -> {
                     // A later onNewIntent-delivered request from an approved caller whose
@@ -194,8 +239,8 @@ class SignerActivity : AppCompatActivity() {
                     // invisible-themed from the first intent (see IntentGate.plan's canAsk), so a
                     // reliable visible sheet isn't possible here. Reject rather than silently
                     // guessing an identity, or signing as one the approval never covered.
-                    logActivity(parsed, identityLabel = null, outcome = ActivityLogEntry.Outcome.FAILED)
-                    rejectAndFinish(parsed.id)
+                    logActivity(parsed, context, identityLabel = null, outcome = ActivityLogEntry.Outcome.FAILED)
+                    rejectAndFinish(context)
                 }
             }
         }
@@ -208,11 +253,16 @@ class SignerActivity : AppCompatActivity() {
      * "not a decryptable private zap" outcomes (an ordinary public zap tag being the routine
      * case, not an error) are deliberately not logged, since they would mostly just be noise
      * rather than signal about what Cambium actually did on the user's behalf. */
-    private fun logActivity(request: Nip55Request, identityLabel: String?, outcome: ActivityLogEntry.Outcome) {
+    private fun logActivity(
+        request: Nip55Request,
+        context: RequestContext,
+        identityLabel: String?,
+        outcome: ActivityLogEntry.Outcome,
+    ) {
         activityLogStore.append(
             ActivityLogEntry(
                 timestampMillis = System.currentTimeMillis(),
-                callingPackage = callingPackage ?: "unknown",
+                callingPackage = context.logCaller,
                 method = methodLabel(request),
                 eventKind = (request as? Nip55Request.SignEvent)?.let { extractEventKind(it.eventJson) },
                 identityLabel = identityLabel,
@@ -221,9 +271,16 @@ class SignerActivity : AppCompatActivity() {
         )
     }
 
-    private fun showApprovalSheet(pairings: List<Pairing>, request: Nip55Request, callingPkg: String?) {
-        binding.appValue.text = callingPkg?.let(packageManager::displayNameFor) ?: "unknown caller"
+    private fun showApprovalSheet(pairings: List<Pairing>, request: Nip55Request, context: RequestContext) {
+        binding.callerLabel.setText(
+            if (context.web != null) R.string.approval_web_return_label else R.string.approval_app_label
+        )
+        binding.appValue.text = context.web?.displayHost
+            ?: context.nativeCallingPackage?.let(packageManager::displayNameFor)
+            ?: if (context.web != null) getString(R.string.approval_web_clipboard_caller)
+            else getString(R.string.approval_unknown_caller)
         binding.methodValue.text = methodLabel(request)
+        binding.webOneShotNote.isVisible = context.web != null
 
         val kind = (request as? Nip55Request.SignEvent)?.let { extractEventKind(it.eventJson) }
         binding.kindRow.isVisible = kind != null
@@ -243,7 +300,7 @@ class SignerActivity : AppCompatActivity() {
         // rebind the app to a different identity (whether because the app asked or because they
         // moved the picker themselves) sees a clear warning before Approve would do that,
         // rather than relying on the precedence alone to prevent a silent rebind.
-        val boundPubkeyHex = callerPermission?.boundIdentityPubkeyHex
+        val boundPubkeyHex = context.permission?.boundIdentityPubkeyHex
         binding.identityRow.isVisible = pairings.size > 1
         binding.identityRebindHint.isVisible = false
         if (pairings.size > 1) {
@@ -282,25 +339,25 @@ class SignerActivity : AppCompatActivity() {
         }
 
         binding.decisionGroup.isVisible = true
-        binding.denyAlwaysLink.isVisible = true
+        binding.denyAlwaysLink.isVisible = context.nativeCallingPackage != null
         binding.progressGroup.isVisible = false
 
         binding.approveButton.setOnClickListener {
             requireUnlockedThen {
                 val chosen = pairings.getOrNull(binding.identityPicker.selectedItemPosition) ?: pairings.first()
-                callingPkg?.let { pairingStore.approve(it, chosen.signerPubkeyHex) }
-                handle(chosen, request)
+                context.nativeCallingPackage?.let { pairingStore.approve(it, chosen.signerPubkeyHex) }
+                handle(chosen, request, context)
             }
         }
         binding.declineButton.setOnClickListener {
-            logActivity(request, identityLabel = null, outcome = ActivityLogEntry.Outcome.REJECTED_USER)
-            rejectAndFinish(request.id)
+            logActivity(request, context, identityLabel = null, outcome = ActivityLogEntry.Outcome.REJECTED_USER)
+            rejectAndFinish(context)
         }
         binding.denyAlwaysLink.setOnClickListener {
             requireUnlockedThen {
-                callingPkg?.let { pairingStore.deny(it) }
-                logActivity(request, identityLabel = null, outcome = ActivityLogEntry.Outcome.REJECTED_USER)
-                rejectAndFinish(request.id)
+                context.nativeCallingPackage?.let { pairingStore.deny(it) }
+                logActivity(request, context, identityLabel = null, outcome = ActivityLogEntry.Outcome.REJECTED_USER)
+                rejectAndFinish(context)
             }
         }
     }
@@ -330,7 +387,7 @@ class SignerActivity : AppCompatActivity() {
      * [request] is already approved for the calling app (silent, [silent] is true), or is being
      * approved right now (visible, the user just tapped Approve on the sheet).
      */
-    private fun handle(pairing: Pairing, request: Nip55Request) {
+    private fun handle(pairing: Pairing, request: Nip55Request, context: RequestContext) {
         if (!silent) {
             binding.decisionGroup.isVisible = false
             binding.denyAlwaysLink.isVisible = false
@@ -338,19 +395,20 @@ class SignerActivity : AppCompatActivity() {
 
         if (request is Nip55Request.GetPublicKey) {
             // Answered from the pairing record: no relay round trip needed once paired.
-            // npub, not hex: Amber answers get_public_key with an npub and clients rely on
-            // that shape (see npubWire's doc for the Primal failure a hex answer causes).
-            logActivity(request, pairing.displayLabel(), ActivityLogEntry.Outcome.SIGNED)
-            respondSuccess(request, npubWire(pairing.signerPubkeyHex), isPublicKeyRequest = true)
+            // Native Amber-compatible clients expect npub (see npubWire's doc for the Primal
+            // failure a hex answer causes). NIP-55's web transport specifies hex instead.
+            val value = if (context.web != null) pairing.signerPubkeyHex else npubWire(pairing.signerPubkeyHex)
+            logActivity(request, context, pairing.displayLabel(), ActivityLogEntry.Outcome.SIGNED)
+            respondSuccess(request, value, isPublicKeyRequest = true, context = context)
             return
         }
 
         if (request is Nip55Request.DecryptZapEvent) {
-            handleDecryptZapEvent(pairing, request)
+            handleDecryptZapEvent(pairing, request, context)
             return
         }
 
-        submitAndRespond(pairing, request, cacheableFor(request)) { client ->
+        submitAndRespond(pairing, request, context, cacheableFor(request)) { client ->
             when (request) {
                 is Nip55Request.SignEvent -> client.signEvent(request.eventJson)
                 is Nip55Request.Nip04Encrypt -> client.nip04Encrypt(request.pubkeyHex, request.plaintext)
@@ -372,7 +430,11 @@ class SignerActivity : AppCompatActivity() {
      * [PrivateZap.cacheableFor] are shared with `SignerProvider.queryDecryptZapEvent`, so the
      * decrypt-then-check-kind-9733 call and its cache key exist exactly once.
      */
-    private fun handleDecryptZapEvent(pairing: Pairing, request: Nip55Request.DecryptZapEvent) {
+    private fun handleDecryptZapEvent(
+        pairing: Pairing,
+        request: Nip55Request.DecryptZapEvent,
+        context: RequestContext,
+    ) {
         val decoded = PrivateZap.decodeAnonTag(request.eventJson)
         val forward = when (decoded) {
             is ZapDecodeResult.Malformed,
@@ -380,13 +442,13 @@ class SignerActivity : AppCompatActivity() {
             is ZapDecodeResult.NoAnonTag,
             is ZapDecodeResult.MalformedAnon,
             -> {
-                rejectAndFinish(request.id)
+                rejectAndFinish(context)
                 return
             }
             is ZapDecodeResult.Forward -> decoded
         }
 
-        submitAndRespond(pairing, request, PrivateZap.cacheableFor(forward)) { client ->
+        submitAndRespond(pairing, request, context, PrivateZap.cacheableFor(forward)) { client ->
             PrivateZap.decryptAndValidate(client, forward)
         }
     }
@@ -400,6 +462,7 @@ class SignerActivity : AppCompatActivity() {
     private fun submitAndRespond(
         pairing: Pairing,
         request: Nip55Request,
+        context: RequestContext,
         cacheable: CacheableDecrypt?,
         operation: suspend (HeartwoodClient) -> HeartwoodResult<String>,
     ) {
@@ -410,15 +473,37 @@ class SignerActivity : AppCompatActivity() {
         }
         lifecycleScope.launch {
             val outcome = HeartwoodSession.withClient(pairing, cacheable, operation)
-            logActivity(request, pairing.displayLabel(), ActivityLog.outcomeFor(outcome))
+            logActivity(request, context, pairing.displayLabel(), ActivityLog.outcomeFor(outcome))
             when (val result = outcome.result) {
-                is HeartwoodResult.Success -> respondSuccess(request, result.value, isPublicKeyRequest = false)
-                is HeartwoodResult.Failure -> showErrorAndReject(request.id, result.error)
+                is HeartwoodResult.Success -> respondSuccess(
+                    request,
+                    result.value,
+                    isPublicKeyRequest = false,
+                    context = context,
+                )
+                is HeartwoodResult.Failure -> showErrorAndReject(context, result.error)
             }
         }
     }
 
-    private fun respondSuccess(request: Nip55Request, value: String, isPublicKeyRequest: Boolean) {
+    private fun respondSuccess(
+        request: Nip55Request,
+        value: String,
+        isPublicKeyRequest: Boolean,
+        context: RequestContext,
+    ) {
+        val web = context.web
+        if (web != null) {
+            when (val result = WebNip55ResultBuilder.build(web, request, value)) {
+                is WebResult.Failure -> {
+                    Toast.makeText(this, R.string.error_invalid_signer_response, Toast.LENGTH_LONG).show()
+                    rejectAndFinish(context)
+                }
+                is WebResult.Success -> deliverWebResult(result.action)
+            }
+            return
+        }
+
         val data = Intent().apply {
             putExtra(EXTRA_RESULT, value)
             putExtra(EXTRA_ID, request.id)
@@ -436,7 +521,30 @@ class SignerActivity : AppCompatActivity() {
         finish()
     }
 
-    private fun showErrorAndReject(id: String?, error: HeartwoodError) {
+    private fun deliverWebResult(action: WebResultAction) {
+        when (action) {
+            is WebResultAction.CopyToClipboard -> {
+                val clipboard = getSystemService(ClipboardManager::class.java)
+                clipboard.setPrimaryClip(ClipData.newPlainText(getString(R.string.web_result_clip_label), action.text))
+                Toast.makeText(this, R.string.web_result_copied, Toast.LENGTH_LONG).show()
+                finish()
+            }
+            is WebResultAction.OpenCallback -> {
+                try {
+                    startActivity(
+                        Intent(Intent.ACTION_VIEW, Uri.parse(action.url))
+                            .addCategory(Intent.CATEGORY_BROWSABLE)
+                    )
+                    finish()
+                } catch (_: ActivityNotFoundException) {
+                    Toast.makeText(this, R.string.error_web_callback_unavailable, Toast.LENGTH_LONG).show()
+                    finish()
+                }
+            }
+        }
+    }
+
+    private fun showErrorAndReject(context: RequestContext, error: HeartwoodError) {
         // Silent means invisible end to end: an already-approved caller must never see a Toast
         // either, matching the "no UI at all" contract.
         if (!silent) {
@@ -448,13 +556,19 @@ class SignerActivity : AppCompatActivity() {
             }
             Toast.makeText(this, message, Toast.LENGTH_LONG).show()
         }
-        rejectAndFinish(id)
+        rejectAndFinish(context)
     }
 
-    private fun rejectAndFinish(id: String?) {
+    private fun rejectAndFinish(context: RequestContext) {
+        // NIP-55 defines a success callback/clipboard value but no rejection payload. Returning
+        // nothing leaves the website's request unfulfilled without disclosing extra detail.
+        if (context.web != null) {
+            finish()
+            return
+        }
         val data = Intent().apply {
             putExtra(EXTRA_REJECTED, true)
-            putExtra(EXTRA_ID, id)
+            putExtra(EXTRA_ID, context.incoming.raw.id)
         }
         setResult(RESULT_OK, data)
         finish()

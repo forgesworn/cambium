@@ -28,8 +28,9 @@ NIP-55 intents into NIP-46 requests against your Heartwood, and hands the respon
 - All NIP-46 payloads are NIP-44-encrypted, matching Heartwood's firmware.
 
 ```
-Amethyst / Primal / Voyage ...
-        | NIP-55 (intent + content provider)
+Android apps              Websites
+        | NIP-55 native      | nostrsigner: callback / clipboard
+        +--------------------+
      Cambium
         | NIP-46 over relays (NIP-44 envelopes)
    Nostr relay(s)  <--  Heartwood (WiFi-standalone)
@@ -47,6 +48,11 @@ Amethyst / Primal / Voyage ...
 4. In any Amber-compatible app: choose "login with external signer" and pick Cambium. Approve the
    request the first time; Cambium remembers that app afterwards. Every signature still comes from
    your hardware signer, gated by its own policy and physical button, not from this phone.
+
+Websites that support NIP-55 can open Cambium with a `nostrsigner:` link. Website requests always
+show a one-shot approval and are never remembered for the whole browser. Cambium returns the result
+to a validated HTTPS callback (or localhost during development), or copies it to the clipboard when
+the website did not provide a callback.
 
 Signing takes one relay round trip (roughly half a second to a couple of seconds) since every
 request goes out to Heartwood and back.
@@ -92,8 +98,9 @@ Install directly with an attached device:
 ## Status
 
 Pairing (scan or paste) with multiple Heartwood identities, NIP-46 client with a kept-warm
-session per identity, NIP-55 intent handling (`get_public_key`, `sign_event`, `nip04`/`nip44`
-encrypt/decrypt, `decrypt_zap_event`, `current_user` identity selection), a silent
+session per identity, NIP-55 native and web-intent handling (`get_public_key`, `sign_event`,
+`nip04`/`nip44` encrypt/decrypt, `decrypt_zap_event`, `current_user` identity selection), HTTPS
+callback and clipboard delivery for websites, a silent
 content-provider path that forwards those methods to Heartwood without a visible popup for
 already-approved apps, persistent per-app approval or denial, an optional keep-warm foreground
 service, a metadata-only activity log, and an optional biometric app lock. Kind-level permissions

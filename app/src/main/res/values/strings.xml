@@ -34,6 +34,7 @@
 
     <string name="approval_title">Signing request</string>
     <string name="approval_app_label">App</string>
+    <string name="approval_web_return_label">Returns to</string>
     <string name="approval_method_label">Request</string>
     <string name="approval_kind_label">Event kind</string>
     <string name="approval_identity_label">Identity</string>
@@ -45,6 +46,9 @@
     <string name="approval_deny_always">Always deny this app</string>
     <string name="approval_forwarding">Asking your signer…</string>
     <string name="approval_remember_app">Remember this app</string>
+    <string name="approval_unknown_caller">Unknown caller</string>
+    <string name="approval_web_clipboard_caller">Clipboard</string>
+    <string name="approval_web_one_shot_note">Website requests are approved once. Cambium never grants permission to the whole browser.</string>
 
     <string name="connected_apps_label">Connected apps</string>
     <string name="connected_apps_empty">No apps yet.</string>
@@ -78,6 +82,11 @@
     <string name="error_timeout">The signer did not respond in time.</string>
     <string name="error_relay">Could not reach the relay.</string>
     <string name="error_generic">Something went wrong: %1$s</string>
+    <string name="error_invalid_web_request">The website sent an invalid NIP-55 request.</string>
+    <string name="error_invalid_signer_response">The signer returned an invalid event.</string>
+    <string name="error_web_callback_unavailable">No app can open the website callback.</string>
+    <string name="web_result_clip_label">Nostr signer result</string>
+    <string name="web_result_copied">Signer result copied to the clipboard.</string>
 
     <string name="method_get_public_key">get_public_key</string>
     <string name="method_sign_event">sign_event</string>
