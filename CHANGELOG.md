@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.3.5 (2026-08-13)
+
+Review hygiene from F-Droid inclusion feedback. No behaviour changes.
 
 - The `ACCESS_NETWORK_STATE` permission is no longer requested. It was scaffold boilerplate:
   nothing in Cambium or its dependencies reads network state, so the app now asks only for

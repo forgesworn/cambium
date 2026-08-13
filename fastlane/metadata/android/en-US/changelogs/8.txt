@@ -1,0 +1,4 @@
+Review hygiene from F-Droid inclusion feedback. No behaviour changes.
+
+- The unused ACCESS_NETWORK_STATE permission is no longer requested.
+- The Gradle wrapper now pins the distribution's SHA-256, so a fresh build verifies the Gradle download before running it.
