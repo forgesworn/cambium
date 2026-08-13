@@ -14,8 +14,8 @@ what store metadata points at (F-Droid's `Donate:` field takes one URL).
 |---|---|---|
 | GitHub Releases | **Live** (v0.2.0 onward) | Ours (the 0.2.0 trust root) |
 | Obtainium | **Live** via GitHub Releases | Ours |
-| Zapstore | **Live** (0.3.6, published 2026-08-13) | Ours |
-| F-Droid | **MR open: [fdroiddata!42875](https://gitlab.com/fdroid/fdroiddata/-/merge_requests/42875)** — reviewed ("mostly ready"), in the test queue; the recipe must track each new release until merge | F-Droid's own key |
+| Zapstore | **Live** (0.4.0, published and read back 2026-08-13) | Ours |
+| F-Droid | **MR open: [fdroiddata!42875](https://gitlab.com/fdroid/fdroiddata/-/merge_requests/42875)** — reviewed ("mostly ready"), in the test queue; the recipe must track each new release until merge | Ours, when the reproducibility check passes |
 | IzzyOnDroid (optional extra) | Eligible; their tracker moved to Codeberg (account needed) | Ours |
 | Accrescent | **Blocked externally** — registration is allowlist-only | Ours |
 
@@ -95,13 +95,17 @@ to track each new release** — add a `Builds:` entry for the new tag and bump
 `cambium` branch of the `TheCryptoDonkey/fdroiddata` fork. Only once it is merged does
 `AutoUpdateMode: Version` take over and track our tags unattended.
 
+The open MR was updated for 0.4.0 on 2026-08-13 at fork commit `d85c9e16e`. Its reviewed recipe
+uses `Binaries:` plus `AllowedAPKSigningKeys:` and pins each build to an exact source commit. If
+F-Droid's rebuild matches the upstream APK, F-Droid publishes our signed binary; if it does not
+match, that version is skipped rather than replaced with an F-Droid-signed build.
+
 Two caveats to state in the MR and be aware of:
 
-- **F-Droid signs its own builds.** The F-Droid APK will not be upgrade-compatible with our
-  GitHub/Zapstore APK (different signer). That is normal (Amber is in the same position). The
-  later alternative — reproducible builds with `Binaries:` + `AllowedAPKSigningKeys`, so F-Droid
-  ships our signature — is worth pursuing once the build is proven bit-reproducible, but is not
-  a prerequisite for listing.
+- **Reproducibility is now the listing gate.** The recipe asks F-Droid to rebuild from source,
+  compare the result with our GitHub APK, and publish only the matching upstream-signed binary.
+  That keeps GitHub, Zapstore and F-Droid upgrade-compatible, but a non-reproducible version will
+  be skipped until its difference is fixed.
 - `AutoUpdateMode: Version` means future tagged releases are picked up automatically **once the
   MR is merged**; only the first listing needs a human. Until then, every release needs the recipe
   updating by hand (see above).

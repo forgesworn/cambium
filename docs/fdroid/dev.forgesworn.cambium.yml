@@ -19,15 +19,9 @@ AutoName: Cambium
 
 RepoType: git
 Repo: https://github.com/forgesworn/cambium.git
+Binaries: https://github.com/forgesworn/cambium/releases/download/v%v/cambium-%v.apk
 
 Builds:
-  - versionName: 0.3.2
-    versionCode: 5
-    commit: v0.3.2
-    subdir: app
-    gradle:
-      - yes
-
   - versionName: 0.3.6
     versionCode: 9
     commit: 08526c4fd74846da1dba1c498241a04961e56617
@@ -37,10 +31,12 @@ Builds:
 
   - versionName: 0.4.0
     versionCode: 10
-    commit: v0.4.0
+    commit: c338af6c4f32ce6a512d8b1a312a835a76defc20
     subdir: app
     gradle:
       - yes
+
+AllowedAPKSigningKeys: 9ea188efa9015f7e7f90e1888f586f527b2a0e8a6dcdb3991e41fb4f14eeefc6
 
 AutoUpdateMode: Version
 UpdateCheckMode: Tags ^v[0-9]+\.[0-9]+\.[0-9]+$
