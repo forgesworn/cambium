@@ -1,0 +1,5 @@
+Website NIP-55 support and minimal-event compatibility.
+
+- Websites can request signing through `nostrsigner:` links, with explicit one-shot approval and validated callbacks.
+- Browser requests never inherit native-app permissions.
+- Events containing only `kind` and `content` now sign correctly. Cambium safely supplies the paired signer identity, timestamp, and empty tags before forwarding them to Heartwood.

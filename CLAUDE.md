@@ -363,6 +363,9 @@ Android apps              Websites
   `signature` cursor column for forwarded `SIGN_EVENT`). kotlinx.serialization rather than
   `org.json`, for the same reason as `nip57/PrivateZap.kt` -- `org.json` is a non-functional stub
   on the host JVM -- so this stays genuinely JVM-tested, including against adversarial event JSON.
+  `normaliseUnsignedEvent` also supplies a missing `pubkey` from the exact NIP-46 session identity,
+  plus Amber-compatible `created_at`/`tags` defaults, before rust-nostr parses a `sign_event`;
+  NIP-55's own web example contains only `kind` and `content`.
 - `pairing/QrPairingScan.kt` -- pure Kotlin (no Android, no zxing), same JVM-testable pattern as
   `BunkerUri.kt`: turns a raw scan result string into `Accepted`/`Rejected`/`Cancelled`. `null`
   (zxing's cancelled-scan result) maps to `Cancelled` (no error shown); a `nostrconnect://` link

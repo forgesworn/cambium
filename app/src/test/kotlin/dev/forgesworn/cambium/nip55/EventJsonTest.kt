@@ -93,6 +93,7 @@ class EventJsonTest {
         // Primal's login sign_event arrives exactly like this: no created_at at all.
         val withDefault = normaliseUnsignedEvent(
             """{"pubkey":"c3d4","tags":[],"kind":30078,"content":"{}"}""",
+            signerPubkeyHex = "unused",
             nowEpochSeconds = 1720000123,
         )
         val obj = Json.parseToJsonElement(withDefault).jsonObject
@@ -106,6 +107,7 @@ class EventJsonTest {
         // Primal's wallet-operation sign_event arrives like this: no tags field at all.
         val withDefault = normaliseUnsignedEvent(
             """{"pubkey":"c3d4","created_at":1720000000,"kind":10000300,"content":"{}"}""",
+            signerPubkeyHex = "unused",
             nowEpochSeconds = 1720000123,
         )
         val obj = Json.parseToJsonElement(withDefault).jsonObject
@@ -117,6 +119,7 @@ class EventJsonTest {
     fun `an event missing both fields gains both`() {
         val withDefaults = normaliseUnsignedEvent(
             """{"pubkey":"c3d4","kind":1,"content":"hello"}""",
+            signerPubkeyHex = "unused",
             nowEpochSeconds = 42,
         )
         val obj = Json.parseToJsonElement(withDefaults).jsonObject
@@ -125,14 +128,40 @@ class EventJsonTest {
     }
 
     @Test
+    fun `the minimal NIP-55 web event gains the connected signer pubkey and other defaults`() {
+        val signerPubkey = "ab".repeat(32)
+        val withDefaults = normaliseUnsignedEvent(
+            """{"kind":1,"content":"test"}""",
+            signerPubkeyHex = signerPubkey,
+            nowEpochSeconds = 42,
+        )
+        val obj = Json.parseToJsonElement(withDefaults).jsonObject
+        assertEquals(signerPubkey, obj["pubkey"]?.jsonPrimitive?.content)
+        assertEquals(42, obj["created_at"]?.jsonPrimitive?.long)
+        assertEquals("[]", obj["tags"]?.toString())
+        assertEquals(1, obj["kind"]?.jsonPrimitive?.long?.toInt())
+        assertEquals("test", obj["content"]?.jsonPrimitive?.content)
+    }
+
+    @Test
     fun `a complete event is never rewritten`() {
-        val untouched = normaliseUnsignedEvent(signedEvent, nowEpochSeconds = 9999999999)
+        val untouched = normaliseUnsignedEvent(
+            signedEvent,
+            signerPubkeyHex = "different-pubkey-must-not-replace-explicit-value",
+            nowEpochSeconds = 9999999999,
+        )
         assertEquals(signedEvent, untouched)
     }
 
     @Test
     fun `malformed json passes through unchanged for rust-nostr to reject`() {
-        assertEquals("not json at all", normaliseUnsignedEvent("not json at all", nowEpochSeconds = 1))
-        assertEquals("""[{"kind":1}]""", normaliseUnsignedEvent("""[{"kind":1}]""", nowEpochSeconds = 1))
+        assertEquals(
+            "not json at all",
+            normaliseUnsignedEvent("not json at all", signerPubkeyHex = "unused", nowEpochSeconds = 1),
+        )
+        assertEquals(
+            """[{"kind":1}]""",
+            normaliseUnsignedEvent("""[{"kind":1}]""", signerPubkeyHex = "unused", nowEpochSeconds = 1),
+        )
     }
 }

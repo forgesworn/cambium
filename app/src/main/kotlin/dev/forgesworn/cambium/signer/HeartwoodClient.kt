@@ -91,6 +91,8 @@ interface HeartwoodClient {
 class RustNostrHeartwoodClient : HeartwoodClient {
 
     private var session: NostrConnect? = null
+    /** The user identity proved by this exact NIP-46 session's connect handshake. */
+    private var signerPubkeyHex: String? = null
 
     override suspend fun connect(bunkerUri: String, clientSecretKeyHex: String): HeartwoodResult<String> =
         heartwoodCatch {
@@ -105,8 +107,17 @@ class RustNostrHeartwoodClient : HeartwoodClient {
                 val keys = Keys(SecretKey.parse(clientSecretKeyHex))
                 val client = NostrConnect(uri, keys, CALL_TIMEOUT, RelayOptions())
                 session?.close()
-                session = client
-                client.getPublicKey().toHex()
+                session = null
+                signerPubkeyHex = null
+                try {
+                    client.getPublicKey().toHex().also { connectedPubkeyHex ->
+                        session = client
+                        signerPubkeyHex = connectedPubkeyHex
+                    }
+                } catch (error: Exception) {
+                    client.close()
+                    throw error
+                }
             }
         }
 
@@ -114,14 +125,21 @@ class RustNostrHeartwoodClient : HeartwoodClient {
         client.getPublicKey().toHex()
     }
 
-    override suspend fun signEvent(eventJson: String): HeartwoodResult<String> = withSession { client ->
-        // Missing created_at/tags are de-facto valid NIP-55 (Amber fills them; Primal omits
-        // both) but rust-nostr's parser rejects each, so they are defaulted before the FFI
-        // boundary -- see nip55/EventJson.kt's normaliseUnsignedEvent.
-        val unsigned = UnsignedEvent.fromJson(
-            normaliseUnsignedEvent(eventJson, nowEpochSeconds = System.currentTimeMillis() / 1000L),
-        )
-        client.signEvent(unsigned).asJson()
+    override suspend fun signEvent(eventJson: String): HeartwoodResult<String> {
+        val connectedPubkeyHex = signerPubkeyHex
+            ?: return HeartwoodResult.Failure(HeartwoodError.NotConnected)
+        return withSession { client ->
+            // NIP-55's web example omits pubkey, created_at and tags; Amber/Primal-compatible
+            // defaults are applied from this session's handshake identity before rust-nostr parses it.
+            val unsigned = UnsignedEvent.fromJson(
+                normaliseUnsignedEvent(
+                    eventJson,
+                    signerPubkeyHex = connectedPubkeyHex,
+                    nowEpochSeconds = System.currentTimeMillis() / 1000L,
+                ),
+            )
+            client.signEvent(unsigned).asJson()
+        }
     }
 
     override suspend fun nip04Encrypt(pubkeyHex: String, content: String): HeartwoodResult<String> =
@@ -139,6 +157,7 @@ class RustNostrHeartwoodClient : HeartwoodClient {
     override fun disconnect() {
         session?.close()
         session = null
+        signerPubkeyHex = null
     }
 
     private suspend fun withSession(block: suspend (NostrConnect) -> String): HeartwoodResult<String> {
