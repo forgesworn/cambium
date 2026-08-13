@@ -5,6 +5,8 @@
 - The `ACCESS_NETWORK_STATE` permission is no longer requested. It was scaffold boilerplate:
   nothing in Cambium or its dependencies reads network state, so the app now asks only for
   what it uses.
+- The Gradle wrapper now pins the distribution's SHA-256 (`distributionSha256Sum`), so a fresh
+  build verifies the Gradle download before running it. Requested in F-Droid review.
 
 ## 0.3.4 (2026-08-12)
 
