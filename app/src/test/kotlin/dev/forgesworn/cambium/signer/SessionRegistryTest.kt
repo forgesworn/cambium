@@ -47,10 +47,18 @@ class SessionRegistryTest {
     private fun registry(
         factoryCalls: AtomicInteger = AtomicInteger(0),
         silentTimeoutMillis: Long = 15_000L,
+        intentTimeoutMillis: Long = 20_000L,
+        sessionMaxIdleMillis: Long = 5 * 60_000L,
+        signCacheTtlMillis: Long = 60_000L,
+        elapsedRealtimeMillis: () -> Long = { System.nanoTime() / 1_000_000L },
         client: () -> HeartwoodClient = { FakeClient() },
     ) = SessionRegistry(
         clientFactory = { factoryCalls.incrementAndGet(); client() },
         silentTimeoutMillis = silentTimeoutMillis,
+        intentTimeoutMillis = intentTimeoutMillis,
+        sessionMaxIdleMillis = sessionMaxIdleMillis,
+        signCacheTtlMillis = signCacheTtlMillis,
+        elapsedRealtimeMillis = elapsedRealtimeMillis,
     )
 
     private fun valueOf(outcome: HeartwoodOutcome<String>?): String? =
@@ -61,6 +69,8 @@ class SessionRegistryTest {
 
     private fun decryptKey(payload: String) =
         CacheableDecrypt(CacheableDecrypt.Method.NIP44, "c3".repeat(32), payload)
+
+    private fun signKey(payload: String) = CacheableSign(payload)
 
     // -- admission control --
 
@@ -234,6 +244,50 @@ class SessionRegistryTest {
         }
     }
 
+    @Test
+    fun `an expired caller is not retried after reconnect finishes`() = runBlocking {
+        val connects = AtomicInteger(0)
+        val retryConnectStarted = CompletableDeferred<Unit>()
+        val releaseRetryConnect = CompletableDeferred<Unit>()
+        val operationCalls = AtomicInteger(0)
+        val registry = registry(
+            silentTimeoutMillis = 150L,
+            client = {
+                object : FakeClient() {
+                    override suspend fun connect(
+                        bunkerUri: String,
+                        clientSecretKeyHex: String,
+                    ): HeartwoodResult<String> {
+                        if (connects.incrementAndGet() == 2) {
+                            retryConnectStarted.complete(Unit)
+                            releaseRetryConnect.await()
+                        }
+                        return HeartwoodResult.Success("f".repeat(64))
+                    }
+                }
+            },
+        )
+        try {
+            val outcome = async(start = CoroutineStart.UNDISPATCHED) {
+                registry.trySilent(pairingA) {
+                    operationCalls.incrementAndGet()
+                    HeartwoodResult.Failure(HeartwoodError.Timeout)
+                }
+            }
+
+            retryConnectStarted.await()
+            assertNull(outcome.await())
+            releaseRetryConnect.complete(Unit)
+            registry.withClient(pairingA) { HeartwoodResult.Success("barrier") }
+
+            assertEquals(1, operationCalls.get())
+            assertEquals(2, connects.get())
+        } finally {
+            releaseRetryConnect.complete(Unit)
+            registry.shutdownAll()
+        }
+    }
+
     // -- decrypt cache --
 
     @Test
@@ -284,6 +338,66 @@ class SessionRegistryTest {
             assertTrue(first.await() is HeartwoodOutcome.Fresh)
             assertTrue(second.await() is HeartwoodOutcome.Cached)
             assertEquals(1, calls.get())
+        } finally {
+            registry.shutdownAll()
+        }
+    }
+
+    @Test
+    fun `identical auth signatures in flight share one Heartwood call`() = runBlocking {
+        val registry = registry()
+        try {
+            val key = signKey("same unsigned kind 22242 event")
+            val started = CompletableDeferred<Unit>()
+            val gate = CompletableDeferred<Unit>()
+            val calls = AtomicInteger(0)
+            val first = async(start = CoroutineStart.UNDISPATCHED) {
+                registry.trySilent(pairingA, priority = HeartwoodRequestPriority.AUTH, cacheableSign = key) {
+                    calls.incrementAndGet()
+                    started.complete(Unit)
+                    gate.await()
+                    HeartwoodResult.Success("signed auth")
+                }
+            }
+            started.await()
+            val duplicates = (1..5).map {
+                async(start = CoroutineStart.UNDISPATCHED) {
+                    registry.trySilent(pairingA, priority = HeartwoodRequestPriority.AUTH, cacheableSign = key) {
+                        calls.incrementAndGet()
+                        HeartwoodResult.Success("must not run")
+                    }
+                }
+            }
+
+            gate.complete(Unit)
+            assertTrue(first.await() is HeartwoodOutcome.Fresh)
+            duplicates.forEach { duplicate ->
+                assertTrue(duplicate.await() is HeartwoodOutcome.Cached)
+            }
+            assertEquals(1, calls.get())
+        } finally {
+            registry.shutdownAll()
+        }
+    }
+
+    @Test
+    fun `an auth signature cache entry expires and is signed again`() = runBlocking {
+        val now = java.util.concurrent.atomic.AtomicLong(1_000L)
+        val registry = registry(
+            signCacheTtlMillis = 5_000L,
+            elapsedRealtimeMillis = now::get,
+        )
+        try {
+            val key = signKey("expiring unsigned kind 22242 event")
+            val calls = AtomicInteger(0)
+            val operation: suspend (HeartwoodClient) -> HeartwoodResult<String> = {
+                HeartwoodResult.Success("signed-${calls.incrementAndGet()}")
+            }
+
+            assertEquals("signed-1", valueOf(registry.trySilent(pairingA, cacheableSign = key, operation = operation)))
+            now.addAndGet(5_001L)
+            assertEquals("signed-2", valueOf(registry.trySilent(pairingA, cacheableSign = key, operation = operation)))
+            assertEquals(2, calls.get())
         } finally {
             registry.shutdownAll()
         }
@@ -385,6 +499,53 @@ class SessionRegistryTest {
             assertEquals("fresh plain", valueOf(after))
             assertEquals(1, calls.get())
             assertEquals(2, factoryCalls.get()) // and a fresh client was constructed
+        } finally {
+            registry.shutdownAll()
+        }
+    }
+
+    @Test
+    fun `a transport timeout invalidates the failed client before the next request`() = runBlocking {
+        val factoryCalls = AtomicInteger(0)
+        val registry = registry(factoryCalls)
+        try {
+            val operationCalls = AtomicInteger(0)
+            val first = registry.trySilent(pairingA) {
+                operationCalls.incrementAndGet()
+                HeartwoodResult.Failure(HeartwoodError.Timeout)
+            }
+            assertEquals(HeartwoodError.Timeout, errorOf(first))
+            assertEquals(2, operationCalls.get()) // one retry while this caller is still waiting
+            assertEquals(2, factoryCalls.get())
+
+            val next = registry.trySilent(pairingA) { HeartwoodResult.Success("fresh") }
+            assertEquals("fresh", valueOf(next))
+            assertEquals(3, factoryCalls.get())
+        } finally {
+            registry.shutdownAll()
+        }
+    }
+
+    @Test
+    fun `an idle session reconnects before running the next operation`() = runBlocking {
+        val now = java.util.concurrent.atomic.AtomicLong(1_000L)
+        val factoryCalls = AtomicInteger(0)
+        val registry = registry(
+            factoryCalls = factoryCalls,
+            sessionMaxIdleMillis = 5_000L,
+            elapsedRealtimeMillis = now::get,
+        )
+        try {
+            assertEquals("first", valueOf(registry.trySilent(pairingA) { HeartwoodResult.Success("first") }))
+            assertEquals(1, factoryCalls.get())
+
+            now.addAndGet(4_999L)
+            assertEquals("warm", valueOf(registry.trySilent(pairingA) { HeartwoodResult.Success("warm") }))
+            assertEquals(1, factoryCalls.get())
+
+            now.addAndGet(5_001L)
+            assertEquals("fresh", valueOf(registry.trySilent(pairingA) { HeartwoodResult.Success("fresh") }))
+            assertEquals(2, factoryCalls.get())
         } finally {
             registry.shutdownAll()
         }

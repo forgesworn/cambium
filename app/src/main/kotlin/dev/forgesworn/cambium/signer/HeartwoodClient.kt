@@ -29,8 +29,8 @@ sealed interface HeartwoodResult<out T> {
     data class Failure(val error: HeartwoodError) : HeartwoodResult<Nothing>
 }
 
-/** Wraps a [HeartwoodResult] with whether it was answered from [DecryptCache] without ever
- * reaching the worker, or came from a real call against Heartwood -- [HeartwoodSession.trySilent]/
+/** Wraps a [HeartwoodResult] with whether it was answered from [DecryptCache] or [SignCache]
+ * without reaching Heartwood, or came from a real call -- [HeartwoodSession.trySilent]/
  * [HeartwoodSession.withClient] return this instead of a bare [HeartwoodResult] so a caller (the
  * activity log) can record an accurate signed-vs-answered-from-cache outcome rather than guessing. */
 sealed interface HeartwoodOutcome<out T> {
@@ -235,8 +235,9 @@ object HeartwoodSession {
         pairing: Pairing,
         cacheable: CacheableDecrypt? = null,
         priority: HeartwoodRequestPriority = HeartwoodRequestPriority.INTERACTIVE,
+        cacheableSign: CacheableSign? = null,
         operation: suspend (HeartwoodClient) -> HeartwoodResult<String>,
-    ): HeartwoodOutcome<String>? = registry.trySilent(pairing, cacheable, priority, operation)
+    ): HeartwoodOutcome<String>? = registry.trySilent(pairing, cacheable, priority, cacheableSign, operation)
 
     suspend fun withClient(
         pairing: Pairing,
