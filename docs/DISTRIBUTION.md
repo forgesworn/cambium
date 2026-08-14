@@ -12,17 +12,17 @@ what store metadata points at (F-Droid's `Donate:` field takes one URL).
 
 | Channel | Status | Signature users get |
 |---|---|---|
-| GitHub Releases | **Live** (0.4.1 current; v0.2.0 onward) | Ours (the 0.2.0 trust root) |
-| Obtainium | **Live** via the 0.4.1 GitHub release | Ours |
-| Zapstore | **Live through 0.4.0**; 0.4.1 awaits a Heartwood-signed publish | Ours |
-| F-Droid | **MR open: [fdroiddata!42875](https://gitlab.com/fdroid/fdroiddata/-/merge_requests/42875)** — reviewed ("mostly ready"), in the test queue; the local recipe tracks 0.4.1 but the MR branch still needs the same update | Ours, when the reproducibility check passes |
+| GitHub Releases | **Live** (0.4.2 current; v0.2.0 onward) | Ours (the 0.2.0 trust root) |
+| Obtainium | **Live** via the 0.4.2 GitHub release | Ours |
+| Zapstore | **Live through 0.4.0**; 0.4.1-0.4.2 await a Heartwood-signed publish | Ours |
+| F-Droid | **MR open: [fdroiddata!42875](https://gitlab.com/fdroid/fdroiddata/-/merge_requests/42875)** — reviewed ("mostly ready"), in the test queue; the local recipe tracks 0.4.2 but the MR branch still needs the same update | Ours, when the reproducibility check passes |
 | IzzyOnDroid (optional extra) | Eligible; their tracker moved to Codeberg (account needed) | Ours |
 | Accrescent | **Blocked externally** — registration is allowlist-only | Ours |
 
 ## GitHub Releases (live)
 
-0.4.1 was published and read back on 2026-08-14. Its APK SHA-256 is
-`ec7df068a2e22f29c2564e6ea901cad5a37869775c2d8199069518dc7cc3d961`, and its signing
+0.4.2 was published and read back on 2026-08-14. Its APK SHA-256 is
+`8a75f424e9f49007097e2fb8dface3411f58d7d5c3bc80b493c6da25fcaf9934`, and its signing
 certificate matches the 0.2.0 trust root below.
 
 The existing flow: bump `versionCode`/`versionName`, tag `vX.Y.Z`, build with the release
@@ -44,9 +44,9 @@ obtainium://add/https://github.com/forgesworn/cambium
 
 ## Zapstore (live)
 
-0.4.1 is not published here yet: the GitHub release is ready, but `zsp publish` still needs the
-publisher Heartwood's bunker credential and physical signing approval. Zapstore currently serves
-0.4.0.
+0.4.1 and 0.4.2 are not published here yet: the GitHub releases are ready, but `zsp publish`
+still needs the publisher Heartwood's bunker credential and physical signing approval. Zapstore
+currently serves 0.4.0.
 
 **First published 2026-07-14 (v0.3.2), signed via a Heartwood `bunker://` connection** — the
 release events (kind 32267 app, 30063 release, 3063 file) are on `wss://relay.zapstore.dev`
@@ -103,7 +103,7 @@ to track each new release** — add a `Builds:` entry for the new tag and bump
 `cambium` branch of the `TheCryptoDonkey/fdroiddata` fork. Only once it is merged does
 `AutoUpdateMode: Version` take over and track our tags unattended.
 
-The local draft recipe now includes 0.4.1/versionCode 11 at source commit `eb44e3b6`, but the open
+The local draft recipe now includes 0.4.2/versionCode 12 at source commit `1356a982`, but the open
 MR still points at its 0.4.0 fork commit `d85c9e16e`; that branch needs the same nine-line recipe
 update once GitLab authentication is available. Its reviewed recipe uses `Binaries:` plus
 `AllowedAPKSigningKeys:` and pins each build to an exact source commit. If
