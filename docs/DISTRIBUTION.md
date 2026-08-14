@@ -14,7 +14,7 @@ what store metadata points at (F-Droid's `Donate:` field takes one URL).
 |---|---|---|
 | GitHub Releases | **Live** (0.4.3 current; v0.2.0 onward) | Ours (the 0.2.0 trust root) |
 | Obtainium | **Live** via the 0.4.3 GitHub release | Ours |
-| Zapstore | **Republish required**; the listing is discoverable but currently shows no downloadable releases | Ours |
+| Zapstore | **Live** (0.4.3 current; v0.3.2 onward) | Ours |
 | F-Droid | **MR open: [fdroiddata!42875](https://gitlab.com/fdroid/fdroiddata/-/merge_requests/42875)** — reviewed ("mostly ready"), in the test queue; the local recipe tracks 0.4.3 but the MR branch still needs the same update | Ours, when the reproducibility check passes |
 | IzzyOnDroid (optional extra) | Eligible; their tracker moved to Codeberg (account needed) | Ours |
 | Accrescent | **Blocked externally** — registration is allowlist-only | Ours |
@@ -42,12 +42,13 @@ Nothing to maintain — Obtainium tracks GitHub Releases directly. One-tap add l
 obtainium://add/https://github.com/forgesworn/cambium
 ```
 
-## Zapstore (republish required)
+## Zapstore (live)
 
-The listing metadata is discoverable, but its public page currently reports "No releases found",
-so Zapstore is not an install channel today. Versions 0.4.1 through 0.4.3 have not been published
-there; the GitHub releases are ready, but `zsp publish` still needs the publisher Heartwood's bunker
-credential and physical signing approval. Republish 0.4.3 before describing Zapstore as live again.
+Version 0.4.3 was published on 2026-08-14 through the publisher Heartwood bunker connection. The
+kind 32267 app, kind 30063 release and kind 3063 file events are live on `wss://relay.zapstore.dev`
+under the publisher identity below. The CDN serves the APK byte-identically to GitHub (SHA-256
+`857453f021569c9dffc59afc96e295e4b96afe21cd49224b1aecaaa06d65e983`) and the matching icon. The
+catalog page may take a short while to refresh its release list after relay publication.
 
 **First published 2026-07-14 (v0.3.2), signed via a Heartwood `bunker://` connection** — the
 release events (kind 32267 app, 30063 release, 3063 file) are on `wss://relay.zapstore.dev`
