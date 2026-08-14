@@ -16,6 +16,7 @@ import dev.forgesworn.cambium.pairing.IdentityRouting
 import dev.forgesworn.cambium.pairing.Pairing
 import dev.forgesworn.cambium.pairing.PairingStore
 import dev.forgesworn.cambium.signer.CacheableDecrypt
+import dev.forgesworn.cambium.signer.CacheableSign
 import dev.forgesworn.cambium.signer.HeartwoodClient
 import dev.forgesworn.cambium.signer.HeartwoodOutcome
 import dev.forgesworn.cambium.signer.HeartwoodRequestPriority
@@ -83,6 +84,9 @@ import kotlinx.coroutines.runBlocking
  * NIP04_DECRYPT and NIP44_DECRYPT results (successes and deterministic failures alike) are cached
  * by [HeartwoodSession] itself -- see its class doc -- since Amethyst was observed re-requesting
  * the same decrypt repeatedly while browsing, including legacy content that will never decrypt.
+ * Exact NIP-42 AUTH events are also coalesced and cached briefly: Amethyst can submit the same
+ * relay challenge through several connections at once, and one signed kind-22242 result is valid
+ * for every byte-identical copy. No other signature is cacheable.
  *
  * A caller with a *remembered* denial (see [PairingStore.deny], set from the approval sheet's
  * "always deny" link) gets `rejected` immediately, for every authority, without ever resolving a
@@ -190,8 +194,9 @@ class SignerProvider : ContentProvider() {
             payload,
             otherPubkey = "",
             includeEventAndSignature = true,
-            cacheable = null, // signs are never cached
+            cacheable = null, // decrypt cache; exact NIP-42 reuse is passed separately below
             priority = ProviderGate.priorityForSignEvent(eventKind),
+            cacheableSign = if (eventKind == ProviderGate.NIP42_AUTH_KIND) CacheableSign(payload) else null,
         ) { client, p, _ -> client.signEvent(p) }
     }
 
@@ -276,7 +281,7 @@ class SignerProvider : ContentProvider() {
             includeEventAndSignature = false,
             cacheable,
             priority,
-            call,
+            call = call,
         )
     }
 
@@ -366,11 +371,14 @@ class SignerProvider : ContentProvider() {
         includeEventAndSignature: Boolean,
         cacheable: CacheableDecrypt?,
         priority: HeartwoodRequestPriority,
+        cacheableSign: CacheableSign? = null,
         call: suspend (HeartwoodClient, String, String) -> HeartwoodResult<String>,
     ): Cursor? {
         val startedAt = SystemClock.elapsedRealtime()
         val outcome = runBlocking {
-            HeartwoodSession.trySilent(pairing, cacheable, priority) { client -> call(client, payload, otherPubkey) }
+            HeartwoodSession.trySilent(pairing, cacheable, priority, cacheableSign) { client ->
+                call(client, payload, otherPubkey)
+            }
         }
         val elapsed = SystemClock.elapsedRealtime() - startedAt
 

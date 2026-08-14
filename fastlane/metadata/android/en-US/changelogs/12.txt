@@ -1,0 +1,5 @@
+More reliable signing after idle and under Amethyst relay activity.
+
+- Stale Heartwood sessions are replaced instead of poisoning the next request.
+- Abandoned requests no longer retry in the background.
+- Identical NIP-42 relay-auth requests share one hardware signature; posts and reactions remain uncached.

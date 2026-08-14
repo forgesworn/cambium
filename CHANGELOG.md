@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 0.4.2 (2026-08-14)
+
+- Stale NIP-46 sessions are now discarded after a transport failure and rebuilt before the next
+  request after a long idle. A caller which expires during reconnect can no longer cause its
+  abandoned signing operation to run a second time in the background.
+- Concurrent copies of the same NIP-42 relay-authentication event now share one Heartwood call and
+  briefly reuse that exact signed result. The cache is bounded, per identity, and applies only to
+  kind 22242; posts, reactions, and arbitrary signing requests are never cached.
+
 ## 0.4.1 (2026-08-14)
 
 - Approved Amethyst requests no longer turn provider overload into a second wave of foreground
