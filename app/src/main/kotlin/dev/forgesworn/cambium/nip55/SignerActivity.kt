@@ -472,7 +472,7 @@ class SignerActivity : AppCompatActivity() {
             silentBackPressBlock.isEnabled = true
         }
         lifecycleScope.launch {
-            val outcome = HeartwoodSession.withClient(pairing, cacheable, operation)
+            val outcome = HeartwoodSession.withClient(pairing, cacheable, operation = operation)
             logActivity(request, context, pairing.displayLabel(), ActivityLog.outcomeFor(outcome))
             when (val result = outcome.result) {
                 is HeartwoodResult.Success -> respondSuccess(
@@ -550,6 +550,7 @@ class SignerActivity : AppCompatActivity() {
         if (!silent) {
             val message = when (error) {
                 HeartwoodError.NotConnected -> getString(R.string.error_not_paired)
+                HeartwoodError.Busy -> getString(R.string.error_busy)
                 HeartwoodError.Timeout -> getString(R.string.error_timeout)
                 is HeartwoodError.InvalidInput -> error.message
                 is HeartwoodError.Protocol -> error.message

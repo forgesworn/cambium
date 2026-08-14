@@ -18,6 +18,7 @@ import dev.forgesworn.cambium.MainActivity
 import dev.forgesworn.cambium.R
 import dev.forgesworn.cambium.pairing.PairingStore
 import dev.forgesworn.cambium.signer.HeartwoodResult
+import dev.forgesworn.cambium.signer.HeartwoodRequestPriority
 import dev.forgesworn.cambium.signer.HeartwoodSession
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -50,10 +51,9 @@ import kotlinx.coroutines.launch
  *
  * The ping goes through [HeartwoodSession.trySilent], the shedding path, not [HeartwoodSession.withClient]:
  * a real request against a slow or unreachable Heartwood can occupy that identity's worker for up
- * to [HeartwoodSession]'s silent timeout, and `withClient` always queues regardless of how busy
- * the worker already is, which would let a ping inflate queue depth against `MAX_QUEUED` and get
- * a real Amethyst burst shed into visible popups -- the exact regression the queue exists to
- * prevent. `trySilent` refuses immediately if the queue is non-empty, which is also the right
+ * to [HeartwoodSession]'s silent timeout. A keepalive has maintenance priority and can only enter
+ * an empty worker, so it never consumes one of the slots reserved for real Amethyst work.
+ * `trySilent` refuses it immediately if the queue is non-empty, which is also the right
  * behaviour here on its own terms: a busy queue means the session is demonstrably warm already,
  * so a skipped ping loses nothing.
  *
@@ -114,7 +114,10 @@ class HeartwoodKeepAliveService : Service() {
                 }
                 for (pairing in pairings) {
                     val tag = pairing.signerPubkeyHex.take(8)
-                    when (val result = HeartwoodSession.trySilent(pairing) { it.getPublicKey() }?.result) {
+                    when (val result = HeartwoodSession.trySilent(
+                        pairing,
+                        priority = HeartwoodRequestPriority.MAINTENANCE,
+                    ) { it.getPublicKey() }?.result) {
                         is HeartwoodResult.Success -> Log.d(TAG, "keepalive ping ok ($tag)")
                         is HeartwoodResult.Failure -> Log.d(TAG, "keepalive ping failed ($tag): ${result.error}")
                         null -> Log.d(TAG, "keepalive ping skipped ($tag): worker already busy")

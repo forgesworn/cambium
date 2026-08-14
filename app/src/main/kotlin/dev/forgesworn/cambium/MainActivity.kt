@@ -369,6 +369,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun errorMessage(error: HeartwoodError): String = when (error) {
         HeartwoodError.NotConnected -> getString(R.string.error_not_paired)
+        HeartwoodError.Busy -> getString(R.string.error_busy)
         HeartwoodError.Timeout -> getString(R.string.error_timeout)
         is HeartwoodError.InvalidInput -> error.message
         is HeartwoodError.Protocol -> getString(R.string.error_generic, error.message)

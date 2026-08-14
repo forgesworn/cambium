@@ -112,7 +112,7 @@ class SessionRegistryTest {
     }
 
     @Test
-    fun `the intent path always queues rather than shedding`() = runBlocking {
+    fun `the intent path is bounded by the same admission limit`() = runBlocking {
         val registry = registry()
         try {
             val gate = CompletableDeferred<Unit>()
@@ -121,13 +121,54 @@ class SessionRegistryTest {
                     registry.trySilent(pairingA) { gate.await(); HeartwoodResult.Success("a") }
                 }
             }
-            val intent = async(start = CoroutineStart.UNDISPATCHED) {
-                registry.withClient(pairingA) { HeartwoodResult.Success("intent") }
+            val intent = registry.withClient(pairingA) { HeartwoodResult.Success("intent") }
+
+            assertEquals(HeartwoodError.Busy, errorOf(intent))
+            gate.complete(Unit)
+            occupying.forEach { it.await() }
+        } finally {
+            registry.shutdownAll()
+        }
+    }
+
+    @Test
+    fun `interactive work keeps a reserved slot and runs before queued background work`() = runBlocking {
+        val registry = registry()
+        try {
+            val started = CompletableDeferred<Unit>()
+            val gate = CompletableDeferred<Unit>()
+            val order = mutableListOf<String>()
+            val active = async(start = CoroutineStart.UNDISPATCHED) {
+                registry.trySilent(pairingA, priority = HeartwoodRequestPriority.BACKGROUND) {
+                    started.complete(Unit)
+                    gate.await()
+                    order += "active-background"
+                    HeartwoodResult.Success("active")
+                }
+            }
+            started.await()
+            val queuedBackground = async(start = CoroutineStart.UNDISPATCHED) {
+                registry.trySilent(pairingA, priority = HeartwoodRequestPriority.BACKGROUND) {
+                    order += "queued-background"
+                    HeartwoodResult.Success("background")
+                }
+            }
+
+            assertNull(registry.trySilent(pairingA, priority = HeartwoodRequestPriority.AUTH) {
+                HeartwoodResult.Success("shed-auth")
+            })
+            val interactive = async(start = CoroutineStart.UNDISPATCHED) {
+                registry.trySilent(pairingA, priority = HeartwoodRequestPriority.INTERACTIVE) {
+                    order += "interactive"
+                    HeartwoodResult.Success("interactive")
+                }
             }
 
             gate.complete(Unit)
-            assertEquals("intent", valueOf(intent.await()))
-            occupying.forEach { it.await() }
+            assertEquals("active", valueOf(active.await()))
+            assertEquals("interactive", valueOf(interactive.await()))
+            assertEquals("background", valueOf(queuedBackground.await()))
+            assertEquals(listOf("active-background", "interactive", "queued-background"), order)
         } finally {
             registry.shutdownAll()
         }
@@ -136,12 +177,15 @@ class SessionRegistryTest {
     // -- caller cancellation safety --
 
     @Test
-    fun `a caller abandoning its wait does not cancel work already handed to the worker`() = runBlocking {
+    fun `an active call can finish and populate cache after its caller times out`() = runBlocking {
         val registry = registry(silentTimeoutMillis = 150L)
         try {
             val gate = CompletableDeferred<Unit>()
             val ran = CompletableDeferred<Unit>()
-            val outcome = registry.trySilent(pairingA) {
+            val calls = AtomicInteger(0)
+            val key = decryptKey("late ciphertext")
+            val outcome = registry.trySilent(pairingA, key) {
+                calls.incrementAndGet()
                 gate.await()
                 ran.complete(Unit)
                 HeartwoodResult.Success("late")
@@ -150,6 +194,41 @@ class SessionRegistryTest {
 
             gate.complete(Unit)
             withTimeout(5_000L) { ran.await() } // ...but the job ran to completion regardless
+            registry.withClient(pairingA) { HeartwoodResult.Success("barrier") }
+
+            val cached = registry.trySilent(pairingA, key) {
+                calls.incrementAndGet()
+                HeartwoodResult.Success("must not run")
+            }
+            assertTrue(cached is HeartwoodOutcome.Cached)
+            assertEquals("late", valueOf(cached))
+            assertEquals(1, calls.get())
+        } finally {
+            registry.shutdownAll()
+        }
+    }
+
+    @Test
+    fun `a queued call is skipped when its caller times out before it starts`() = runBlocking {
+        val registry = registry(silentTimeoutMillis = 150L)
+        try {
+            val gate = CompletableDeferred<Unit>()
+            val blocker = async(start = CoroutineStart.UNDISPATCHED) {
+                registry.withClient(pairingA) {
+                    gate.await()
+                    HeartwoodResult.Success("blocker")
+                }
+            }
+            val queuedCalls = AtomicInteger(0)
+            assertNull(registry.trySilent(pairingA) {
+                queuedCalls.incrementAndGet()
+                HeartwoodResult.Success("stale")
+            })
+
+            gate.complete(Unit)
+            assertEquals("blocker", valueOf(blocker.await()))
+            registry.withClient(pairingA) { HeartwoodResult.Success("barrier") }
+            assertEquals(0, queuedCalls.get())
         } finally {
             registry.shutdownAll()
         }
@@ -178,6 +257,39 @@ class SessionRegistryTest {
     }
 
     @Test
+    fun `identical decrypts queued together share the first completed result`() = runBlocking {
+        val registry = registry()
+        try {
+            val key = decryptKey("same in-flight ciphertext")
+            val started = CompletableDeferred<Unit>()
+            val gate = CompletableDeferred<Unit>()
+            val calls = AtomicInteger(0)
+            val first = async(start = CoroutineStart.UNDISPATCHED) {
+                registry.trySilent(pairingA, key, HeartwoodRequestPriority.BACKGROUND) {
+                    calls.incrementAndGet()
+                    started.complete(Unit)
+                    gate.await()
+                    HeartwoodResult.Success("shared plain")
+                }
+            }
+            started.await()
+            val second = async(start = CoroutineStart.UNDISPATCHED) {
+                registry.trySilent(pairingA, key, HeartwoodRequestPriority.BACKGROUND) {
+                    calls.incrementAndGet()
+                    HeartwoodResult.Success("must not run")
+                }
+            }
+
+            gate.complete(Unit)
+            assertTrue(first.await() is HeartwoodOutcome.Fresh)
+            assertTrue(second.await() is HeartwoodOutcome.Cached)
+            assertEquals(1, calls.get())
+        } finally {
+            registry.shutdownAll()
+        }
+    }
+
+    @Test
     fun `the cache is partitioned per identity, never shared across pairings`() = runBlocking {
         val registry = registry()
         try {
@@ -195,22 +307,20 @@ class SessionRegistryTest {
     }
 
     @Test
-    fun `deterministic decrypt failures are cached, transient failures are retried`() = runBlocking {
+    fun `deterministic and policy failures are not retried, while timeouts are`() = runBlocking {
         val registry = registry()
         try {
-            // A failing operation is invoked twice per submission -- the worker retries once
-            // against a fresh connection -- so these assert relative counts (did a second
-            // *submission* reach the worker at all), not absolute invocation totals.
             val deterministicKey = decryptKey("legacy undecryptable")
             val deterministicCalls = AtomicInteger(0)
             val deterministic: suspend (HeartwoodClient) -> HeartwoodResult<String> = {
                 deterministicCalls.incrementAndGet()
                 HeartwoodResult.Failure(HeartwoodError.Protocol("Decryption failed: bad ciphertext"))
             }
-            registry.trySilent(pairingA, deterministicKey, deterministic)
+            registry.trySilent(pairingA, deterministicKey, operation = deterministic)
             val callsAfterFirst = deterministicCalls.get()
-            val cached = registry.trySilent(pairingA, deterministicKey, deterministic)
+            val cached = registry.trySilent(pairingA, deterministicKey, operation = deterministic)
             assertTrue(cached is HeartwoodOutcome.Cached)
+            assertEquals(1, callsAfterFirst)
             assertEquals(callsAfterFirst, deterministicCalls.get())
 
             val transientKey = decryptKey("policy blocked")
@@ -219,11 +329,19 @@ class SessionRegistryTest {
                 transientCalls.incrementAndGet()
                 HeartwoodResult.Failure(HeartwoodError.Protocol("unauthorised"))
             }
-            registry.trySilent(pairingA, transientKey, transient)
+            registry.trySilent(pairingA, transientKey, operation = transient)
             val transientAfterFirst = transientCalls.get()
-            val retried = registry.trySilent(pairingA, transientKey, transient)
-            assertTrue(retried is HeartwoodOutcome.Fresh)
-            assertTrue(transientCalls.get() > transientAfterFirst)
+            val secondRefusal = registry.trySilent(pairingA, transientKey, operation = transient)
+            assertTrue(secondRefusal is HeartwoodOutcome.Fresh)
+            assertEquals(1, transientAfterFirst)
+            assertEquals(2, transientCalls.get())
+
+            val timeoutCalls = AtomicInteger(0)
+            registry.trySilent(pairingA) {
+                timeoutCalls.incrementAndGet()
+                HeartwoodResult.Failure(HeartwoodError.Timeout)
+            }
+            assertEquals(2, timeoutCalls.get())
         } finally {
             registry.shutdownAll()
         }
