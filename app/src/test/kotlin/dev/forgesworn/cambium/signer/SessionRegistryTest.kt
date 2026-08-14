@@ -50,14 +50,18 @@ class SessionRegistryTest {
         intentTimeoutMillis: Long = 20_000L,
         sessionMaxIdleMillis: Long = 5 * 60_000L,
         signCacheTtlMillis: Long = 60_000L,
+        authCircuitBreakMillis: Long = 60_000L,
         elapsedRealtimeMillis: () -> Long = { System.nanoTime() / 1_000_000L },
+        logWarning: (String) -> Unit = {},
         client: () -> HeartwoodClient = { FakeClient() },
     ) = SessionRegistry(
         clientFactory = { factoryCalls.incrementAndGet(); client() },
+        logWarning = logWarning,
         silentTimeoutMillis = silentTimeoutMillis,
         intentTimeoutMillis = intentTimeoutMillis,
         sessionMaxIdleMillis = sessionMaxIdleMillis,
         signCacheTtlMillis = signCacheTtlMillis,
+        authCircuitBreakMillis = authCircuitBreakMillis,
         elapsedRealtimeMillis = elapsedRealtimeMillis,
     )
 
@@ -398,6 +402,242 @@ class SessionRegistryTest {
             now.addAndGet(5_001L)
             assertEquals("signed-2", valueOf(registry.trySilent(pairingA, cacheableSign = key, operation = operation)))
             assertEquals(2, calls.get())
+        } finally {
+            registry.shutdownAll()
+        }
+    }
+
+    @Test
+    fun `an auth transport timeout is not retried and opens a per-identity circuit`() = runBlocking {
+        val now = java.util.concurrent.atomic.AtomicLong(1_000L)
+        val warnings = mutableListOf<String>()
+        val factoryCalls = AtomicInteger(0)
+        val registry = registry(
+            factoryCalls = factoryCalls,
+            authCircuitBreakMillis = 5_000L,
+            elapsedRealtimeMillis = now::get,
+            logWarning = { warnings += it },
+        )
+        try {
+            val authCalls = AtomicInteger(0)
+            val first = registry.trySilent(
+                pairingA,
+                priority = HeartwoodRequestPriority.AUTH,
+                cacheableSign = signKey("timing out auth"),
+            ) {
+                authCalls.incrementAndGet()
+                HeartwoodResult.Failure(HeartwoodError.Timeout)
+            }
+
+            assertEquals(HeartwoodError.Timeout, errorOf(first))
+            assertEquals(1, authCalls.get()) // AUTH never consumes a second SDK timeout by retrying
+            assertEquals(1, factoryCalls.get())
+            assertEquals(1, warnings.size)
+
+            val duringCircuit = registry.trySilent(
+                pairingA,
+                priority = HeartwoodRequestPriority.AUTH,
+                cacheableSign = signKey("different auth during cooldown"),
+            ) {
+                authCalls.incrementAndGet()
+                HeartwoodResult.Success("must not run")
+            }
+            assertNull(duringCircuit)
+            assertEquals(1, authCalls.get())
+
+            val interactive = registry.trySilent(pairingA) { HeartwoodResult.Success("foreground") }
+            assertEquals("foreground", valueOf(interactive))
+            assertEquals(2, factoryCalls.get()) // user work can rebuild the discarded connection
+
+            now.addAndGet(5_001L)
+            val afterCooldown = registry.trySilent(
+                pairingA,
+                priority = HeartwoodRequestPriority.AUTH,
+                cacheableSign = signKey("auth after cooldown"),
+            ) {
+                authCalls.incrementAndGet()
+                HeartwoodResult.Success("signed after cooldown")
+            }
+            assertEquals("signed after cooldown", valueOf(afterCooldown))
+            assertEquals(2, authCalls.get())
+        } finally {
+            registry.shutdownAll()
+        }
+    }
+
+    @Test
+    fun `cached auth still answers while the auth circuit is open`() = runBlocking {
+        val now = java.util.concurrent.atomic.AtomicLong(1_000L)
+        val registry = registry(
+            authCircuitBreakMillis = 5_000L,
+            elapsedRealtimeMillis = now::get,
+        )
+        try {
+            val cachedKey = signKey("previously signed auth")
+            assertEquals(
+                "cached signature",
+                valueOf(
+                    registry.trySilent(
+                        pairingA,
+                        priority = HeartwoodRequestPriority.AUTH,
+                        cacheableSign = cachedKey,
+                    ) { HeartwoodResult.Success("cached signature") }
+                ),
+            )
+
+            registry.trySilent(
+                pairingA,
+                priority = HeartwoodRequestPriority.AUTH,
+                cacheableSign = signKey("auth that opens circuit"),
+            ) { HeartwoodResult.Failure(HeartwoodError.NotConnected) }
+
+            val calls = AtomicInteger(0)
+            val cached = registry.trySilent(
+                pairingA,
+                priority = HeartwoodRequestPriority.AUTH,
+                cacheableSign = cachedKey,
+            ) {
+                calls.incrementAndGet()
+                HeartwoodResult.Success("must not run")
+            }
+            assertTrue(cached is HeartwoodOutcome.Cached)
+            assertEquals("cached signature", valueOf(cached))
+            assertEquals(0, calls.get())
+        } finally {
+            registry.shutdownAll()
+        }
+    }
+
+    @Test
+    fun `an auth circuit on one identity does not suppress another identity`() = runBlocking {
+        val now = java.util.concurrent.atomic.AtomicLong(1_000L)
+        val registry = registry(
+            authCircuitBreakMillis = 5_000L,
+            elapsedRealtimeMillis = now::get,
+        )
+        try {
+            registry.trySilent(
+                pairingA,
+                priority = HeartwoodRequestPriority.AUTH,
+                cacheableSign = signKey("identity A auth"),
+            ) { HeartwoodResult.Failure(HeartwoodError.Timeout) }
+
+            val other = registry.trySilent(
+                pairingB,
+                priority = HeartwoodRequestPriority.AUTH,
+                cacheableSign = signKey("identity B auth"),
+            ) { HeartwoodResult.Success("identity B signed") }
+            assertEquals("identity B signed", valueOf(other))
+        } finally {
+            registry.shutdownAll()
+        }
+    }
+
+    @Test
+    fun `an auth policy refusal does not open the transport circuit`() = runBlocking {
+        val registry = registry()
+        try {
+            val refused = registry.trySilent(
+                pairingA,
+                priority = HeartwoodRequestPriority.AUTH,
+                cacheableSign = signKey("refused auth"),
+            ) { HeartwoodResult.Failure(HeartwoodError.Protocol("unauthorised")) }
+            assertEquals(HeartwoodError.Protocol("unauthorised"), errorOf(refused))
+
+            val next = registry.trySilent(
+                pairingA,
+                priority = HeartwoodRequestPriority.AUTH,
+                cacheableSign = signKey("next auth"),
+            ) { HeartwoodResult.Success("next signed") }
+            assertEquals("next signed", valueOf(next))
+        } finally {
+            registry.shutdownAll()
+        }
+    }
+
+    @Test
+    fun `an auth connection timeout opens the circuit before the operation can run`() = runBlocking {
+        val now = java.util.concurrent.atomic.AtomicLong(1_000L)
+        val factoryCalls = AtomicInteger(0)
+        val registry = registry(
+            factoryCalls = factoryCalls,
+            authCircuitBreakMillis = 5_000L,
+            elapsedRealtimeMillis = now::get,
+            client = {
+                object : FakeClient() {
+                    override suspend fun connect(
+                        bunkerUri: String,
+                        clientSecretKeyHex: String,
+                    ): HeartwoodResult<String> = HeartwoodResult.Failure(HeartwoodError.Timeout)
+                }
+            },
+        )
+        try {
+            val operationCalls = AtomicInteger(0)
+            val failed = registry.trySilent(
+                pairingA,
+                priority = HeartwoodRequestPriority.AUTH,
+                cacheableSign = signKey("connect timeout"),
+            ) {
+                operationCalls.incrementAndGet()
+                HeartwoodResult.Success("unreachable")
+            }
+            assertEquals(HeartwoodError.Timeout, errorOf(failed))
+            assertEquals(0, operationCalls.get())
+            assertEquals(1, factoryCalls.get())
+
+            assertNull(
+                registry.trySilent(
+                    pairingA,
+                    priority = HeartwoodRequestPriority.AUTH,
+                    cacheableSign = signKey("blocked by connect timeout"),
+                ) { HeartwoodResult.Success("must not connect") }
+            )
+            assertEquals(1, factoryCalls.get())
+        } finally {
+            registry.shutdownAll()
+        }
+    }
+
+    @Test
+    fun `only one distinct auth is admitted while interactive work keeps its reserved slot`() = runBlocking {
+        val registry = registry()
+        try {
+            val started = CompletableDeferred<Unit>()
+            val gate = CompletableDeferred<Unit>()
+            val order = mutableListOf<String>()
+            val activeAuth = async(start = CoroutineStart.UNDISPATCHED) {
+                registry.trySilent(
+                    pairingA,
+                    priority = HeartwoodRequestPriority.AUTH,
+                    cacheableSign = signKey("active auth"),
+                ) {
+                    started.complete(Unit)
+                    gate.await()
+                    order += "auth"
+                    HeartwoodResult.Success("signed auth")
+                }
+            }
+            started.await()
+
+            assertNull(
+                registry.trySilent(
+                    pairingA,
+                    priority = HeartwoodRequestPriority.AUTH,
+                    cacheableSign = signKey("different auth"),
+                ) { HeartwoodResult.Success("must not run") }
+            )
+            val interactive = async(start = CoroutineStart.UNDISPATCHED) {
+                registry.trySilent(pairingA) {
+                    order += "interactive"
+                    HeartwoodResult.Success("foreground")
+                }
+            }
+
+            gate.complete(Unit)
+            assertEquals("signed auth", valueOf(activeAuth.await()))
+            assertEquals("foreground", valueOf(interactive.await()))
+            assertEquals(listOf("auth", "interactive"), order)
         } finally {
             registry.shutdownAll()
         }

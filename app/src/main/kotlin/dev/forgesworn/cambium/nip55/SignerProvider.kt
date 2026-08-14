@@ -86,7 +86,10 @@ import kotlinx.coroutines.runBlocking
  * the same decrypt repeatedly while browsing, including legacy content that will never decrypt.
  * Exact NIP-42 AUTH events are also coalesced and cached briefly: Amethyst can submit the same
  * relay challenge through several connections at once, and one signed kind-22242 result is valid
- * for every byte-identical copy. No other signature is cacheable.
+ * for every byte-identical copy. Distinct AUTH challenges are idle-only best effort: only one can
+ * enter an identity's worker, they are never retried internally, and a transport failure opens a
+ * short per-identity cooldown. That leaves the worker available to posts, reactions, and
+ * encryption instead of letting relay maintenance monopolise it. No other signature is cacheable.
  *
  * A caller with a *remembered* denial (see [PairingStore.deny], set from the approval sheet's
  * "always deny" link) gets `rejected` immediately, for every authority, without ever resolving a
@@ -107,6 +110,7 @@ class SignerProvider : ContentProvider() {
 
     private lateinit var pairingStore: PairingStore
     private lateinit var activityLogStore: ActivityLogStore
+    private val authUnavailableLogs = BurstLogLimiter()
 
     override fun onCreate(): Boolean {
         val ctx = requireNotNull(context)
@@ -383,7 +387,7 @@ class SignerProvider : ContentProvider() {
         val elapsed = SystemClock.elapsedRealtime() - startedAt
 
         if (outcome == null) {
-            Log.w(TAG, "silent forward for $caller unavailable (queue full or timed out) after ${elapsed}ms")
+            logUnavailable(caller, priority, elapsed, "queue full, circuit open, or timed out")
             return unavailableCursor()
         }
 
@@ -402,10 +406,33 @@ class SignerProvider : ContentProvider() {
                 rejectedCursor()
             }
             ProviderGate.Answer.Unavailable -> {
-                Log.w(TAG, "silent forward for $caller unavailable after ${elapsed}ms ($failureError)")
+                logUnavailable(caller, priority, elapsed, failureError.toString())
                 unavailableCursor()
             }
         }
+    }
+
+    /** Amethyst may issue dozens of distinct relay AUTH challenges in one launch. Their cursor
+     * responses remain unchanged, but repeated warnings are collapsed per caller so logcat does
+     * not become another source of work during the same burst. */
+    private fun logUnavailable(
+        caller: String,
+        priority: HeartwoodRequestPriority,
+        elapsedMillis: Long,
+        reason: String,
+    ) {
+        if (priority != HeartwoodRequestPriority.AUTH) {
+            Log.w(TAG, "silent forward for $caller unavailable after ${elapsedMillis}ms ($reason)")
+            return
+        }
+
+        val report = authUnavailableLogs.record(caller) ?: return
+        val count = if (report.occurrences == 1) "" else " x${report.occurrences} since previous warning"
+        Log.w(
+            TAG,
+            "AUTH unavailable for $caller$count after ${elapsedMillis}ms ($reason); " +
+                "suppressing repeats for ${BurstLogLimiter.DEFAULT_INTERVAL_MILLIS / 1_000}s"
+        )
     }
 
     /** A [HeartwoodOutcome.Cached] hit on the silent path can repeat many times a second during a

@@ -51,6 +51,7 @@ class SessionRegistry(
     private val intentTimeoutMillis: Long = INTENT_TIMEOUT_MILLIS,
     private val sessionMaxIdleMillis: Long = SESSION_MAX_IDLE_MILLIS,
     private val signCacheTtlMillis: Long = SIGN_CACHE_TTL_MILLIS,
+    private val authCircuitBreakMillis: Long = AUTH_CIRCUIT_BREAK_MILLIS,
     private val elapsedRealtimeMillis: () -> Long = { System.nanoTime() / 1_000_000L },
 ) {
     private val sessions = ConcurrentHashMap<String, Session>()
@@ -117,10 +118,14 @@ class SessionRegistry(
      * caller gives up while its call is still queued, the worker skips that stale call; an
      * operation already running is allowed to finish safely and can still warm the decrypt cache,
      * but is never retried after its caller has gone away. [trySilent] additionally sheds load.
-     * At most [MAX_QUEUED] calls can be queued or running *for this identity*, and background/AUTH
-     * traffic can use only [MAX_NON_INTERACTIVE_QUEUED] of those slots so an interactive sign or
-     * encryption request still has room to enter the priority queue. Admission control is per
-     * identity, so a burst against one paired signer can never shed a request against another.
+     * At most [MAX_QUEUED] calls can be queued or running *for this identity*. Background traffic
+     * can use only [MAX_NON_INTERACTIVE_QUEUED] of those slots, while relay AUTH can use only
+     * [MAX_AUTH_QUEUED], so an interactive sign or encryption request still has room to enter the
+     * priority queue. AUTH is deliberately idle-only best effort: after its transport fails, a
+     * per-identity circuit rejects new distinct AUTH challenges for [authCircuitBreakMillis].
+     * Exact signed-cache hits still answer during that cooldown. Admission control and the AUTH
+     * circuit are per identity, so a burst against one paired signer can never shed or suppress a
+     * request against another.
      * [withClient] (the intent path) uses
      * the same bound instead of creating an unlimited second queue, and shares this worker so a
      * popup can never run concurrently with a silent-path call against the same identity either.
@@ -164,6 +169,7 @@ class SessionRegistry(
         // Exact duplicate AUTH calls share a stripe before admission. This is bounded state (not
         // one lock per event), and 256 stripes make unrelated challenges colliding negligible.
         private val signLocks = Array(SIGN_LOCK_STRIPES) { Mutex() }
+        private val authCircuitOpenUntilMillis = AtomicLong(0L)
         private val shedCount = AtomicInteger(0)
         private val lastShedLogAt = AtomicLong(0L)
         private val nextSequence = AtomicLong(0L)
@@ -187,7 +193,9 @@ class SessionRegistry(
                                     CompletedCall(cached, fromCache = true)
                                 } else {
                                     val result = runCatching {
-                                        deliver(message.pairing, message.operation) { message.waiterActive.get() }
+                                        deliver(message.pairing, message.priority, message.operation) {
+                                            message.waiterActive.get()
+                                        }
                                     }.getOrElse { e ->
                                         HeartwoodResult.Failure(HeartwoodError.Protocol(e.message ?: "worker error"))
                                     }.also { recordCacheOutcome(message.cacheable, message.cacheableSign, it) }
@@ -221,6 +229,7 @@ class SessionRegistry(
             operation: suspend (HeartwoodClient) -> HeartwoodResult<String>,
         ): HeartwoodOutcome<String>? {
             cachedResult(cacheable, cacheableSign)?.let { return HeartwoodOutcome.Cached(it) }
+            if (isAuthCircuitOpen(priority)) return null
 
             if (cacheableSign != null) {
                 // Bound the lock wait and the actual Heartwood request together. A follower whose
@@ -231,6 +240,7 @@ class SessionRegistry(
                         cachedResult(cacheable, cacheableSign)?.let {
                             return@withLock HeartwoodOutcome.Cached(it)
                         }
+                        if (isAuthCircuitOpen(priority)) return@withLock null
                         trySilentUncoalesced(pairing, cacheable, priority, cacheableSign, operation)
                     }
                 }
@@ -246,6 +256,7 @@ class SessionRegistry(
             cacheableSign: CacheableSign?,
             operation: suspend (HeartwoodClient) -> HeartwoodResult<String>,
         ): HeartwoodOutcome<String>? {
+            if (isAuthCircuitOpen(priority)) return null
             if (!reserveSlot(priority)) {
                 recordShed(priority)
                 return null
@@ -361,9 +372,8 @@ class SessionRegistry(
         private fun reserveSlot(priority: HeartwoodRequestPriority): Boolean {
             val limit = when (priority) {
                 HeartwoodRequestPriority.INTERACTIVE -> MAX_QUEUED
-                HeartwoodRequestPriority.AUTH,
-                HeartwoodRequestPriority.BACKGROUND,
-                -> MAX_NON_INTERACTIVE_QUEUED
+                HeartwoodRequestPriority.AUTH -> MAX_AUTH_QUEUED
+                HeartwoodRequestPriority.BACKGROUND -> MAX_NON_INTERACTIVE_QUEUED
                 HeartwoodRequestPriority.MAINTENANCE -> MAX_MAINTENANCE_QUEUED
             }
             while (true) {
@@ -436,9 +446,13 @@ class SessionRegistry(
 
         /** Runs on the worker thread only: reconnects if there is no healthy held client, then
          * runs [operation], retrying once against a fresh connection only for a transport timeout
-         * or lost session while the caller is still waiting. A transport failure always discards
-         * its client, even after the caller's wait has expired, so the next request can never
-         * inherit the session which just failed. The caller is checked again after reconnecting:
+         * or lost session while the caller is still waiting. Relay AUTH is never retried: its
+         * challenges are disposable background work, and retrying one can occupy the sole worker
+         * for another full SDK timeout. Instead, an AUTH transport failure opens the per-identity
+         * circuit so later challenges fail fast while user work can rebuild the connection. A
+         * transport failure always discards its client, even after the caller's wait has expired,
+         * so the next request can never inherit the session which just failed. The caller is
+         * checked again after reconnecting:
          * reconnect itself is a relay round trip and the caller may expire during it; in that case
          * the newly healthy connection is retained for the next request but the abandoned
          * operation is not performed a second time. There is no
@@ -449,6 +463,7 @@ class SessionRegistry(
          * registry, which drops this whole [Session] so the next call starts fresh. */
         private suspend fun deliver(
             pairing: Pairing,
+            priority: HeartwoodRequestPriority,
             operation: suspend (HeartwoodClient) -> HeartwoodResult<String>,
             callerIsWaiting: () -> Boolean,
         ): HeartwoodResult<String> {
@@ -456,7 +471,12 @@ class SessionRegistry(
 
             val active = when (connected) {
                 is HeartwoodResult.Success -> connected.value
-                is HeartwoodResult.Failure -> return connected
+                is HeartwoodResult.Failure -> {
+                    if (priority == HeartwoodRequestPriority.AUTH && shouldReconnectAndRetry(connected.error)) {
+                        openAuthCircuit(connected.error)
+                    }
+                    return connected
+                }
             }
 
             val result = operation(active)
@@ -469,6 +489,10 @@ class SessionRegistry(
             }
             val retryable = shouldReconnectAndRetry(failure.error)
             if (retryable) discardClient()
+            if (priority == HeartwoodRequestPriority.AUTH && retryable) {
+                openAuthCircuit(failure.error)
+                return failure
+            }
             if (!callerIsWaiting() || !retryable) return failure
 
             val retried = when (val reconnected = reconnect(pairing)) {
@@ -483,6 +507,27 @@ class SessionRegistry(
                     is HeartwoodResult.Failure -> if (shouldReconnectAndRetry(retryResult.error)) {
                         discardClient()
                     }
+                }
+            }
+        }
+
+        private fun isAuthCircuitOpen(priority: HeartwoodRequestPriority): Boolean =
+            priority == HeartwoodRequestPriority.AUTH &&
+                elapsedRealtimeMillis() < authCircuitOpenUntilMillis.get()
+
+        /** Opens a fixed cooldown once per transition. This never extends an already-open
+         * circuit, so a flood of rejected challenges cannot keep an identity locked out. */
+        private fun openAuthCircuit(error: HeartwoodError) {
+            val now = elapsedRealtimeMillis()
+            while (true) {
+                val current = authCircuitOpenUntilMillis.get()
+                if (current > now) return
+                val openUntil = now + authCircuitBreakMillis
+                if (authCircuitOpenUntilMillis.compareAndSet(current, openUntil)) {
+                    logWarning(
+                        "AUTH circuit opened ($tag) for ${authCircuitBreakMillis}ms after $error"
+                    )
+                    return
                 }
             }
         }
@@ -579,12 +624,14 @@ class SessionRegistry(
     private companion object {
         const val MAX_QUEUED = 3
         const val MAX_NON_INTERACTIVE_QUEUED = MAX_QUEUED - 1
+        const val MAX_AUTH_QUEUED = 1
         const val MAX_MAINTENANCE_QUEUED = 1
         const val INITIAL_QUEUE_CAPACITY = 4
         const val SILENT_TIMEOUT_MILLIS = 15_000L
         const val INTENT_TIMEOUT_MILLIS = 20_000L
         const val SESSION_MAX_IDLE_MILLIS = 5 * 60_000L
         const val SIGN_CACHE_TTL_MILLIS = 60_000L
+        const val AUTH_CIRCUIT_BREAK_MILLIS = 60_000L
         const val SIGN_LOCK_STRIPES = 256
         const val SHED_LOG_INTERVAL_MILLIS = 60_000L
         const val CALL_PENDING = 0
