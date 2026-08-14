@@ -96,9 +96,20 @@ class DecryptCacheTest {
 
     @Test
     fun `transient or repairable failures are not treated as deterministic`() {
+        assertEquals(false, isDeterministicDecryptFailure(HeartwoodError.Busy))
         assertEquals(false, isDeterministicDecryptFailure(HeartwoodError.Timeout))
         assertEquals(false, isDeterministicDecryptFailure(HeartwoodError.NotConnected))
         assertEquals(false, isDeterministicDecryptFailure(HeartwoodError.Protocol("unauthorised")))
         assertEquals(false, isDeterministicDecryptFailure(HeartwoodError.InvalidInput("bad hex")))
+    }
+
+    @Test
+    fun `rust nostr timeout wording maps to a retryable timeout only`() {
+        assertEquals(HeartwoodError.Timeout, heartwoodErrorForSdkMessage("request timeout"))
+        assertEquals(HeartwoodError.Timeout, heartwoodErrorForSdkMessage("operation timed out"))
+        assertEquals(
+            HeartwoodError.Protocol("decryption failed"),
+            heartwoodErrorForSdkMessage("decryption failed"),
+        )
     }
 }

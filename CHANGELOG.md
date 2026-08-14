@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 0.4.1 (2026-08-14)
+
+- Approved Amethyst requests no longer turn provider overload into a second wave of foreground
+  signer intents. Cambium returns a terminal unavailable result, bounds both provider and intent
+  work, and drops queued calls whose clients have already timed out.
+- User-initiated signing and encryption now keep a reserved queue slot and run ahead of relay AUTH
+  and background decrypt work. Identical decrypts queued together share the first result, and
+  deterministic decrypt or policy failures are no longer reconnected and executed twice.
+
 ## 0.4.0 (2026-08-13)
 
 - Websites can now use Cambium through NIP-55 `nostrsigner:` links. Cambium parses the browser

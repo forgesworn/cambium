@@ -18,6 +18,7 @@ import dev.forgesworn.cambium.pairing.PairingStore
 import dev.forgesworn.cambium.signer.CacheableDecrypt
 import dev.forgesworn.cambium.signer.HeartwoodClient
 import dev.forgesworn.cambium.signer.HeartwoodOutcome
+import dev.forgesworn.cambium.signer.HeartwoodRequestPriority
 import dev.forgesworn.cambium.signer.HeartwoodResult
 import dev.forgesworn.cambium.signer.HeartwoodSession
 import dev.forgesworn.cambium.signer.displayLabel
@@ -59,9 +60,10 @@ import kotlinx.coroutines.runBlocking
  * or a deterministic decrypt failure (see
  * [dev.forgesworn.cambium.signer.isDeterministicDecryptFailure]) answers a `rejected` cursor
  * rather than `null`, so a client stops escalating a blocked or unrecoverable request to the
- * visible flow every couple of seconds. Everything else that cannot be answered here -- an
- * unapproved/unpaired caller, a missing argument, the worker queue being full, a timeout, or any
- * other failure -- answers `null` (defer to the intent). The caller is always taken from
+ * visible flow every couple of seconds. An approved request that hits a full queue, times out, or
+ * fails technically gets a non-empty cursor row with no result, which Amethyst treats as terminal
+ * "could not perform" instead of launching the same work as an intent. Unapproved/unpaired callers
+ * and missing arguments still answer `null` (defer to the intent). The caller is always taken from
  * [getCallingPackage], never from query arguments -- a caller cannot claim to be someone else by
  * passing a different package name in. Forwarding arguments arrive in the `projection` array as
  * `[payload, otherPubkey, currentUser]` -- that is how Amber's real clients pass them, despite the
@@ -189,6 +191,7 @@ class SignerProvider : ContentProvider() {
             otherPubkey = "",
             includeEventAndSignature = true,
             cacheable = null, // signs are never cached
+            priority = ProviderGate.priorityForSignEvent(eventKind),
         ) { client, p, _ -> client.signEvent(p) }
     }
 
@@ -234,6 +237,7 @@ class SignerProvider : ContentProvider() {
                 decoded.counterpartyPubkeyHex,
                 includeEventAndSignature = false,
                 cacheable = PrivateZap.cacheableFor(decoded),
+                priority = HeartwoodRequestPriority.BACKGROUND,
             ) { client, _, _ -> PrivateZap.decryptAndValidate(client, decoded) }
         }
     }
@@ -261,7 +265,19 @@ class SignerProvider : ContentProvider() {
         }
 
         val cacheable = cacheMethod?.let { CacheableDecrypt(it, otherPubkey.orEmpty(), payload) }
-        forward(caller, pairing, method, eventKind = null, payload, otherPubkey.orEmpty(), includeEventAndSignature = false, cacheable, call)
+        val priority = if (cacheMethod == null) HeartwoodRequestPriority.INTERACTIVE else HeartwoodRequestPriority.BACKGROUND
+        forward(
+            caller,
+            pairing,
+            method,
+            eventKind = null,
+            payload,
+            otherPubkey.orEmpty(),
+            includeEventAndSignature = false,
+            cacheable,
+            priority,
+            call,
+        )
     }
 
     /** [ProviderGate.resolveCaller] plus the diagnostic logging for each refusal path -- the
@@ -337,10 +353,8 @@ class SignerProvider : ContentProvider() {
     /**
      * Submits to [HeartwoodSession]'s cache/admission-controlled worker and blocks this binder
      * thread for the result -- unless [cacheable] is a hit, in which case [HeartwoodSession]
-     * answers before ever touching the queue. Returns `null` if the worker's queue is already
-     * full, the call times out, or fails for a reason other than an explicit policy refusal or a
-     * deterministic decrypt failure (see class doc). Logs to [ActivityLogStore] on both
-     * definitive outcomes (see the class doc's logging paragraph) -- never on the `null` deferral.
+     * answers before ever touching the queue. Approved technical failures return a terminal
+     * unavailable cursor rather than escalating to another intent.
      */
     private fun forward(
         caller: String,
@@ -351,17 +365,18 @@ class SignerProvider : ContentProvider() {
         otherPubkey: String,
         includeEventAndSignature: Boolean,
         cacheable: CacheableDecrypt?,
+        priority: HeartwoodRequestPriority,
         call: suspend (HeartwoodClient, String, String) -> HeartwoodResult<String>,
     ): Cursor? {
         val startedAt = SystemClock.elapsedRealtime()
         val outcome = runBlocking {
-            HeartwoodSession.trySilent(pairing, cacheable) { client -> call(client, payload, otherPubkey) }
+            HeartwoodSession.trySilent(pairing, cacheable, priority) { client -> call(client, payload, otherPubkey) }
         }
         val elapsed = SystemClock.elapsedRealtime() - startedAt
 
         if (outcome == null) {
-            Log.w(TAG, "silent forward for $caller refused (queue full) or timed out after ${elapsed}ms; deferring to intent")
-            return null
+            Log.w(TAG, "silent forward for $caller unavailable (queue full or timed out) after ${elapsed}ms")
+            return unavailableCursor()
         }
 
         // Never a Success here on the two non-Result branches -- answerFor maps every Success to
@@ -378,9 +393,9 @@ class SignerProvider : ContentProvider() {
                 logActivityUnlessCached(caller, method, eventKind, pairing, outcome)
                 rejectedCursor()
             }
-            ProviderGate.Answer.Defer -> {
-                Log.w(TAG, "silent forward for $caller failed after ${elapsed}ms ($failureError); deferring to intent")
-                null
+            ProviderGate.Answer.Unavailable -> {
+                Log.w(TAG, "silent forward for $caller unavailable after ${elapsed}ms ($failureError)")
+                unavailableCursor()
             }
         }
     }
@@ -413,6 +428,13 @@ class SignerProvider : ContentProvider() {
         addRow(arrayOf("true"))
     }
 
+    /** A row must exist so Amethyst classifies this as addressed instead of opening an intent.
+     * Its cursor helper calls `isBlank()` without accepting a SQL null, so the absent result is
+     * represented by an empty string rather than `null`. */
+    private fun unavailableCursor(): Cursor = MatrixCursor(arrayOf(COLUMN_RESULT, COLUMN_ERROR)).apply {
+        addRow(arrayOf("", "signer unavailable"))
+    }
+
     private fun buildResultCursor(value: String, includeEventAndSignature: Boolean): Cursor {
         if (!includeEventAndSignature) {
             return MatrixCursor(arrayOf(COLUMN_RESULT)).apply { addRow(arrayOf(value)) }
@@ -441,6 +463,7 @@ class SignerProvider : ContentProvider() {
         private const val COLUMN_EVENT = "event"
         private const val COLUMN_SIGNATURE = "signature"
         private const val COLUMN_REJECTED = "rejected"
+        private const val COLUMN_ERROR = "error"
         private const val PONG = "pong"
 
         const val GET_PUBLIC_KEY_AUTHORITY = "dev.forgesworn.cambium.GET_PUBLIC_KEY"

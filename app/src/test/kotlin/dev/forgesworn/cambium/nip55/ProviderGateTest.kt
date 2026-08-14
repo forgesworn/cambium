@@ -4,6 +4,7 @@ import dev.forgesworn.cambium.pairing.AppPermission
 import dev.forgesworn.cambium.pairing.AppPermissionState
 import dev.forgesworn.cambium.signer.HeartwoodError
 import dev.forgesworn.cambium.signer.HeartwoodOutcome
+import dev.forgesworn.cambium.signer.HeartwoodRequestPriority
 import dev.forgesworn.cambium.signer.HeartwoodResult
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -59,8 +60,8 @@ class ProviderGateTest {
     // -- answerFor --
 
     @Test
-    fun `no outcome at all defers to the intent`() {
-        assertIs<ProviderGate.Answer.Defer>(ProviderGate.answerFor(null))
+    fun `no outcome from an approved forward is terminally unavailable`() {
+        assertIs<ProviderGate.Answer.Unavailable>(ProviderGate.answerFor(null))
     }
 
     @Test
@@ -93,15 +94,16 @@ class ProviderGateTest {
     }
 
     @Test
-    fun `transient failures defer to the intent rather than blocking the request`() {
+    fun `technical failures are terminally unavailable rather than amplified into intents`() {
         val transient = listOf(
+            HeartwoodError.Busy,
             HeartwoodError.Timeout,
             HeartwoodError.NotConnected,
             HeartwoodError.InvalidInput("bad hex"),
             HeartwoodError.Protocol("relay unreachable"),
         )
         for (error in transient) {
-            assertIs<ProviderGate.Answer.Defer>(
+            assertIs<ProviderGate.Answer.Unavailable>(
                 ProviderGate.answerFor(HeartwoodOutcome.Fresh(HeartwoodResult.Failure(error)))
             )
         }
@@ -119,5 +121,12 @@ class ProviderGateTest {
         assertFalse(ProviderGate.isDeclinedDraft(1))
         assertFalse(ProviderGate.isDeclinedDraft(0))
         assertFalse(ProviderGate.isDeclinedDraft(null))
+    }
+
+    @Test
+    fun `relay auth is lower priority than user initiated signing`() {
+        assertEquals(HeartwoodRequestPriority.AUTH, ProviderGate.priorityForSignEvent(22242))
+        assertEquals(HeartwoodRequestPriority.INTERACTIVE, ProviderGate.priorityForSignEvent(7))
+        assertEquals(HeartwoodRequestPriority.INTERACTIVE, ProviderGate.priorityForSignEvent(null))
     }
 }

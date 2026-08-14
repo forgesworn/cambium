@@ -1,0 +1,5 @@
+Faster, bounded signing under heavy Amethyst activity.
+
+- Background overload no longer opens a wave of foreground signer windows.
+- Reactions, posts and encryption run ahead of relay authentication and background decrypts.
+- Timed-out work is discarded, repeated decrypts share cached results, and permanent failures are not retried twice.

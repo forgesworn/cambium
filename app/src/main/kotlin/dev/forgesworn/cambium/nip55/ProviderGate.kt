@@ -3,14 +3,15 @@ package dev.forgesworn.cambium.nip55
 import dev.forgesworn.cambium.pairing.AppPermission
 import dev.forgesworn.cambium.pairing.AppPermissionState
 import dev.forgesworn.cambium.signer.HeartwoodOutcome
+import dev.forgesworn.cambium.signer.HeartwoodRequestPriority
 import dev.forgesworn.cambium.signer.HeartwoodResult
 import dev.forgesworn.cambium.signer.isDeterministicDecryptFailure
 import dev.forgesworn.cambium.signer.isPolicyRefusal
 
 /**
  * The pure decision tables behind [SignerProvider]'s three-way cursor contract: a definitive
- * result, a terminal `rejected` cursor (clients must not fall back to the intent), or `null`
- * (defer to the intent). Extracted from the provider so the contract is testable on the host JVM,
+ * result, a terminal `rejected` cursor, or a terminal unavailable result. Extracted from the
+ * provider so the contract is testable on the host JVM,
  * which the provider itself is not (an Android class whose imports reach rust-nostr). Pure
  * Kotlin: no Android. The provider keeps its own diagnostic logging around these calls.
  */
@@ -21,6 +22,7 @@ object ProviderGate {
      * 1-2s hardware round trip buried real requests behind a flood of drafts in testing.
      * Hardcoded on for now; a settings toggle can replace this later. */
     const val NIP37_DRAFT_KIND = 31234
+    const val NIP42_AUTH_KIND = 22242
 
     sealed interface Caller {
         data class Approved(val packageName: String, val boundIdentityPubkeyHex: String?) : Caller
@@ -48,29 +50,32 @@ object ProviderGate {
     sealed interface Answer {
         data class Result(val value: String) : Answer
         data object Rejected : Answer
-        data object Defer : Answer
+        data object Unavailable : Answer
     }
 
     /**
-     * Maps a forward's outcome onto the cursor contract. `null` (queue full, or timed out) and
-     * any transient/repairable failure defer to the intent, where a retry might succeed or the
-     * user at least sees what happened. Only an explicit Heartwood policy refusal (see
+     * Maps an already-approved caller's forward onto the cursor contract. `null` (queue full or
+     * timed out) and transient/repairable failures return a terminal unavailable row so clients
+     * do not amplify congestion by immediately launching the same request as an intent. Only an
+     * explicit Heartwood policy refusal (see
      * [isPolicyRefusal]) or a deterministic decrypt failure (see [isDeterministicDecryptFailure])
-     * answer `rejected` -- both are terminal, and anything else answered terminally would block a
-     * request that a retry could have served.
+     * answer `rejected` -- both are terminal.
      */
     fun answerFor(outcome: HeartwoodOutcome<String>?): Answer {
-        val result = outcome?.result ?: return Answer.Defer
+        val result = outcome?.result ?: return Answer.Unavailable
         return when (result) {
             is HeartwoodResult.Success -> Answer.Result(result.value)
             is HeartwoodResult.Failure ->
                 if (isPolicyRefusal(result.error) || isDeterministicDecryptFailure(result.error)) {
                     Answer.Rejected
                 } else {
-                    Answer.Defer
+                    Answer.Unavailable
                 }
         }
     }
 
     fun isDeclinedDraft(eventKind: Int?): Boolean = eventKind == NIP37_DRAFT_KIND
+
+    fun priorityForSignEvent(eventKind: Int?): HeartwoodRequestPriority =
+        if (eventKind == NIP42_AUTH_KIND) HeartwoodRequestPriority.AUTH else HeartwoodRequestPriority.INTERACTIVE
 }

@@ -42,6 +42,8 @@ sealed interface HeartwoodOutcome<out T> {
 sealed interface HeartwoodError {
     /** [HeartwoodClient.connect] has not been called (or failed) this session. */
     data object NotConnected : HeartwoodError
+    /** This identity already has the maximum number of running or queued requests. */
+    data object Busy : HeartwoodError
     /** No response within the per-call timeout: relay unreachable, or Heartwood offline/unplugged. */
     data object Timeout : HeartwoodError
     /** The bunker URI or a hex key/pubkey argument was malformed. */
@@ -59,11 +61,18 @@ private inline fun <T> heartwoodCatch(block: () -> T): HeartwoodResult<T> = try 
     // (silent path: no UI at all) -- without this line a protocol failure is invisible
     // everywhere, which is what made the Primal created_at interop bug expensive to find.
     Log.w("HeartwoodSession", "rust-nostr call failed", e)
-    HeartwoodResult.Failure(HeartwoodError.Protocol(e.message ?: "rust-nostr error"))
+    HeartwoodResult.Failure(heartwoodErrorForSdkMessage(e.message ?: "rust-nostr error"))
 } catch (e: IllegalArgumentException) {
     Log.w("HeartwoodSession", "rust-nostr rejected input", e)
     HeartwoodResult.Failure(HeartwoodError.InvalidInput(e.message ?: "invalid input"))
 }
+
+internal fun heartwoodErrorForSdkMessage(message: String): HeartwoodError =
+    if (message.contains("timeout", ignoreCase = true) || message.contains("timed out", ignoreCase = true)) {
+        HeartwoodError.Timeout
+    } else {
+        HeartwoodError.Protocol(message)
+    }
 
 /** Small Kotlin interface so the NIP-46 transport can be swapped or faked in tests. */
 interface HeartwoodClient {
@@ -225,14 +234,16 @@ object HeartwoodSession {
     suspend fun trySilent(
         pairing: Pairing,
         cacheable: CacheableDecrypt? = null,
+        priority: HeartwoodRequestPriority = HeartwoodRequestPriority.INTERACTIVE,
         operation: suspend (HeartwoodClient) -> HeartwoodResult<String>,
-    ): HeartwoodOutcome<String>? = registry.trySilent(pairing, cacheable, operation)
+    ): HeartwoodOutcome<String>? = registry.trySilent(pairing, cacheable, priority, operation)
 
     suspend fun withClient(
         pairing: Pairing,
         cacheable: CacheableDecrypt? = null,
+        priority: HeartwoodRequestPriority = HeartwoodRequestPriority.INTERACTIVE,
         operation: suspend (HeartwoodClient) -> HeartwoodResult<String>,
-    ): HeartwoodOutcome<String> = registry.withClient(pairing, cacheable, operation)
+    ): HeartwoodOutcome<String> = registry.withClient(pairing, cacheable, priority, operation)
 
     /** See [SessionRegistry.shutdown]. */
     suspend fun shutdown(signerPubkeyHex: String) = registry.shutdown(signerPubkeyHex)
