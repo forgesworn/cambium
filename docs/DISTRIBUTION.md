@@ -15,7 +15,7 @@ what store metadata points at (F-Droid's `Donate:` field takes one URL).
 | GitHub Releases | **Live** (0.4.3 current; v0.2.0 onward) | Ours (the 0.2.0 trust root) |
 | Obtainium | **Live** via the 0.4.3 GitHub release | Ours |
 | Zapstore | **Live** (0.4.3 current; v0.3.2 onward) | Ours |
-| F-Droid | **MR open: [fdroiddata!42875](https://gitlab.com/fdroid/fdroiddata/-/merge_requests/42875)** — reviewed ("mostly ready"), in the test queue; the local recipe tracks 0.4.3 but the MR branch still needs the same update | Ours, when the reproducibility check passes |
+| F-Droid | **MR open: [fdroiddata!42875](https://gitlab.com/fdroid/fdroiddata/-/merge_requests/42875)** — reviewed ("mostly ready"), in the test queue; the fork branch now tracks 0.4.3/versionCode 13 | Ours, when the reproducibility check passes |
 | IzzyOnDroid (optional extra) | Eligible; their tracker moved to Codeberg (account needed) | Ours |
 | Accrescent | **Blocked externally** — registration is allowlist-only | Ours |
 
@@ -105,9 +105,8 @@ to track each new release** — add a `Builds:` entry for the new tag and bump
 `cambium` branch of the `TheCryptoDonkey/fdroiddata` fork. Only once it is merged does
 `AutoUpdateMode: Version` take over and track our tags unattended.
 
-The local draft recipe now includes 0.4.3/versionCode 13 at source commit `79b2b36b`, but the open
-MR still points at its 0.4.0 fork commit `d85c9e16e`; that branch needs the same nine-line recipe
-update once GitLab authentication is available. Its reviewed recipe uses `Binaries:` plus
+The local draft recipe and the open MR now include 0.4.3/versionCode 13 at source commit
+`79b2b36b`; the fork's `cambium` branch was updated to commit `269da314` on 2026-08-14. Its reviewed recipe uses `Binaries:` plus
 `AllowedAPKSigningKeys:` and pins each build to an exact source commit. If
 F-Droid's rebuild matches the upstream APK, F-Droid publishes our signed binary; if it does not
 match, that version is skipped rather than replaced with an F-Droid-signed build.
