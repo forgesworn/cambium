@@ -14,8 +14,9 @@ New app: Cambium
 ```
 ### New app: Cambium
 
-Android NIP-55 signer proxy that holds no user keys — every signing request is
-forwarded to a paired Heartwood hardware signer over NIP-46 (Nostr relays).
+Android NIP-55 signer proxy that holds no user keys — cryptographic results come
+from a paired Heartwood hardware signer over NIP-46 (Nostr relays), with only
+safe exact repeats answered from bounded caches.
 
 - Source: https://github.com/forgesworn/cambium
 - Licence: MIT
@@ -30,9 +31,10 @@ Notes for reviewers:
   com.greenart7c3.nostrsigner, whose recipe this one mirrors).
 - Build needs JDK 21 (AGP 8.x, jvmToolchain(21)); happy to adjust the recipe to
   whatever the buildserver expects.
-- Releases are also self-published (GitHub/Zapstore) under our own key; we are
-  aware the F-Droid build will carry F-Droid's signature. A reproducible-builds
-  follow-up (AllowedAPKSigningKeys) may come later.
+- `Binaries:` and `AllowedAPKSigningKeys:` make reproducibility the listing gate.
+  F-Droid rebuilds each exact source tag and publishes our upstream-signed APK
+  only when the rebuild matches; a non-matching version is skipped rather than
+  being replaced with an F-Droid-signed build.
 ```
 
 ## IzzyOnDroid inclusion issue (https://gitlab.com/IzzyOnDroid/repo/-/issues/new)
@@ -49,7 +51,7 @@ Body:
 Repo: https://github.com/forgesworn/cambium
 App ID: dev.forgesworn.cambium
 Licence: MIT
-Signed release APKs are attached to GitHub releases (currently v0.3.2, ~19.6 MB),
+Signed release APKs are attached to GitHub releases (currently v0.4.3, ~19.6 MB),
 with SHA256SUMS and the signing-certificate digest in the release notes.
 Fastlane metadata is in the repo. I am the upstream author.
 ```

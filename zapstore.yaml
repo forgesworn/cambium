@@ -7,9 +7,10 @@ name: Cambium
 repository: https://github.com/forgesworn/cambium
 summary: NIP-55 signer that holds no keys — signing is proxied to a NIP-46 hardware bunker
 description: |
-  Cambium is an Android NIP-55 signer that holds no user keys. Every signing
-  request is proxied to a paired Heartwood hardware signer over NIP-46 (Nostr
-  relays), and the response is handed straight back to the requesting app.
+  Cambium is an Android NIP-55 signer that holds no user keys. Cryptographic
+  results come from a paired Heartwood hardware signer over NIP-46 (Nostr
+  relays), with only safe, exact repeats answered from bounded per-identity
+  caches.
 
   Amethyst, Primal and most other Amber-compatible clients cannot log in to a
   remote NIP-46 bunker directly, but they all support NIP-55 external signers.
@@ -18,6 +19,11 @@ description: |
   No user secrets ever touch the phone. Compromising the phone exposes only the
   ability to request signatures — which the hardware signer's policy engine and
   physical confirmation button still gate — never the identity key itself.
+
+  Native Android apps can use Cambium silently after approval. Websites can use
+  NIP-55 nostrsigner: links with an explicit one-shot approval and a validated
+  HTTPS callback or clipboard result. Per-identity bounded priority queues keep
+  user work available during relay-authentication bursts.
 
   No Google Play services, no Firebase, no analytics. Runs on any Android 8.1+
   device, including GrapheneOS.

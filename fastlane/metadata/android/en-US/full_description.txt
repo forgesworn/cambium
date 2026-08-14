@@ -1,6 +1,6 @@
-Cambium is an Android NIP-55 signer that holds no user keys. Every signing request is proxied to a paired Heartwood hardware signer over NIP-46 (Nostr relays), and the response is handed straight back to the requesting app.
+Cambium is an Android NIP-55 signer that holds no user keys. Cryptographic results come from a paired Heartwood hardware signer over NIP-46 (Nostr relays), with only safe, exact repeats answered from bounded per-identity caches.
 
-Amethyst, Primal and most other Amber-compatible Android Nostr clients cannot log in to a remote NIP-46 bunker directly, but they all support signing in via any installed NIP-55 external signer. Cambium fills that gap: it registers as a signer, but it is not one. It is a thin proxy that turns NIP-55 intents into NIP-46 requests against your hardware signer.
+Amethyst, Primal and most other Amber-compatible Android Nostr clients cannot log in to a remote NIP-46 bunker directly, but they all support signing in via any installed NIP-55 external signer. Cambium fills that gap: it registers as a signer, but it is not one. It is a thin proxy that sends uncached NIP-55 work to your hardware signer and hands the result back.
 
 Security model:
 
@@ -13,7 +13,9 @@ Features:
 
 - Pair by QR scan or pasted bunker:// URI; multiple identities, each fully isolated.
 - NIP-55 intent handling: get_public_key, sign_event, nip04/nip44 encrypt and decrypt, decrypt_zap_event (private zaps, recipient path), current_user identity selection.
+- Website NIP-55 support through nostrsigner: links, with explicit one-shot approval and a validated HTTPS callback or clipboard result. Browser approval is never remembered.
 - A silent content-provider path answers already-approved apps without any visible popup.
+- Per-identity bounded priority queues reserve room for user work. Exact relay-authentication duplicates coalesce and cache briefly; distinct AUTH bursts are admitted one at a time, never retried internally, and paused for 60 seconds after a transport failure.
 - Persistent per-app approval or denial, with a connected-apps list to review and forget choices.
 - Optional keep-warm foreground service so silent signing skips the reconnect penalty.
 - A metadata-only activity log (app, method, event kind, identity, outcome — never any content).

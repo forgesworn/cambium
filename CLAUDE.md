@@ -1,8 +1,8 @@
 # Cambium
 
-Android NIP-55 signer proxy. Holds no user keys; forwards every signing request to a paired
-Heartwood hardware signer over NIP-46 (Nostr relays). See `README.md` for the security model and
-pairing flow.
+Android NIP-55 signer proxy. Holds no user keys; cryptographic results come from a paired Heartwood
+hardware signer over NIP-46 (Nostr relays), with only safe exact repeats served from bounded caches.
+See `README.md` for the security model and pairing flow.
 
 ## Build & test
 
@@ -99,8 +99,9 @@ Android apps              Websites
   owning it; all actual behaviour lives in `SessionRegistry`.
 - `signer/SessionRegistry.kt` -- pure Kotlin (no Android, no rust-nostr), JVM-tested
   (`SessionRegistryTest`, against a fake `HeartwoodClient` -- the NIP-46 client is injected via
-  the constructor's `clientFactory`, log lines via `logWarning`, and both timeouts are
-  constructor parameters so tests can shrink them): the registry of per-identity sessions, keyed
+  the constructor's `clientFactory`, log lines via `logWarning`, and its timeout, idle, cache-TTL
+  and circuit-break durations are constructor parameters so tests can shrink them): the registry
+  of per-identity sessions, keyed
   by signer pubkey -- from 0.3.0 on Cambium pairs more than one Heartwood identity, and each
   one's NIP-46 connection, admission control, and decrypt cache must stay fully isolated: a burst
   against identity A must never shed or slow down identity B, and a decrypt cached while talking
@@ -138,9 +139,11 @@ Android apps              Websites
   `Protocol(unauthorised)` (consistent with a half-torn-down call) and the process died outright
   once with no Java exception -- suspected native wedge from a cancelled in-flight rust-nostr call,
   which is not documented as cancellation-safe. `trySilent` (used by `SignerProvider`) additionally
-  sheds load *per identity*: if 3 calls are already queued or running against that one identity's
-  worker, a new silent-path request against it is refused immediately rather than joining the
-  queue -- a burst against one paired signer can never shed a request against another.
+  sheds load *per identity*: at most 3 calls can be queued or running against that identity, while
+  background traffic can consume only 2 slots and relay AUTH only 1, preserving capacity for an
+  interactive sign or encryption request. Work is priority-ordered, so interactive requests run
+  ahead of background decrypts and AUTH once the current non-cancellable call completes. A burst
+  against one paired signer can never shed a request against another.
   `RustNostrHeartwoodClient` itself also wraps every actual FFI call in
   `withContext(NonCancellable + Dispatchers.IO)` as a second, independent line of defence, since
   rust-nostr's own `NostrConnect` constructor already takes a `Duration` that bounds each relay
@@ -169,9 +172,12 @@ Android apps              Websites
   constructor, which is what makes the cache partitioned per pairing -- there is no shared cache
   instance for two identities' entries to collide in, by construction, not by a key that happens to
   include the signer pubkey. `HeartwoodSession.shutdown(signerPubkeyHex)` clears that one
-  identity's cache alongside its session. Admission-control shedding (queue already at
-  `MAX_QUEUED`, per identity) logs a rate-limited summary line (about once a minute) so future
-  tuning of the queue depth has real data to work from.
+  identity's cache alongside its session. Exact NIP-42 AUTH events also coalesce behind a bounded
+  striped lock and reuse the same signed result for 60 seconds; arbitrary events are never cached.
+  Distinct AUTH is idle-only best effort: at most one is admitted, it is never retried internally,
+  and a transport failure opens a 60-second per-identity circuit while exact cache hits and ordinary
+  user work remain available. Admission-control shedding logs a rate-limited summary line (about
+  once a minute) so future tuning has real data without flooding logcat.
 - `signer/DecryptCache.kt` -- pure Kotlin (no Android), JVM-testable: a small in-memory LRU
   (~512 entries, keyed on method + counterparty pubkey + a sha-256 of the payload so the key size
   is bounded regardless of payload length) plus `isDeterministicDecryptFailure`, the classifier
@@ -197,10 +203,11 @@ Android apps              Websites
 - `nip55/ProviderGate.kt` -- pure Kotlin (no Android), JVM-tested: `SignerProvider`'s decision
   tables. `resolveCaller` is the caller tri-state (approved-with-binding / terminal rejected /
   defer-to-intent); `answerFor` maps a forward's `HeartwoodOutcome` onto the three-way cursor
-  contract (only a policy refusal or a deterministic decrypt failure is terminal -- everything
-  else defers, since a terminal answer to a repairable failure would block a request a retry
-  could have served); `isDeclinedDraft` holds the NIP-37 draft-decline constant. The provider
-  keeps its diagnostic logging around these calls.
+  contract: a success returns the value, policy refusals and deterministic decrypt failures are
+  terminal rejections, and queue pressure, timeout, circuit-open and other technical failures are
+  terminal unavailable responses. The unavailable row deliberately prevents an approved client's
+  silent-path failure from being amplified into a foreground intent. `isDeclinedDraft` holds the
+  NIP-37 draft-decline constant. The provider keeps its diagnostic logging around these calls.
 - `nip55/SignerActivity.kt` -- exported activity handling `nostrsigner:` intents. Genuinely
   invisible for a caller with *any* remembered choice, approved or denied: `Theme.Cambium.Invisible`
   is swapped in via `setTheme` before any window setup, no content view is ever set. An approved
@@ -293,21 +300,27 @@ Android apps              Websites
 
   `SIGN_EVENT` declines NIP-37 draft events (kind 31234) immediately, without forwarding or
   joining the queue: Amethyst auto-saves a draft roughly every 2s while typing, which floods a
-  1-2s hardware round trip and buries real requests behind it. An explicit policy refusal from
+  hardware round trip and buries real requests behind it. An explicit policy refusal from
   Heartwood (error text containing "unauthorised"/"unauthorized"/"not allowed"/"refused"/"denied")
   or a deterministic decrypt failure (see `DecryptCache.kt`'s `isDeterministicDecryptFailure`, also
   used for an invalid decrypted zap -- see below) answers a `rejected` cursor rather than `null`,
   so a client stops re-escalating a blocked or unrecoverable request to the visible flow every
   couple of seconds; that outcome-to-cursor mapping is `ProviderGate.answerFor`, pure and
   JVM-tested. All three are answered with a distinct `rejected` cursor column that clients
-  should treat as terminal (no intent fallback). `NIP04_DECRYPT`/`NIP44_DECRYPT` results, and
+  should treat as terminal (no intent fallback). Queue pressure, timeouts, an open AUTH circuit and
+  other technical failures for an already-approved caller answer a distinct terminal unavailable
+  row, also with no intent fallback; this contains a relay burst instead of turning it into popup
+  amplification. Only requests that cannot be answered silently before forwarding -- an
+  unapproved caller, unresolved identity, or missing argument -- return `null` so the client can
+  use the visible intent flow. `NIP04_DECRYPT`/`NIP44_DECRYPT` results, and
   `DECRYPT_ZAP_EVENT`'s under its own `CacheableDecrypt.Method.ZAP` namespace, are cached by
-  `HeartwoodSession` before admission control -- see its class doc. Everything else that cannot be
-  answered here -- an unapproved/unpaired caller, a missing argument, the worker queue being full,
-  a timeout, or any other failure -- returns `null` so the client falls back to the intent. The
-  caller is always taken from `getCallingPackage`, never from query arguments. Diagnostic logging
-  (tag `CambiumProvider`) covers every refusal path and timing for each forward, added during
-  live-device debugging and kept deliberately.
+  `HeartwoodSession` before admission control -- see its class doc. Exact kind-22242 AUTH events
+  coalesce and cache briefly; distinct challenges use the AUTH admission limit, no-retry policy and
+  60-second transport circuit documented there. Repetitive AUTH-unavailable logs are aggregated per
+  calling app rather than emitted for every challenge. The caller is always taken from
+  `getCallingPackage`, never from query arguments. Diagnostic logging (tag `CambiumProvider`) covers
+  every refusal path and timing for each forward, added during live-device debugging and kept
+  deliberately.
 
   A caller with a *remembered denial* gets `rejected` immediately, for every authority, without
   ever resolving a pairing or touching the queue -- distinct from a caller with no remembered
@@ -580,19 +593,18 @@ Android apps              Websites
   intent is handled individually, though `SignerActivity` does handle multiple *separate* intents
   arriving in sequence via `onNewIntent`.
 - NIP-55 `get_relays` is not implemented, and cannot be meaningfully implemented today:
-  rust-nostr 0.44.2's `NostrConnect` exposes no NIP-46 `get_relays` RPC (checked with `javap`
+  rust-nostr 0.44.8's `NostrConnect` exposes no NIP-46 `get_relays` RPC (checked with `javap`
   against the AAR, same method as the keep-alive ping check -- its full remote surface is
   `bunkerUri`/`getPublicKey`/`signEvent`/nip04/nip44, plus a local synchronous `relays()`
   accessor that returns the NIP-46 *transport* relays, which would be the semantically wrong
   answer to a client asking for the user's relay list). Structural until upstream adds the RPC,
   like sender-side private zaps.
 - The NIP-37 draft-decline (kind 31234) is a hardcoded constant in `ProviderGate`, not a user
-  setting; `SessionRegistry`'s queue depth (3), timeouts (15s silent, 20s intent -- both
-  constructor parameters, but only tests override them), and `DecryptCache`'s size (512 entries)
-  are likewise hardcoded rather than configurable. The queue
-  depth in particular has not been revisited since the cache landed -- the shed-count log line
-  (tag `HeartwoodSession`, about once a minute when shedding) exists specifically to gather real
-  data on whether 3 is still the right number now that repeat decrypts rarely reach the queue.
+  setting. `SessionRegistry`'s total/background/AUTH queue depths (3/2/1), timeouts (15s silent,
+  20s intent), stale-session threshold (5 minutes), exact-AUTH cache TTL (60 seconds), AUTH circuit
+  duration (60 seconds), and `DecryptCache`'s size (512 entries) are likewise hardcoded rather than
+  configurable. The rate-limited shed and AUTH-unavailable log lines exist to gather real data
+  without reproducing the client-side burst in logcat.
 - The suspected root cause of the one observed process death (concurrent + cancelled rust-nostr
   calls corrupting native state) is a diagnosis from live-test symptoms, not a confirmed repro in
   a controlled setting -- the single-worker gate and `NonCancellable` wrapping address every

@@ -3,8 +3,9 @@
 [![GitHub Sponsors](https://img.shields.io/github/sponsors/TheCryptoDonkey?logo=githubsponsors&color=ea4aaa&label=Sponsor)](https://github.com/sponsors/TheCryptoDonkey)
 
 An Android [NIP-55](https://github.com/nostr-protocol/nips/blob/master/55.md) signer that holds
-no user keys. Every signing request is proxied to your [Heartwood](https://github.com/forgesworn/heartwood-esp32) hardware
-signer over [NIP-46](https://github.com/nostr-protocol/nips/blob/master/46.md) (Nostr relays).
+no user keys. Cryptographic results come from your [Heartwood](https://github.com/forgesworn/heartwood-esp32) hardware
+signer over [NIP-46](https://github.com/nostr-protocol/nips/blob/master/46.md) (Nostr relays), with
+only safe, exact repeats answered from Cambium's bounded caches.
 The name follows the tree: cambium is the living layer between bark and the wood.
 
 ## Why
@@ -12,7 +13,8 @@ The name follows the tree: cambium is the living layer between bark and the wood
 Amethyst, Primal and most other Amber-compatible Android Nostr clients cannot log in to a remote
 NIP-46 bunker directly, but they all support signing in via any installed NIP-55 external signer.
 Cambium fills that gap: it registers as a signer, but it is not one. It is a thin proxy that turns
-NIP-55 intents into NIP-46 requests against your Heartwood, and hands the response straight back.
+uncached NIP-55 intents into NIP-46 requests against your Heartwood, and hands the response straight
+back.
 
 ## Security model
 
@@ -54,8 +56,10 @@ show a one-shot approval and are never remembered for the whole browser. Cambium
 to a validated HTTPS callback (or localhost during development), or copies it to the clipboard when
 the website did not provide a callback.
 
-Signing takes one relay round trip (roughly half a second to a couple of seconds) since every
-request goes out to Heartwood and back.
+On a healthy kept-warm session, a fresh signing request takes one relay round trip and commonly
+completes in roughly half a second to a couple of seconds. A cold reconnect, contention, or an
+unhealthy relay can take longer. Repeat deterministic decrypts and exact duplicate NIP-42 AUTH
+requests can be answered from bounded per-identity caches without another hardware round trip.
 
 ## Install
 
@@ -65,10 +69,11 @@ tracking (one-tap add: `obtainium://add/https://github.com/forgesworn/cambium`).
 needed; Cambium runs on any 64-bit Android 8.1+ device, including GrapheneOS (no Google Play
 services, no Firebase, no analytics).
 
-Also on [Zapstore](https://zapstore.dev/apps/naddr1qqtxgetk9enx7un8v4ehwmmjdchxxctdvf5h2mgprpmhxue69uhhyetvv9uju7npwpehgmmjv5hxgetkqgsd5x03e56tajjyhe6d5jesdkw3mkrtvdpua72vugkyn3h4nqtwt0grqsqqqlstem32ln),
-signed with the same key as the GitHub releases. An F-Droid listing is under review
-([fdroiddata!42875](https://gitlab.com/fdroid/fdroiddata/-/merge_requests/42875)); per-store
-status and details live in [docs/DISTRIBUTION.md](docs/DISTRIBUTION.md).
+A [Zapstore listing](https://zapstore.dev/apps/naddr1qqtxgetk9enx7un8v4ehwmmjdchxxctdvf5h2mgprpmhxue69uhhyetvv9uju7npwpehgmmjv5hxgetkqgsd5x03e56tajjyhe6d5jesdkw3mkrtvdpua72vugkyn3h4nqtwt0grqsqqqlstem32ln)
+exists, but its public page currently exposes no downloadable releases; use GitHub Releases or
+Obtainium while the Heartwood-signed Zapstore release is republished. An F-Droid listing is under
+review ([fdroiddata!42875](https://gitlab.com/fdroid/fdroiddata/-/merge_requests/42875)); live
+per-store status and details are kept in [docs/DISTRIBUTION.md](docs/DISTRIBUTION.md).
 
 Verify the APK signature with [AppVerifier](https://github.com/soupslurpr/AppVerifier) before
 installing:
@@ -102,9 +107,14 @@ session per identity, NIP-55 native and web-intent handling (`get_public_key`, `
 `nip04`/`nip44` encrypt/decrypt, `decrypt_zap_event`, `current_user` identity selection), HTTPS
 callback and clipboard delivery for websites, a silent
 content-provider path that forwards those methods to Heartwood without a visible popup for
-already-approved apps, persistent per-app approval or denial, an optional keep-warm foreground
-service, a metadata-only activity log, and an optional biometric app lock. Kind-level permissions
-live on the signer itself (Heartwood's policy engine, managed via Sapwood), not on the phone.
+already-approved apps, and terminal unavailable responses that prevent a technical failure from
+amplifying into foreground popups. Per-identity bounded priority queues reserve capacity for user
+work. Exact NIP-42 AUTH duplicates coalesce and cache briefly; at most one distinct AUTH challenge
+is admitted per identity, it is never retried internally, and a transport failure opens a 60-second
+AUTH circuit while ordinary signing, reactions, and encryption remain available. Cambium also has
+persistent per-app approval or denial, an optional keep-warm foreground service, a metadata-only
+activity log, and an optional biometric app lock. Kind-level permissions live on the signer itself
+(Heartwood's policy engine, managed via Sapwood), not on the phone.
 
 ### Private zaps
 
