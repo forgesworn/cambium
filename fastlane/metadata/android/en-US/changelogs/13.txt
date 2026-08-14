@@ -1,0 +1,5 @@
+Keeps Amethyst relay activity from monopolising Cambium.
+
+- Only one distinct relay-auth request per identity can enter the hardware worker.
+- Failed relay auth opens a 60-second cooldown and is never retried internally.
+- Posts, reactions, encryption, and cached duplicate auth remain available.

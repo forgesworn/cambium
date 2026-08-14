@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 0.4.3 (2026-08-14)
+
+- Relay AUTH is now idle-only best effort: Cambium admits at most one distinct NIP-42 challenge per
+  identity, never retries it internally, and opens a 60-second per-identity circuit after a
+  transport failure. New challenges fail fast during the cooldown while posts, reactions,
+  encryption, and exact cached AUTH duplicates remain available.
+- Repetitive AUTH-unavailable warnings are aggregated per calling app instead of flooding logcat
+  during an Amethyst relay burst.
+
 ## 0.4.2 (2026-08-14)
 
 - Stale NIP-46 sessions are now discarded after a transport failure and rebuilt before the next
