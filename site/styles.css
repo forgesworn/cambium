@@ -21,6 +21,16 @@
   font-display: swap;
 }
 @font-face {
+  /* Text face. Fraunces is a display serif with high stroke contrast, and on a
+     near-black ground its hairlines get eaten at reading sizes. Inter holds the
+     body copy; Fraunces keeps the headings and the asides. */
+  font-family: "Inter";
+  src: url("/fonts/inter-latin.woff2") format("woff2");
+  font-weight: 400 600;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
   font-family: "JetBrains Mono";
   src: url("/fonts/jetbrains-mono-latin.woff2") format("woff2");
   font-weight: 400 700;
@@ -39,7 +49,7 @@
 
   --ink: #ece5d6;
   --ink-dim: #b3a68c;
-  --ink-mute: #7d715a;
+  --ink-mute: #918468;
 
   --cambium: #bcd781;
   --cambium-dim: #8ba354;
@@ -48,7 +58,14 @@
   --sap: #6f5836;
 
   --serif: "Fraunces", "Iowan Old Style", Georgia, serif;
+  --sans: "Inter", ui-sans-serif, -apple-system, "Segoe UI", sans-serif;
   --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* Three text sizes, because everything under the h2 used to sit at one.
+     Lede introduces, text argues, detail supports. */
+  --text-lede: clamp(1.18rem, 1.5vw, 1.34rem);
+  --text: 1.0625rem;
+  --text-detail: 0.98rem;
 
   --measure: 66ch;
   --gutter: clamp(1.25rem, 4vw, 3rem);
@@ -66,10 +83,11 @@ html {
 body {
   background: var(--bg);
   color: var(--ink);
-  font-family: var(--serif);
+  font-family: var(--sans);
   font-optical-sizing: auto;
-  font-size: 1.0625rem;
-  line-height: 1.72;
+  font-size: var(--text);
+  line-height: 1.7;
+  letter-spacing: -0.003em;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
   position: relative;
@@ -194,6 +212,8 @@ code {
 }
 
 .lede {
+  font-size: var(--text-lede);
+  line-height: 1.52;
   max-width: 54ch;
   color: var(--ink-dim);
   margin-bottom: 2.2rem;
@@ -324,6 +344,33 @@ code {
   .d8, .d9, .d10, .d11, .d12, .d13, .d14 { animation: none; }
 }
 
+/* ---------- the display face, deliberately ----------
+   Body copy is Inter. These are the places Fraunces still speaks: the headings,
+   the hero lede, the marginalia and the figure captions. Everything else is
+   argument, and argument wants a text face. */
+
+h1, h2, h3,
+.lede,
+.aside,
+.spec-row dt,
+.plate figcaption,
+.colophon-note {
+  font-family: var(--serif);
+}
+
+/* Emphasis rides the display face rather than a synthesised Inter oblique;
+   Fraunces has the smaller x-height so it needs a nudge to sit level. */
+.section-body em,
+.two-col em,
+.spec-row dd em,
+.steps p em,
+.feature-grid em {
+  font-family: var(--serif);
+  font-style: italic;
+  font-size: 1.06em;
+  color: var(--ink);
+}
+
 /* ---------- sections ---------- */
 
 .section {
@@ -357,13 +404,19 @@ code {
 .section-body p + p, .two-col p + p { margin-top: 1rem; }
 .section-body p a, .two-col p a, .aside a { color: var(--ink); }
 
+/* Continuous prose in two columns rather than one paragraph per cell. A grid
+   pairs them by index, so a short paragraph beside a long one leaves half the
+   row empty; columns balance the text however the paragraphs divide. */
 .two-col {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: clamp(1.5rem, 4vw, 3rem);
+  column-count: 2;
+  column-gap: clamp(1.5rem, 4vw, 3rem);
 }
-.two-col p { color: var(--ink-dim); }
-.two-col p + p { margin-top: 0; }
+.two-col p { color: var(--ink-dim); max-width: none; orphans: 3; widows: 3; }
+.two-col p + p { margin-top: 1rem; }
+
+@media (max-width: 820px) {
+  .two-col { column-count: 1; }
+}
 
 /* ---------- 02 · spec rows ---------- */
 
@@ -382,7 +435,7 @@ code {
   font-size: 1.18rem;
   color: var(--cambium);
 }
-.spec-row dd { color: var(--ink-dim); max-width: var(--measure); }
+.spec-row dd { color: var(--ink-dim); max-width: var(--measure); font-size: var(--text-detail); }
 
 /* ---------- 03 · features ---------- */
 
@@ -394,7 +447,12 @@ code {
   background: var(--line-soft);
   border: 1px solid var(--line-soft);
   border-radius: 10px;
-  overflow: hidden;
+  /* clip, not hidden: `hidden` makes this a scroll container, which
+     steals the view() timeline from the scroll-driven reveals below
+     and freezes them at a fixed opacity. `clip` still clips to the
+     border-radius but is not scrollable, so the timeline stays with
+     the document. */
+  overflow: clip;
 }
 .feature-grid li {
   background: var(--panel);
@@ -440,6 +498,8 @@ code {
 
 .aside {
   font-style: italic;
+  font-size: var(--text-detail);
+  line-height: 1.68;
   color: var(--ink-mute);
   max-width: var(--measure);
   margin-top: 2rem;
@@ -557,4 +617,60 @@ a.family-card:hover h3 { color: var(--cambium); }
      annotations legible at that scale. */
   .lbl { font-size: 21px; letter-spacing: 0.14em; }
   .lbl-sub { font-size: 25px; }
+}
+
+/* ---------- scroll-driven entrance (still no scripts) ---------- */
+/*
+ * The hero animates on load, above. Everything below it had no entrance
+ * motion at all, so the page went flat the moment you started scrolling.
+ * These rules reveal each block as it arrives, using the browser's own
+ * scroll-driven animation rather than a library, which keeps the promise
+ * in the colophon: nothing to execute, nothing to block, nothing to audit.
+ *
+ * No stagger is declared anywhere. Each row of a grid crosses the viewport
+ * edge at its own scroll position, so the cascade falls out of the geometry.
+ * The family row is the one exception, handled at the bottom.
+ *
+ * Browsers without scroll-driven animations fail the @supports guard and
+ * render every block in place, exactly as this page behaved before this
+ * section existed. Nothing is hidden without a working timeline to bring
+ * it back.
+ */
+
+@media (prefers-reduced-motion: no-preference) {
+  @supports (animation-timeline: view()) {
+
+    .section-head,
+    .section-body > *,
+    .section > .aside,
+    .section > .code,
+    .section > .oled,
+    .spec-row,
+    .feature-grid > li,
+    .steps > li,
+    .family-card {
+      /* Longhand on purpose. animation-timeline is a reset-only part of the
+         `animation` shorthand, so anyone later adding a shorthand above this
+         would silently wipe the timeline out and hide the block for good. */
+      animation-name: rise;
+      animation-duration: 1s;
+      animation-timing-function: cubic-bezier(0.2, 0.6, 0.2, 1);
+      animation-fill-mode: both;
+      animation-timeline: view();
+      /* A fixed distance rather than a share of the element's own height, so
+         a tall paragraph and a short card fade up at the same rate. */
+      animation-range: cover 0% cover 340px;
+    }
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) and (min-width: 641px) {
+  @supports (animation-timeline: view()) {
+    /* Side by side in one row, so the geometry gives these nothing to
+       cascade from. Walk each card a little further into the scroll. */
+    .family-row > :nth-child(2) { animation-range: cover 40px cover 380px; }
+    .family-row > :nth-child(3) { animation-range: cover 80px cover 420px; }
+    .family-row > :nth-child(4) { animation-range: cover 120px cover 460px; }
+    .family-row > :nth-child(5) { animation-range: cover 160px cover 500px; }
+  }
 }
