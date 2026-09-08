@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- The store description now says 64-bit Android 8.1+ devices: the APK ships arm64-v8a and
+  x86_64 only, so 32-bit ARM phones were never able to install it despite the old wording.
+
 ## 0.4.3 (2026-08-14)
 
 - Relay AUTH is now idle-only best effort: Cambium admits at most one distinct NIP-42 challenge per

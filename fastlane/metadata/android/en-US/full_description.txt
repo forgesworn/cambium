@@ -21,4 +21,4 @@ Features:
 - A metadata-only activity log (app, method, event kind, identity, outcome — never any content).
 - Optional biometric or device-credential app lock on the management screen and approval decisions.
 
-No Google Play services, no Firebase, no analytics. Runs on any Android 8.1+ device, including GrapheneOS.
+No Google Play services, no Firebase, no analytics. Runs on any 64-bit Android 8.1+ device, including GrapheneOS.

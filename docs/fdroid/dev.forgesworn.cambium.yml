@@ -1,9 +1,3 @@
-# Draft fdroiddata metadata for Cambium, to be submitted as
-# metadata/dev.forgesworn.cambium.yml in a merge request to
-# https://gitlab.com/fdroid/fdroiddata (see docs/DISTRIBUTION.md for the process).
-# Summary/Description/changelogs/icon are picked up from this repo's
-# fastlane/metadata/android/en-US/ automatically.
-
 Categories:
   - Internet
   - Security
