@@ -37,6 +37,8 @@ jobs:
         with:
           name: cambium-debug-apk
           path: app/build/outputs/apk/debug/*.apk
+          # A debug build for manual pickup; nothing downstream consumes it.
+          retention-days: 14
 
   instrumentation:
     runs-on: ubuntu-latest
