@@ -8,6 +8,7 @@ import android.security.keystore.KeyProperties
 import android.security.keystore.StrongBoxUnavailableException
 import android.util.Base64
 import androidx.biometric.BiometricManager
+import androidx.biometric.BiometricPrompt
 import java.security.KeyStore
 import java.util.UUID
 import javax.crypto.Cipher
@@ -16,16 +17,22 @@ import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
 /**
- * Keeps each board's slot secret S sealed under its own Android Keystore AES key that only a
- * **strong biometric** releases, once per use: no device-credential fallback (a shoulder-surfed
- * PIN must not unlock a board), no validity window, invalidated when the enrolled biometrics
- * change, and StrongBox-backed where the phone has one. The key never leaves the secure hardware;
- * Cambium only ever gets a [Cipher] that the system unlocks inside a `BiometricPrompt` bound to it
- * through a `CryptoObject`.
+ * Keeps each board's slot secret S sealed under its own Android Keystore AES key that the Keystore
+ * releases only after the owner authenticates, once per use: no validity window, invalidated when
+ * the enrolled biometrics change, and StrongBox-backed where the phone has one. The key never
+ * leaves the secure hardware; Cambium only ever gets a [Cipher] that the system unlocks inside a
+ * `BiometricPrompt` bound to it through a `CryptoObject`.
  *
- * Sealing at enrolment needs the fingerprint too (a symmetric Keystore key that requires
- * authentication requires it for every operation), which doubles as the owner confirming the
- * enrolment on the phone.
+ * What counts as authenticating ([AUTHENTICATORS]): a strong biometric, or (Android 11 and later)
+ * the phone's own PIN, pattern or password. The owner's GrapheneOS phone deliberately has no
+ * fingerprint or face enrolled, because a biometric is the factor someone can force; for such a
+ * phone the lock-screen credential is the stronger choice, and the Keystore still checks it for
+ * every single use. Before Android 11 a Keystore key cannot demand the credential per use through
+ * a `CryptoObject`, so those phones keep biometric-only (and cannot enrol without one).
+ *
+ * Sealing at enrolment needs the same authentication (a symmetric Keystore key that requires it
+ * requires it for every operation), which doubles as the owner confirming the enrolment on the
+ * phone.
  */
 object SlotSecretVault {
     private const val KEYSTORE = "AndroidKeyStore"
@@ -33,10 +40,30 @@ object SlotSecretVault {
     private const val IV_LEN = 12
     private const val TAG_BITS = 128
 
-    const val AUTHENTICATORS = BiometricManager.Authenticators.BIOMETRIC_STRONG
+    private val credentialAllowed = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R
+
+    val AUTHENTICATORS: Int =
+        if (credentialAllowed) {
+            BiometricManager.Authenticators.BIOMETRIC_STRONG or BiometricManager.Authenticators.DEVICE_CREDENTIAL
+        } else {
+            BiometricManager.Authenticators.BIOMETRIC_STRONG
+        }
 
     fun canUse(context: Context): Boolean =
         BiometricManager.from(context).canAuthenticate(AUTHENTICATORS) == BiometricManager.BIOMETRIC_SUCCESS
+
+    /**
+     * The system prompt for one use of a key. A prompt that allows the device credential brings
+     * its own cancel, and androidx.biometric refuses a negative button alongside it.
+     */
+    fun promptInfo(title: String, subtitle: String, cancel: String): BiometricPrompt.PromptInfo =
+        BiometricPrompt.PromptInfo.Builder()
+            .setTitle(title)
+            .setSubtitle(subtitle)
+            .setAllowedAuthenticators(AUTHENTICATORS)
+            .apply { if (!credentialAllowed) setNegativeButtonText(cancel) }
+            .setConfirmationRequired(true)
+            .build()
 
     fun newAlias(): String = "cambium-unlock-${UUID.randomUUID()}"
 
@@ -96,7 +123,7 @@ object SlotSecretVault {
             .setInvalidatedByBiometricEnrollment(true)
             .apply {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                    setUserAuthenticationParameters(0, KeyProperties.AUTH_BIOMETRIC_STRONG)
+                    setUserAuthenticationParameters(0, KeyProperties.AUTH_BIOMETRIC_STRONG or KeyProperties.AUTH_DEVICE_CREDENTIAL)
                 } else {
                     // -1: every use needs a fresh biometric, and only a biometric.
                     @Suppress("DEPRECATION")

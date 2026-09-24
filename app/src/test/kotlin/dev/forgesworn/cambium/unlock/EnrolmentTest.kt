@@ -74,4 +74,12 @@ class EnrolmentTest {
         assertNull(HandOffParser.plain("{\"v\":1,\"id\":7,\"s\":\"abab\",\"relays\":[\"wss://a\"]}", envelope), "short secret")
         assertNull(HandOffParser.plain("{\"v\":1,\"id\":7,\"s\":\"$s\",\"relays\":[]}", envelope), "no relays")
     }
+
+    /** Vectors from spoken-token 2.1.0 itself: deriveToken(key, 'heartwood-unlock:enrol-check', 0, hex 6). */
+    @Test
+    fun `the check code is spoken-token's six-character hex token of the hand-off key`() {
+        assertEquals("9B6 164", checkCode("ab".repeat(32)))
+        assertEquals("EF1 645", checkCode("00".repeat(32)))
+        assertNull(checkCode("abcd"))
+    }
 }

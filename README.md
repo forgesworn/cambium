@@ -68,22 +68,25 @@ requests can be answered from bounded per-identity caches without another hardwa
 
 A Heartwood that keeps its keys encrypted comes back locked after a power cut. With phone unlock set
 up, it asks this phone instead of waiting for Sapwood: a notification says which board restarted,
-why (power-on, brownout, watchdog), on which network and how many times, and one tap plus a
-fingerprint unlocks it. There is no server, no Google push and no third-party app involved.
+why (power-on, brownout, watchdog), on which network and how many times, and one tap plus your
+phone's screen lock unlocks it. There is no server, no Google push and no third-party app involved.
 
 **Setting it up.** On a paired signer, tap *Set up phone unlock*. Cambium shows a code. In
 Sapwood, add the phone under *Phones that can unlock* by scanning it, then press the button on the
 board. (Until Sapwood's panel ships, heartwood-esp32's `scripts/phone-unlock.mjs enrol-for --code
 '<code>'` does the same over USB.) The board hands this phone its unlock secret, sealed to a key that exists only on that
-screen, and Cambium asks for a fingerprint to keep it. Set up at least two devices, so a phone lost
+screen, and Cambium asks for your screen lock to keep it. Set up at least two devices, so a phone lost
 abroad does not strand the board.
 
 **What the phone holds, per board.**
 
 - The *unlock secret* S. It opens the board's data key, which is useless without the board's own
-  flash. It sits under an Android Keystore key that only a **strong biometric** releases, once per
-  unlock: no PIN fallback, StrongBox where the phone has one, and destroyed if the enrolled
-  fingerprints or faces change (set it up again afterwards).
+  flash. It sits under an Android Keystore key that the phone releases only after you
+  authenticate, once per unlock: with the phone's own PIN, pattern or password, or a strong
+  (class 3) fingerprint or face if you use one (on Android 10 and older, only the biometric).
+  StrongBox where the phone has one; destroyed if a biometric is added or changed, or the screen
+  lock removed (set it up again afterwards). If you prefer no biometrics on your phone, because a
+  finger or face can be forced, a PIN-only phone works.
 - A *phone key* K derived from S, in encrypted storage without a biometric, so Cambium can
   recognise and read the board's lock messages in the background. K cannot unlock the board, but
   whoever has it can write a convincing fake lock message for this phone; tapping that would send
@@ -104,8 +107,8 @@ the same IP talking to the signer. Use relays you run, or a VPN or Tor on the ph
 matters to you.
 
 The enrolment hand-off is not signed by anything the phone already trusts, so anyone who sees the
-enrolment code could try to answer it first. Cambium shows the board record number it received:
-check Sapwood shows the same one. If two different answers arrive, Cambium keeps neither.
+enrolment code could try to answer it first. Cambium shows a six-character check code, large: check
+Sapwood shows the same one. If two different answers arrive, Cambium keeps neither.
 
 **Gone quiet.** When the keep-warm service is on, Cambium also says when a paired signer stops
 answering its scheduled checks (two in a row, eight minutes apart), so you hear about a power cut
@@ -166,7 +169,8 @@ is admitted per identity, it is never retried internally, and a transport failur
 AUTH circuit while ordinary signing, reactions, and encryption remain available. Cambium also has
 persistent per-app approval or denial, an optional keep-warm foreground service, a metadata-only
 activity log, an optional biometric app lock, and phone unlock for a Heartwood that restarted
-locked (biometric-bound unlock secret, unfiltered lock listener, throwaway-key delivery). Kind-level permissions live on the signer itself
+locked (unlock secret behind the Keystore and the phone's screen lock, unfiltered lock
+listener, throwaway-key delivery). Kind-level permissions live on the signer itself
 (Heartwood's policy engine, managed via Sapwood), not on the phone.
 
 ### Private zaps

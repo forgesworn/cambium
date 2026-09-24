@@ -83,6 +83,25 @@ data class HandOffEnvelope(
     val sealed: String,
 )
 
+/**
+ * The six characters the owner compares between the phone and Sapwood (or the bench script) after
+ * enrolment, shown as "9B6 164". It is spoken-token's derivation (forgesworn/spoken-token,
+ * `deriveToken(secret, context, 0, { format: 'hex', length: 6 })`, i.e. the first three bytes of
+ * HMAC-SHA256(secret, utf8(context) || counter_be32)) with the board's one-off hand-off key as the
+ * secret. The board draws that key fresh for every enrolment, so an answer raced in by someone who
+ * saw the enrolment code matches about one time in 16.7 million. Sapwood uses spoken-token itself;
+ * the bench script and this are ports held to vectors it produced.
+ */
+fun checkCode(ephemeralPubkeyHex: String): String? {
+    val key = ephemeralPubkeyHex.hexToBytesOrNull()?.takeIf { it.size == 32 } ?: return null
+    val mac = javax.crypto.Mac.getInstance("HmacSHA256").apply { init(javax.crypto.spec.SecretKeySpec(key, "HmacSHA256")) }
+    val digest = mac.doFinal(CHECK_CONTEXT.toByteArray(Charsets.UTF_8) + ByteArray(4))
+    val hex = digest.copyOfRange(0, 3).joinToString("") { "%02X".format(it) }
+    return "${hex.substring(0, 3)} ${hex.substring(3)}"
+}
+
+private const val CHECK_CONTEXT = "heartwood-unlock:enrol-check"
+
 /** The sealed hand-off's plaintext, as the phone opens it: `{v:1, id, s, relays}`. */
 class HandOff(val id: Long, val slotSecret: ByteArray, val relays: List<String>) {
     fun wipe() = slotSecret.fill(0)

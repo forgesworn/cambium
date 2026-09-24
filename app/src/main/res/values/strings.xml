@@ -114,7 +114,7 @@
     <string name="unlock_title">Unlock %1$s?</string>
     <string name="unlock_waiting">No current request from this board. While it is locked it asks every minute, and this screen updates when it does.</string>
     <string name="unlock_details">firmware %1$s, access point %2$s, asked %3$d s ago</string>
-    <string name="unlock_key_gone">This phone\'s unlock key for the board is gone, usually because the fingerprints or face enrolled on the phone changed. Forget the board here, revoke its record in Sapwood, and set up phone unlock again.</string>
+    <string name="unlock_key_gone">This phone\'s unlock key for the board is gone, usually because a fingerprint or face was added to the phone, or its screen lock was removed. Forget the board here, revoke its record in Sapwood, and set up phone unlock again.</string>
     <string name="unlock_sending">Sending…</string>
     <string name="unlock_sent">Sent. The board shows \"Unlocked by\" on its screen within a few seconds. If it is still locked in a minute, Cambium tells you.</string>
     <string name="unlock_send_failed">No relay accepted the unlock. Check this phone\'s connection and try again; the board keeps asking every minute.</string>
@@ -147,7 +147,7 @@
     <string name="enrol_qr_description">Phone unlock enrolment code</string>
     <string name="enrol_copy">Copy code</string>
     <string name="enrol_waiting">Waiting for the board…</string>
-    <string name="enrol_received">The board added this phone as record %1$d. Check that Sapwood shows the same number, then confirm with your fingerprint or face to keep the unlock key on this phone.</string>
+    <string name="enrol_received">The board added this phone. Check that Sapwood shows the same six characters, then confirm with your phone\'s screen lock to keep the unlock key on this phone.</string>
     <string name="enrol_confirm">Confirm</string>
     <string name="enrol_prompt_title">Keep the unlock key on this phone</string>
     <string name="enrol_not_confirmed">Not confirmed yet. Confirm to finish; if you leave now, revoke record %1$d on the board in Sapwood.</string>
@@ -155,7 +155,7 @@
     <string name="enrol_done">Done. This phone can unlock the board (record %1$d). Cambium now listens for it in the background.</string>
     <string name="enrol_finished">Finished</string>
     <string name="enrol_close">Close</string>
-    <string name="enrol_needs_biometric">Phone unlock needs a fingerprint or face unlock of the strong class set up on this phone, because it is what releases the unlock key.</string>
+    <string name="enrol_needs_biometric">Phone unlock needs a screen lock on this phone (a PIN, pattern or password; on Android 10 and older, a fingerprint or face unlock of the strong class), because it is what releases the unlock key.</string>
     <string name="enrol_no_relays">This pairing has no relays Cambium can use.</string>
 
     <plurals name="unlock_board_detail">

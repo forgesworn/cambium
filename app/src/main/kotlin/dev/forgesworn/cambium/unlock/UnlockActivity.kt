@@ -145,13 +145,11 @@ class UnlockActivity : AppCompatActivity() {
                     },
                 )
                 prompt.authenticate(
-                    BiometricPrompt.PromptInfo.Builder()
-                        .setTitle(getString(R.string.unlock_title, enrolment.boardLabel))
-                        .setSubtitle(UnlockNotifications.describe(this, request.match.context))
-                        .setAllowedAuthenticators(SlotSecretVault.AUTHENTICATORS)
-                        .setNegativeButtonText(getString(android.R.string.cancel))
-                        .setConfirmationRequired(true)
-                        .build(),
+                    SlotSecretVault.promptInfo(
+                        getString(R.string.unlock_title, enrolment.boardLabel),
+                        UnlockNotifications.describe(this, request.match.context),
+                        getString(android.R.string.cancel),
+                    ),
                     BiometricPrompt.CryptoObject(opening.cipher),
                 )
             }

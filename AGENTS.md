@@ -556,8 +556,10 @@ Android apps              Websites
   `Enrolment.kt` (the `heartwood-unlock:enrol?...` code Cambium shows, and the kind-24137 hand-off,
   whose content is the board's enrolment answer passed through); `LockMatcher.kt` (matching one
   announcement against every enrolled board, relay-list following, and `Reachability`, the
-  "gone quiet" rule). Android-side: `SlotSecretVault.kt` (per-board Keystore AES key, strong
-  biometric only, per-use, invalidated on enrolment change, StrongBox when present),
+  "gone quiet" rule). Android-side: `SlotSecretVault.kt` (per-board Keystore AES key, per-use
+  authentication by strong biometric or, on API 30+, the device credential (the owner's
+  GrapheneOS phone has no biometrics, deliberately), invalidated on biometric enrolment change,
+  StrongBox when present),
   `UnlockStore.kt` (enrolments and ping records in their own EncryptedSharedPreferences, `commit()`
   writes), `UnlockCoordinator.kt` (process-wide listener owner: current requests as a `StateFlow`,
   sent deliveries, "still locked" detection from a same-boot repeat 25 s after answering),

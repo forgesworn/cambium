@@ -43,7 +43,7 @@ import javax.crypto.Cipher
  *    relays to meet on. Its secret half stays in this activity's memory and nowhere else.
  * 2. Sapwood (or the bench script) enrols the pubkey on the board, which needs a press there,
  *    and publishes the board's sealed answer tagged with the rendezvous tag.
- * 3. Cambium opens it, and a strong biometric seals the slot secret under a new Keystore key
+ * 3. Cambium opens it, and the owner's screen lock (PIN or strong biometric) seals the slot secret under a new Keystore key
  *    ([SlotSecretVault]). Only then is the enrolment stored, the listener started, and the
  *    keep-alive switched on, so the phone hears the board after a power cut.
  *
@@ -83,7 +83,7 @@ class UnlockEnrolActivity : AppCompatActivity() {
 
         val signer = intent.getStringExtra(EXTRA_SIGNER_PUBKEY)
         pairing = PairingStore(this).pairings().firstOrNull { it.signerPubkeyHex == signer } ?: return finish()
-        binding.enrolTitle.text = getString(R.string.enrol_title, pairing.displayLabel())
+        binding.enrolTitle.text = getString(R.string.enrol_title, shortLabel(pairing))
 
         if (!SlotSecretVault.canUse(this)) {
             showOnly(getString(R.string.enrol_needs_biometric))
@@ -149,6 +149,7 @@ class UnlockEnrolActivity : AppCompatActivity() {
                 conflicted = true
                 binding.enrolBatteryButton.isVisible = false
                 binding.enrolStatus.text = getString(R.string.enrol_conflict_after, storedId, handOff.id)
+                binding.enrolCheckCode.isVisible = false
             }
             handOff.wipe()
             return
@@ -163,6 +164,7 @@ class UnlockEnrolActivity : AppCompatActivity() {
                 enrolSecretHex = null
                 binding.enrolConfirmButton.isVisible = false
                 binding.enrolStatus.text = getString(R.string.enrol_conflict, first.id, handOff.id)
+                binding.enrolCheckCode.isVisible = false
             }
             handOff.wipe()
             return
@@ -176,7 +178,9 @@ class UnlockEnrolActivity : AppCompatActivity() {
         binding.enrolQr.isVisible = false
         binding.enrolCode.isVisible = false
         binding.enrolCopyButton.isVisible = false
-        binding.enrolStatus.text = getString(R.string.enrol_received, handOff.id)
+        binding.enrolStatus.text = getString(R.string.enrol_received)
+        binding.enrolCheckCode.text = checkCode(envelope.ephemeralPubkeyHex).orEmpty()
+        binding.enrolCheckCode.isVisible = true
         binding.enrolConfirmButton.isVisible = true
         lifecycleScope.launch {
             delay(PENDING_TIMEOUT_MILLIS)
@@ -187,6 +191,7 @@ class UnlockEnrolActivity : AppCompatActivity() {
                 enrolSecretHex = null
                 binding.enrolConfirmButton.isVisible = false
                 binding.enrolStatus.text = getString(R.string.enrol_timed_out, handOff.id)
+                binding.enrolCheckCode.isVisible = false
             }
         }
         promptSeal()
@@ -216,12 +221,11 @@ class UnlockEnrolActivity : AppCompatActivity() {
                 }
             },
         ).authenticate(
-            BiometricPrompt.PromptInfo.Builder()
-                .setTitle(getString(R.string.enrol_prompt_title))
-                .setSubtitle(pairing.displayLabel())
-                .setAllowedAuthenticators(SlotSecretVault.AUTHENTICATORS)
-                .setNegativeButtonText(getString(android.R.string.cancel))
-                .build(),
+            SlotSecretVault.promptInfo(
+                getString(R.string.enrol_prompt_title),
+                pairing.displayLabel(),
+                getString(android.R.string.cancel),
+            ),
             BiometricPrompt.CryptoObject(cipher),
         )
     }
@@ -231,7 +235,7 @@ class UnlockEnrolActivity : AppCompatActivity() {
         UnlockStore(this).put(
             UnlockEnrolment(
                 id = handOff.id,
-                boardLabel = pairing.displayLabel(),
+                boardLabel = shortLabel(pairing),
                 signerPubkeyHex = pairing.signerPubkeyHex,
                 relays = (handOff.relays + pairing.relays).map { it.trimEnd('/') }.filter(::isRelayUrl).distinct(),
                 phoneKeyHex = phoneKey.toHex(),
@@ -251,6 +255,7 @@ class UnlockEnrolActivity : AppCompatActivity() {
         HeartwoodKeepAliveService.start(this)
 
         binding.enrolConfirmButton.isVisible = false
+        binding.enrolCheckCode.isVisible = false
         binding.enrolStatus.text = getString(R.string.enrol_done, handOff.id)
         binding.enrolBatteryButton.isVisible = !isIgnoringBatteryOptimisations(this)
         binding.enrolDoneButton.setText(R.string.enrol_finished)
@@ -263,6 +268,10 @@ class UnlockEnrolActivity : AppCompatActivity() {
         startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName")))
         binding.enrolBatteryButton.isVisible = false
     }
+
+    /** A pairing without a label would put a whole npub in the title; a short form reads better. */
+    private fun shortLabel(pairing: Pairing): String =
+        pairing.label?.takeIf { it.isNotBlank() } ?: pairing.displayLabel().let { if (it.length > 20) it.take(12) + "…" else it }
 
     private fun showOnly(message: String) {
         binding.enrolBody.isVisible = false
