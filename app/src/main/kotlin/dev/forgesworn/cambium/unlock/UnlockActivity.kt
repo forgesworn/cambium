@@ -33,6 +33,8 @@ class UnlockActivity : AppCompatActivity() {
     private lateinit var store: UnlockStore
     private var enrolmentId: Long = -1
     private var sending = false
+    /** Once this screen has sent the unlock, it has done its job: no second send from it. */
+    private var sent = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -70,6 +72,7 @@ class UnlockActivity : AppCompatActivity() {
         val request = UnlockCoordinator.currentRequest(enrolmentId)
         binding.unlockLastHeard.text = UnlockNotifications.lastHeard(this, enrolment).orEmpty()
         binding.unlockLastHeard.isVisible = binding.unlockLastHeard.text.isNotEmpty()
+        if (sent) return showSent()
         if (request == null) {
             binding.unlockContext.text = getString(R.string.unlock_waiting)
             binding.unlockDetails.isVisible = false
@@ -87,6 +90,11 @@ class UnlockActivity : AppCompatActivity() {
         )
         binding.unlockDetails.isVisible = true
         binding.unlockConfirmButton.isEnabled = !sending
+    }
+
+    private fun showSent() {
+        binding.unlockConfirmButton.isVisible = false
+        binding.unlockCloseButton.setText(R.string.enrol_close)
     }
 
     private fun onUnlockClicked() {
@@ -141,6 +149,7 @@ class UnlockActivity : AppCompatActivity() {
                 secret.fill(0)
             }
             sending = false
+            this@UnlockActivity.sent = sent
             showStatus(getString(if (sent) R.string.unlock_sent else R.string.unlock_send_failed))
             render()
         }

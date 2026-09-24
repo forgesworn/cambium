@@ -103,8 +103,8 @@
                 android:value="Keep the NIP-46 connection to the paired Heartwood signer warm for faster responses, and listen for its unlock requests after a restart" />
         </service>
 
-        <!-- BOOT_COMPLETED is a protected broadcast: only the system can send it, so this is safe
-             to export. BootReceiver itself checks the keep-warm toggle and pairing before doing
+        <!-- BOOT_COMPLETED and MY_PACKAGE_REPLACED are protected broadcasts: only the system can
+             send them, so this is safe to export. BootReceiver itself checks the keep-warm toggle and pairing before doing
              anything. -->
         <receiver
             android:name=".service.BootReceiver"
@@ -112,6 +112,7 @@
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
             </intent-filter>
         </receiver>
 

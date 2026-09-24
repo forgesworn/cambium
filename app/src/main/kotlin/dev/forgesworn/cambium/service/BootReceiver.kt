@@ -25,7 +25,9 @@ import kotlinx.coroutines.launch
  */
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        if (intent.action != Intent.ACTION_BOOT_COMPLETED) return
+        // An update kills the running service like a reboot does, and would otherwise leave phone
+        // unlock deaf until the phone next restarts.
+        if (intent.action != Intent.ACTION_BOOT_COMPLETED && intent.action != Intent.ACTION_MY_PACKAGE_REPLACED) return
 
         val pendingResult = goAsync()
         CoroutineScope(Dispatchers.IO).launch {
