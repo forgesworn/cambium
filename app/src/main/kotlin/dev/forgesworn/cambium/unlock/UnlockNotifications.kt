@@ -24,9 +24,12 @@ import dev.forgesworn.cambium.R
 object UnlockNotifications {
     private const val CHANNEL_REQUESTS = "unlock_requests"
     private const val CHANNEL_STATUS = "signer_status"
+    // Notifications are told apart by tag, then by the board's own 32-bit record id, so two
+    // boards never share one (a folded id would collide one time in a few thousand).
+    private const val TAG_REQUEST = "unlock_request"
+    private const val TAG_STILL_LOCKED = "unlock_still_locked"
+    private const val TAG_QUIET = "signer_quiet"
     private const val ID_QUIET = 2
-    private const val ID_REQUEST_BASE = 0x1000
-    private const val ID_STILL_LOCKED_BASE = 0x2000
 
     fun ensureChannels(context: Context) {
         val manager = context.getSystemService(NotificationManager::class.java)
@@ -76,12 +79,15 @@ object UnlockNotifications {
             .setAutoCancel(true)
             .setContentIntent(openUnlock(context, enrolment.id))
             .addAction(0, context.getString(R.string.unlock_action), openUnlock(context, enrolment.id))
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+            .setPublicVersion(redacted(context, CHANNEL_REQUESTS, R.string.unlock_notification_public))
+            .setGroup("$TAG_REQUEST:${enrolment.id}")
             .build()
-        post(context, ID_REQUEST_BASE + slot(enrolment.id), notification)
+        post(context, TAG_REQUEST, slot(enrolment.id), notification)
     }
 
     fun cancelRequest(context: Context, enrolmentId: Long) {
-        NotificationManagerCompat.from(context).cancel(ID_REQUEST_BASE + slot(enrolmentId))
+        NotificationManagerCompat.from(context).cancel(TAG_REQUEST, slot(enrolmentId))
     }
 
     fun showStillLocked(context: Context, match: LockMatch) {
@@ -92,8 +98,11 @@ object UnlockNotifications {
             .setStyle(NotificationCompat.BigTextStyle().bigText(context.getString(R.string.unlock_still_locked_text)))
             .setAutoCancel(true)
             .setContentIntent(openUnlock(context, match.enrolment.id))
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+            .setPublicVersion(redacted(context, CHANNEL_STATUS, R.string.unlock_status_public))
+            .setGroup("$TAG_STILL_LOCKED:${match.enrolment.id}")
             .build()
-        post(context, ID_STILL_LOCKED_BASE + slot(match.enrolment.id), notification)
+        post(context, TAG_STILL_LOCKED, slot(match.enrolment.id), notification)
     }
 
     /** One notification for every quiet signer, so three identities on one board are one alert. */
@@ -107,29 +116,47 @@ object UnlockNotifications {
             .setContentIntent(
                 PendingIntent.getActivity(context, 0, Intent(context, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE),
             )
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+            .setPublicVersion(redacted(context, CHANNEL_STATUS, R.string.unlock_status_public))
+            .setGroup(TAG_QUIET)
             .build()
-        post(context, ID_QUIET, notification)
+        post(context, TAG_QUIET, ID_QUIET, notification)
     }
 
-    fun cancelQuiet(context: Context) = NotificationManagerCompat.from(context).cancel(ID_QUIET)
+    fun cancelQuiet(context: Context) = NotificationManagerCompat.from(context).cancel(TAG_QUIET, ID_QUIET)
 
+    /** What the lock screen shows instead: no board name, network or restart count. */
+    private fun redacted(context: Context, channel: String, text: Int): android.app.Notification =
+        NotificationCompat.Builder(context, channel)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentTitle(context.getString(R.string.app_name))
+            .setContentText(context.getString(text))
+            .build()
+
+    /** The intent's data URI names the board, so each board has its own PendingIntent. */
     private fun openUnlock(context: Context, enrolmentId: Long): PendingIntent =
         PendingIntent.getActivity(
             context,
-            slot(enrolmentId),
+            0,
             UnlockActivity.intent(context, enrolmentId),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
 
-    private fun slot(enrolmentId: Long): Int = (enrolmentId and 0xFFF).toInt()
+    /** Board record ids are u32: every one maps to a distinct Int. */
+    private fun slot(enrolmentId: Long): Int = enrolmentId.toInt()
 
-    private fun post(context: Context, id: Int, notification: android.app.Notification) {
+    /**
+     * Every notification gets a group of its own. Android otherwise bundles an app's ungrouped
+     * notifications (here: the prompt with the keep-alive's ongoing one) under a summary, and a
+     * tap on that summary opens the app's launcher screen instead of the unlock screen.
+     */
+    private fun post(context: Context, tag: String, id: Int, notification: android.app.Notification) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
         ) {
             return
         }
         ensureChannels(context)
-        NotificationManagerCompat.from(context).notify(id, notification)
+        NotificationManagerCompat.from(context).notify(tag, id, notification)
     }
 }

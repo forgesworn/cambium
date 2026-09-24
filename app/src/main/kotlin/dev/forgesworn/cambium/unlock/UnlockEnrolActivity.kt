@@ -31,6 +31,7 @@ import dev.forgesworn.cambium.signer.displayLabel
 import dev.forgesworn.cambium.toHex
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.security.SecureRandom
 import javax.crypto.Cipher
@@ -47,7 +48,13 @@ import javax.crypto.Cipher
  *    keep-alive switched on, so the phone hears the board after a power cut.
  *
  * Nothing secret is ever on screen or passes through Sapwood. If the owner leaves before the
- * fingerprint, the secret is dropped and the screen says which board record to revoke.
+ * fingerprint, or waits more than [PENDING_TIMEOUT_MILLIS], the secret is dropped and the screen
+ * says which board record to revoke.
+ *
+ * The hand-off is not signed by anything the phone already trusts, so anyone who saw the code
+ * could race in an answer of their own. Two guards: the screen shows the board record number for
+ * the owner to compare with what Sapwood (or the bench script) reports, and a second, different
+ * answer arriving before the fingerprint blocks the enrolment outright.
  * Declared with `configChanges` in the manifest so a rotation does not lose the enrolment key.
  */
 class UnlockEnrolActivity : AppCompatActivity() {
@@ -59,6 +66,10 @@ class UnlockEnrolActivity : AppCompatActivity() {
     private var pending: HandOff? = null
     private var keyAlias: String? = null
     private var stored = false
+    private var storedId = -1L
+    /** Two different answers for one code: someone else has the code. Nothing is kept. */
+    private var conflicted = false
+    @Volatile private var destroyed = false
 
     private val notificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
 
@@ -101,12 +112,18 @@ class UnlockEnrolActivity : AppCompatActivity() {
             notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
 
-        lifecycleScope.launch {
-            watch = RelayWatch.handOff(relays, rendezvous) { raw -> runOnUiThread { onHandOff(raw) } }
+        // Not lifecycleScope: a start cancelled half way would leave a relay client nobody can
+        // stop. The watch is recorded, or stopped at once if the screen closed meanwhile.
+        CoroutineScope(Dispatchers.IO).launch {
+            val started = RelayWatch.handOff(relays, rendezvous) { raw -> runOnUiThread { onHandOff(raw) } }
+            runOnUiThread {
+                if (destroyed) CoroutineScope(Dispatchers.IO).launch { started.stop() } else watch = started
+            }
         }
     }
 
     override fun onDestroy() {
+        destroyed = true
         val closing = watch
         watch = null
         // lifecycleScope is already cancelled here; the stop itself is NonCancellable native work.
@@ -120,23 +137,63 @@ class UnlockEnrolActivity : AppCompatActivity() {
     }
 
     private fun onHandOff(raw: RawAnnouncement) {
-        if (pending != null || stored || isFinishing) return
+        if (conflicted || isFinishing) return
         val secret = enrolSecretHex ?: return
         val envelope = HandOffParser.envelope(raw.content) ?: return
         val decrypted = UnlockNostr.openHandOff(secret, envelope.ephemeralPubkeyHex, envelope.sealed) ?: return
         val handOff = HandOffParser.plain(decrypted, envelope) ?: return
+        if (stored) {
+            // Kept listening while the screen is open: a different answer after the fingerprint
+            // means the one kept may be someone else's.
+            if (handOff.id != storedId) {
+                conflicted = true
+                binding.enrolBatteryButton.isVisible = false
+                binding.enrolStatus.text = getString(R.string.enrol_conflict_after, storedId, handOff.id)
+            }
+            handOff.wipe()
+            return
+        }
+        val first = pending
+        if (first != null) {
+            // The same answer again (a relay repeating it) is harmless; a different one is not.
+            if (first.id != handOff.id || !first.slotSecret.contentEquals(handOff.slotSecret)) {
+                conflicted = true
+                first.wipe()
+                pending = null
+                enrolSecretHex = null
+                binding.enrolConfirmButton.isVisible = false
+                binding.enrolStatus.text = getString(R.string.enrol_conflict, first.id, handOff.id)
+            }
+            handOff.wipe()
+            return
+        }
+        if (UnlockStore(this).enrolment(handOff.id) != null) {
+            handOff.wipe()
+            binding.enrolStatus.text = getString(R.string.enrol_already_held, handOff.id)
+            return
+        }
         pending = handOff
-        // The enrolment key has done its one job.
-        enrolSecretHex = null
         binding.enrolQr.isVisible = false
         binding.enrolCode.isVisible = false
         binding.enrolCopyButton.isVisible = false
         binding.enrolStatus.text = getString(R.string.enrol_received, handOff.id)
         binding.enrolConfirmButton.isVisible = true
+        lifecycleScope.launch {
+            delay(PENDING_TIMEOUT_MILLIS)
+            val held = pending
+            if (!stored && held === handOff) {
+                held.wipe()
+                pending = null
+                enrolSecretHex = null
+                binding.enrolConfirmButton.isVisible = false
+                binding.enrolStatus.text = getString(R.string.enrol_timed_out, handOff.id)
+            }
+        }
         promptSeal()
     }
 
     private fun promptSeal() {
+        if (conflicted) return
         val handOff = pending ?: return
         val alias = keyAlias ?: SlotSecretVault.newAlias().also { keyAlias = it }
         val cipher: Cipher = runCatching { SlotSecretVault.encryptCipher(alias) }.getOrElse {
@@ -149,6 +206,8 @@ class UnlockEnrolActivity : AppCompatActivity() {
             object : BiometricPrompt.AuthenticationCallback() {
                 override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
                     val unlocked = result.cryptoObject?.cipher ?: return
+                    // A conflicting answer or the timeout may have landed while the prompt was up.
+                    if (conflicted || pending !== handOff) return
                     finishEnrolment(handOff, alias, SlotSecretVault.seal(unlocked, handOff.slotSecret))
                 }
 
@@ -185,6 +244,7 @@ class UnlockEnrolActivity : AppCompatActivity() {
         handOff.wipe()
         pending = null
         stored = true
+        storedId = handOff.id
 
         // A phone that can unlock is only useful if it is listening when the power comes back.
         PairingStore(this).setKeepAliveEnabled(true)
@@ -214,6 +274,8 @@ class UnlockEnrolActivity : AppCompatActivity() {
 
     companion object {
         private const val EXTRA_SIGNER_PUBKEY = "signer_pubkey"
+        /** How long an opened hand-off waits for the fingerprint before the secret is dropped. */
+        private const val PENDING_TIMEOUT_MILLIS = 5 * 60 * 1000L
 
         fun intent(context: Context, signerPubkeyHex: String): Intent =
             Intent(context, UnlockEnrolActivity::class.java).putExtra(EXTRA_SIGNER_PUBKEY, signerPubkeyHex)

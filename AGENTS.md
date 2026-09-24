@@ -523,16 +523,15 @@ Android apps              Websites
 - `service/HeartwoodKeepAliveService.kt` -- optional, off-by-default foreground service that keeps
   the process (and so `HeartwoodSession`'s warm `NostrConnect`) alive between requests, closing the
   previously-tracked "only warm while the process happens to be running" gap. Pings Heartwood every
-  8 minutes via `HeartwoodSession.trySilent(pairing) { it.getPublicKey() }` -- a read-only,
-  always-safe operation Heartwood answers without a physical button; rust-nostr's client bindings
-  have no lower-level "ping" primitive to call instead (checked directly against the AAR with
-  `javap`: neither `NostrConnect` nor `NostrConnectInterface` declare one). `trySilent`, not
-  `withClient`: the ping must go through the shedding path, since `withClient` always queues and a
-  slow/unreachable Heartwood would let a scheduled ping occupy the single worker for up to the
-  silent timeout, inflating queue depth against `MAX_QUEUED` and shedding a real Amethyst burst
-  into visible popups -- the exact regression `HeartwoodSession`'s admission control exists to
-  prevent. A refusal (queue non-empty) is also the right outcome on its own terms: it means the
-  session is demonstrably warm already, so the ping was redundant. `targetSdk` 35 requires
+  8 minutes via `HeartwoodSession.withClient(pairing, MAINTENANCE) { it.getPublicKey() }` -- a
+  read-only, always-safe operation Heartwood answers without a physical button; rust-nostr's client
+  bindings have no lower-level "ping" primitive to call instead (checked directly against the AAR
+  with `javap`: neither `NostrConnect` nor `NostrConnectInterface` declare one). MAINTENANCE is
+  admitted only into an empty worker, so a slow or unreachable Heartwood never lets a ping inflate
+  queue depth and shed a real Amethyst burst into visible popups; a busy worker answers `Busy` at
+  once, which means the session is demonstrably warm anyway. It was `trySilent` until phone unlock
+  needed the gone-quiet alert: `trySilent` answers `null` for both "busy" and "no answer in time",
+  and an unreachable signer is precisely the case the alert has to see. `targetSdk` 35 requires
   an explicit `foregroundServiceType`; there is no built-in type for "hold a NIP-46 connection
   open", so this follows Amber's own `ConnectivityService` (verified against its actual source,
   `greenart7c3/Amber` `service/ConnectivityService.kt` and manifest): `specialUse`, declared in the

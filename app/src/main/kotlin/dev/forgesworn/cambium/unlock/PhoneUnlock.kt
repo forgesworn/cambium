@@ -24,9 +24,11 @@ import javax.crypto.spec.SecretKeySpec
  * ```
  *
  * S is the slot secret the board handed this phone at enrolment. It unlocks the board, so it lives
- * behind a biometric-bound Keystore key (see [SlotSecretVault]) and is only in memory for the
- * instant a delivery is built. K is derived from it and only recognises and reads lock messages;
- * it is kept where the background listener can reach it.
+ * behind a biometric-bound Keystore key (see [SlotSecretVault]) and is decrypted only for a
+ * delivery. The byte arrays holding it are wiped, but the delivery JSON and the NIP-44 call need it
+ * as a String, which the JVM cannot wipe; those copies live until the garbage collector reclaims
+ * them. K is derived from it and only recognises and reads lock messages; it is kept where the
+ * background listener can reach it.
  */
 object PhoneUnlock {
     const val ANNOUNCE_KIND = 24135

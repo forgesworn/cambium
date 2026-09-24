@@ -81,11 +81,13 @@ class RelayWatch private constructor(
 ) {
     private val client = Client()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val added = mutableListOf<String>()
 
     private suspend fun start(relays: List<String>, filter: Filter) = withContext(NonCancellable + Dispatchers.IO) {
         client.automaticAuthentication(false)
         for (relay in relays) {
             runCatching { client.addRelay(RelayUrl.parse(relay)) }
+                .onSuccess { added += relay }
                 .onFailure { Log.w(tag, "relay refused: $relay", it) }
         }
         client.connect()
@@ -104,11 +106,16 @@ class RelayWatch private constructor(
         }
     }
 
-    /** Publishes to every connected relay; true if at least one accepted it. */
-    suspend fun publish(event: Event): Boolean = withContext(NonCancellable + Dispatchers.IO) {
+    /**
+     * Publishes to those of [targets] this watch is connected to (all of its relays if none are),
+     * so an unlock for one board is not sprayed across every other board's relays. True if at
+     * least one relay accepted it.
+     */
+    suspend fun publish(event: Event, targets: List<String>): Boolean = withContext(NonCancellable + Dispatchers.IO) {
         runCatching {
             client.waitForConnection(CONNECT_WAIT)
-            client.sendEvent(event).success.isNotEmpty()
+            val chosen = targets.filter { it in added }.ifEmpty { added.toList() }
+            client.sendEventTo(chosen.map { RelayUrl.parse(it) }, event).success.isNotEmpty()
         }.onFailure { Log.w(tag, "publish failed", it) }.getOrDefault(false)
     }
 
@@ -130,9 +137,10 @@ class RelayWatch private constructor(
 
         /**
          * Every lock announcement on [relays]. No filter beyond the kind: the relay learns only
-         * that this client reads lock announcements, as every Cambium does. Since a minute ago,
-         * so a listener that just (re)started does not wait a full announce period; the board
-         * repeats every 60 s anyway.
+         * that this client reads lock announcements, as every Cambium does. Kind 24135 is
+         * ephemeral, so relays keep no backlog: a listener that just (re)started hears the
+         * board's next repeat, at most a minute away. `since` only bounds what a relay that
+         * does store them could replay.
          */
         suspend fun locks(relays: List<String>, onEvent: (RawAnnouncement) -> Unit): RelayWatch =
             RelayWatch("CambiumUnlockListen", onEvent).also {

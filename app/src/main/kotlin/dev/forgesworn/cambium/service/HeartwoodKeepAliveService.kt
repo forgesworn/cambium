@@ -18,6 +18,7 @@ import dev.forgesworn.cambium.MainActivity
 import dev.forgesworn.cambium.R
 import dev.forgesworn.cambium.pairing.Pairing
 import dev.forgesworn.cambium.pairing.PairingStore
+import dev.forgesworn.cambium.signer.HeartwoodError
 import dev.forgesworn.cambium.signer.HeartwoodRequestPriority
 import dev.forgesworn.cambium.signer.HeartwoodResult
 import dev.forgesworn.cambium.signer.HeartwoodSession
@@ -56,14 +57,14 @@ import kotlinx.coroutines.launch
  * client bindings do not expose a lower-level "ping" primitive to call instead (checked via
  * `javap` against the actual AAR: `NostrConnect`/`NostrConnectInterface` have no `ping` method).
  *
- * The ping goes through [HeartwoodSession.trySilent], the shedding path, not [HeartwoodSession.withClient]:
- * a real request against a slow or unreachable Heartwood can occupy that identity's worker for up
- * to [HeartwoodSession]'s silent timeout. A keepalive has maintenance priority and can only enter
- * an empty worker, so it never consumes one of the slots reserved for real Amethyst work.
- * `trySilent` refuses it immediately if the queue is non-empty, which is also the right
- * behaviour here on its own terms: a busy queue means the session is demonstrably warm already,
- * so a skipped ping loses nothing.
- *
+ * The ping goes through [HeartwoodSession.withClient] at [HeartwoodRequestPriority.MAINTENANCE]:
+ * that priority is admitted only into an empty worker (the same admission check the silent path
+ * uses), so a keepalive never takes one of the slots reserved for real Amethyst work, and a busy
+ * worker answers [HeartwoodError.Busy] at once, which is fine: a busy queue means the session is
+ * demonstrably warm already. It is not [HeartwoodSession.trySilent] because that answers `null`
+ * both for "busy" and for "no answer in time", and the gone-quiet alert needs to tell those apart:
+ * a signer that is off answers nothing, and that is exactly what it has to notice.
+
  * One cycle pings every paired identity in turn, not just one -- each has its own
  * [HeartwoodSession] worker and admission control (see its class doc), so a slow/unreachable
  * identity's ping can never delay or shed another identity's. With a realistic handful of paired
@@ -149,17 +150,18 @@ class HeartwoodKeepAliveService : Service() {
         val records = unlockStore.reachability().filterKeys { key -> pairings.any { it.signerPubkeyHex == key } }.toMutableMap()
         for (pairing in pairings) {
             val tag = pairing.signerPubkeyHex.take(8)
-            val result = HeartwoodSession.trySilent(
+            val result = HeartwoodSession.withClient(
                 pairing,
                 priority = HeartwoodRequestPriority.MAINTENANCE,
-            ) { it.getPublicKey() }?.result
-            when (result) {
-                is HeartwoodResult.Success -> Log.d(TAG, "keepalive ping ok ($tag)")
-                is HeartwoodResult.Failure -> Log.d(TAG, "keepalive ping failed ($tag): ${result.error}")
-                null -> Log.d(TAG, "keepalive ping skipped ($tag): worker already busy")
+            ) { it.getPublicKey() }.result
+            val busy = result is HeartwoodResult.Failure && result.error == HeartwoodError.Busy
+            when {
+                result is HeartwoodResult.Success -> Log.d(TAG, "keepalive ping ok ($tag)")
+                busy -> Log.d(TAG, "keepalive ping skipped ($tag): worker already busy")
+                result is HeartwoodResult.Failure -> Log.d(TAG, "keepalive ping failed ($tag): ${result.error}")
             }
             // A refusal is an answer: the signer is there. A skipped ping says nothing either way.
-            if (result != null) {
+            if (!busy) {
                 val answered = result is HeartwoodResult.Success ||
                     (result is HeartwoodResult.Failure && isPolicyRefusal(result.error))
                 records[pairing.signerPubkeyHex] =
@@ -222,6 +224,8 @@ class HeartwoodKeepAliveService : Service() {
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setContentIntent(openApp)
+            // Its own group, so Android never bundles it with an unlock prompt (see UnlockNotifications.post).
+            .setGroup(CHANNEL_ID)
             .build()
     }
 

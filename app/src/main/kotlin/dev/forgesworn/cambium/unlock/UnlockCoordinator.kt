@@ -6,6 +6,7 @@ import dev.forgesworn.cambium.signer.RelayWatch
 import dev.forgesworn.cambium.signer.UnlockNostr
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -13,6 +14,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -26,6 +28,10 @@ import java.util.concurrent.ConcurrentHashMap
  * repeat of the same restart arrives well after this phone answered it, the delivery did not take
  * (a revoked record, say), and the owner is told the board is still locked. Nothing here ever
  * pings the board: see [Reachability].
+ *
+ * The enrolled boards are cached in memory ([boards]) and re-read on every [sync]: the listener
+ * sees every lock message on its relays, almost all of them someone else's, and must not open
+ * the encrypted store for each one.
  */
 object UnlockCoordinator {
     private const val TAG = "CambiumUnlock"
@@ -45,25 +51,35 @@ object UnlockCoordinator {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var watch: RelayWatch? = null
     private var watchedRelays: List<String> = emptyList()
+    @Volatile private var boards: List<UnlockEnrolment> = emptyList()
 
-    /** Starts, restarts or stops the listener so it watches exactly the enrolled boards' relays. */
-    suspend fun sync(context: Context) = mutex.withLock {
-        val app = context.applicationContext
-        val relays = LockMatcher.relayUnion(UnlockStore(app).enrolments())
-        if (relays == watchedRelays && watch != null) return@withLock
-        watch?.stop()
-        watch = null
-        watchedRelays = emptyList()
-        if (relays.isEmpty()) return@withLock
-        watch = RelayWatch.locks(relays) { raw -> onAnnouncement(app, raw) }
-        watchedRelays = relays
-        Log.i(TAG, "listening for lock messages on ${relays.size} relay(s)")
+    /**
+     * Starts, restarts or stops the listener so it watches exactly the enrolled boards' relays.
+     * Runs to completion even if the caller is cancelled (an activity closed mid-start): a relay
+     * client started but never recorded in [watch] could never be stopped.
+     */
+    suspend fun sync(context: Context) = withContext(NonCancellable) {
+        mutex.withLock {
+            val app = context.applicationContext
+            boards = UnlockStore(app).enrolments()
+            val relays = LockMatcher.relayUnion(boards)
+            if (relays == watchedRelays && watch != null) return@withLock
+            watch?.stop()
+            watch = null
+            watchedRelays = emptyList()
+            if (relays.isEmpty()) return@withLock
+            watch = RelayWatch.locks(relays) { raw -> onAnnouncement(app, raw) }
+            watchedRelays = relays
+            Log.i(TAG, "listening for lock messages on ${relays.size} relay(s)")
+        }
     }
 
-    suspend fun stop() = mutex.withLock {
-        watch?.stop()
-        watch = null
-        watchedRelays = emptyList()
+    suspend fun stop() = withContext(NonCancellable) {
+        mutex.withLock {
+            watch?.stop()
+            watch = null
+            watchedRelays = emptyList()
+        }
     }
 
     /** The board's current request, if it asked within the last two announce periods. */
@@ -77,10 +93,10 @@ object UnlockCoordinator {
     }
 
     private fun onAnnouncement(app: Context, raw: RawAnnouncement) {
-        val store = UnlockStore(app)
         val nowMillis = System.currentTimeMillis()
-        val match = LockMatcher.match(raw, store.enrolments(), nowMillis / 1000) ?: return
+        val match = LockMatcher.match(raw, boards, nowMillis / 1000) ?: return
         val id = match.enrolment.id
+        val store = UnlockStore(app)
 
         // Any authentic message carries the board's relay list: follow it, whatever the verdict.
         val followed = LockMatcher.withRelaysFrom(match.enrolment, match.context)
@@ -94,7 +110,9 @@ object UnlockCoordinator {
                 Log.i(TAG, "board $id: ${match.verdict.name.lowercase()} message, restart #${match.context.boot}")
             }
             Verdict.PROMPT -> {
-                store.modify(id) { it.copy(last = LastPrompt(match.context.boot, raw.authorHex)) }
+                val last = LastPrompt(match.context.boot, raw.authorHex)
+                store.modify(id) { it.copy(last = last) }
+                boards = boards.map { if (it.id == id) it.copy(last = last) else it }
                 sent.remove(id)
                 warnedStillLocked.remove(id)
                 _requests.update { it + (id to Request(match, nowMillis)) }
@@ -117,7 +135,9 @@ object UnlockCoordinator {
 
     /**
      * Sends the unlock for [request] with the slot secret a biometric just released. The caller
-     * wipes [slotSecret] afterwards. True once at least one relay accepted the delivery.
+     * wipes [slotSecret] afterwards and has already checked [request] is still the board's
+     * current one. The delivery goes only to the relays the board itself listed, not to every
+     * relay this phone listens on. True once at least one relay accepted it.
      */
     suspend fun deliver(context: Context, request: Request, slotSecret: ByteArray): Boolean {
         val app = context.applicationContext
@@ -127,11 +147,16 @@ object UnlockCoordinator {
             PhoneUnlock.deliveryJson(match.enrolment.id, slotSecret),
         )
         sync(app)
-        val published = mutex.withLock { watch }?.publish(event) ?: false
+        val targets = match.context.relays.map { it.trimEnd('/') }.filter(::isRelayUrl)
+            .ifEmpty { match.enrolment.relays }
+        val published = mutex.withLock { watch }?.publish(event, targets) ?: false
         if (published) {
             sent[match.enrolment.id] = Sent(match.announcement.authorHex, match.context.boot, System.currentTimeMillis())
             warnedStillLocked.remove(match.enrolment.id)
-            UnlockNotifications.cancelRequest(app, match.enrolment.id)
+            // Only if no newer restart has asked in the meantime: that prompt must stay up.
+            if (currentRequest(match.enrolment.id)?.match?.announcement?.authorHex == match.announcement.authorHex) {
+                UnlockNotifications.cancelRequest(app, match.enrolment.id)
+            }
         }
         Log.i(TAG, "board ${match.enrolment.id}: delivery ${if (published) "published" else "not accepted by any relay"}")
         return published

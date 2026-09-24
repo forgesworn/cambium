@@ -85,18 +85,27 @@ abroad does not strand the board.
   unlock: no PIN fallback, StrongBox where the phone has one, and destroyed if the enrolled
   fingerprints or faces change (set it up again afterwards).
 - A *phone key* K derived from S, in encrypted storage without a biometric, so Cambium can
-  recognise and read the board's lock messages in the background. K unlocks nothing.
+  recognise and read the board's lock messages in the background. K cannot unlock the board, but
+  whoever has it can write a convincing fake lock message for this phone; tapping that would send
+  S to them. The warning below applies to that as much as to a stolen board.
 
 **Always a tap.** The board has no flash encryption or secure boot, so whoever holds it can make it
 ask to be unlocked, on any network, with any story. The notification says so every time. Only
 unlock when you expect it. Cambium never unlocks on its own, and there is no setting to make it.
 
-**Nothing trackable on the wire.** A locked board's message carries no tag naming this phone, only
-a hint that changes with every restart. Cambium reads *every* lock message on its relays and matches
-locally, so the relay learns nothing about which board it waits for. Each unlock is sent from a
-fresh throwaway key. Cambium never contacts the board because a lock message arrived. What a
-relay can still see: this phone's IP address, and that *someone* answered *a* lock message seconds
-after it was posted. Cambium's ordinary NIP-46 pairing is a stable link, as before.
+**No stable phone identifier on the wire.** A locked board's message carries no tag naming this
+phone, only a hint that changes with every restart. Cambium reads *every* lock message on its
+relays and matches locally, so a subscription says nothing about which board it waits for. Each
+unlock is sent from a fresh throwaway key, to that board's own relays only. Cambium never contacts
+the board because a lock message arrived. What a relay can still see: this phone's IP address; that
+the connection which just sent an unlock answered one particular lock message, so the relay can
+tie that IP to that board's restart; and, if Cambium's ordinary NIP-46 pairing uses the same relay,
+the same IP talking to the signer. Use relays you run, or a VPN or Tor on the phone, if that
+matters to you.
+
+The enrolment hand-off is not signed by anything the phone already trusts, so anyone who sees the
+enrolment code could try to answer it first. Cambium shows the board record number it received:
+check Sapwood shows the same one. If two different answers arrive, Cambium keeps neither.
 
 **Gone quiet.** When the keep-warm service is on, Cambium also says when a paired signer stops
 answering its scheduled checks (two in a row, eight minutes apart), so you hear about a power cut

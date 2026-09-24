@@ -2,6 +2,7 @@ package dev.forgesworn.cambium.unlock
 
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
@@ -19,8 +20,10 @@ import kotlinx.coroutines.launch
 /**
  * The unlock prompt a notification opens: which board, why it restarted, on which network, the
  * standing warning, and one button that asks for a strong biometric. The biometric releases the
- * board's slot secret inside the Keystore ([SlotSecretVault]); the secret is in memory only while
- * [UnlockCoordinator.deliver] builds and publishes the delivery, then wiped.
+ * board's slot secret inside the Keystore ([SlotSecretVault]); its byte array is wiped once
+ * [UnlockCoordinator.deliver] has published (see [PhoneUnlock] for the String copies it cannot wipe).
+ * After the fingerprint it re-checks that the request is still the board's current one: a board
+ * that restarted meanwhile has discarded the key the delivery would go to.
  *
  * It always acts on the board's *current* request ([UnlockCoordinator.currentRequest]), never on
  * what the notification said when it was posted: the board repeats its message every minute
@@ -41,16 +44,9 @@ class UnlockActivity : AppCompatActivity() {
         binding = ActivityUnlockBinding.inflate(layoutInflater)
         setContentView(binding.root)
         store = UnlockStore(this)
-        enrolmentId = intent.getLongExtra(EXTRA_ENROLMENT_ID, -1)
-        val enrolment = store.enrolment(enrolmentId)
-        if (enrolment == null) {
-            Toast.makeText(this, R.string.unlock_board_forgotten, Toast.LENGTH_LONG).show()
-            finish()
-            return
-        }
-        binding.unlockTitle.text = getString(R.string.unlock_title, enrolment.boardLabel)
         binding.unlockConfirmButton.setOnClickListener { onUnlockClicked() }
         binding.unlockCloseButton.setOnClickListener { finish() }
+        if (!showBoard(intent)) return
 
         // Tapping a notification can start a fresh process: make sure the listener is up so the
         // board's next repeat reaches this screen.
@@ -65,6 +61,30 @@ class UnlockActivity : AppCompatActivity() {
                 }
             }
         }
+    }
+
+    /** A tap on another board's notification while this screen is open switches to that board. */
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        if (showBoard(intent)) render()
+    }
+
+    private fun showBoard(intent: Intent): Boolean {
+        enrolmentId = intent.getLongExtra(EXTRA_ENROLMENT_ID, -1)
+        sent = false
+        sending = false
+        binding.unlockStatus.isVisible = false
+        binding.unlockConfirmButton.isVisible = true
+        binding.unlockCloseButton.setText(R.string.unlock_not_now)
+        val enrolment = store.enrolment(enrolmentId)
+        if (enrolment == null) {
+            Toast.makeText(this, R.string.unlock_board_forgotten, Toast.LENGTH_LONG).show()
+            finish()
+            return false
+        }
+        binding.unlockTitle.text = getString(R.string.unlock_title, enrolment.boardLabel)
+        return true
     }
 
     private fun render() {
@@ -139,6 +159,15 @@ class UnlockActivity : AppCompatActivity() {
     }
 
     private fun send(request: UnlockCoordinator.Request, secret: ByteArray) {
+        // The board may have restarted while the prompt was open: its old one-time key is gone,
+        // and the new restart's request must be read and approved on its own.
+        val current = UnlockCoordinator.currentRequest(request.match.enrolment.id)
+        if (current?.match?.announcement?.authorHex != request.match.announcement.authorHex) {
+            secret.fill(0)
+            showStatus(getString(R.string.unlock_request_changed))
+            render()
+            return
+        }
         sending = true
         binding.unlockConfirmButton.isEnabled = false
         showStatus(getString(R.string.unlock_sending))
@@ -165,6 +194,8 @@ class UnlockActivity : AppCompatActivity() {
 
         fun intent(context: Context, enrolmentId: Long): Intent =
             Intent(context, UnlockActivity::class.java)
+                // Distinct per board, so each board's notification keeps its own PendingIntent.
+                .setData(Uri.parse("cambium-unlock://board/$enrolmentId"))
                 .putExtra(EXTRA_ENROLMENT_ID, enrolmentId)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
     }

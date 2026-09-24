@@ -74,9 +74,10 @@
 
         <!-- Phone unlock. Neither is exported: the unlock screen is reached from Cambium's own
              notification or main screen, and enrolment from a pairing row. configChanges keeps
-             the enrolment key (memory only) across a rotation. -->
+             the enrolment key (memory only), and an open fingerprint prompt, across a rotation. -->
         <activity
             android:name=".unlock.UnlockActivity"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|uiMode|density|fontScale|locale|layoutDirection"
             android:excludeFromRecents="true"
             android:exported="false"
             android:launchMode="singleTop"

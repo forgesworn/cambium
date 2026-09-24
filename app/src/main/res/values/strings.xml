@@ -124,6 +124,14 @@
     <string name="quiet_title">Heartwood gone quiet: %1$s</string>
     <string name="quiet_text">No answer to the last two scheduled checks. A power cut or a network problem at the board? If it restarts locked, Cambium asks you to unlock it.</string>
 
+    <string name="unlock_notification_public">A Heartwood is asking to be unlocked.</string>
+    <string name="unlock_status_public">Heartwood status changed.</string>
+    <string name="unlock_request_changed">The board restarted again while you were confirming, so nothing was sent. Check the new request below.</string>
+    <string name="enrol_conflict">Two different answers arrived for this code (records %1$d and %2$d), so someone else has seen it. Nothing was kept on this phone. Revoke both records in Sapwood and start again with a new code.</string>
+    <string name="enrol_conflict_after">A second, different answer arrived (record %2$d) after this phone kept record %1$d, so someone else has seen the code. Forget this board below, revoke both records in Sapwood, and start again with a new code.</string>
+    <string name="enrol_already_held">The answer names record %1$d, which this phone already holds. Nothing was changed. Start again with a new code.</string>
+    <string name="enrol_timed_out">Not confirmed in time, so the unlock key was dropped. Revoke record %1$d in Sapwood and start again.</string>
+
     <string name="unlock_section_label">Phone unlock</string>
     <string name="unlock_section_body">After a restart, these boards can ask this phone to unlock them. Cambium keeps listening while any are set up here.</string>
     <string name="unlock_setup_button">Set up phone unlock</string>
@@ -139,7 +147,7 @@
     <string name="enrol_qr_description">Phone unlock enrolment code</string>
     <string name="enrol_copy">Copy code</string>
     <string name="enrol_waiting">Waiting for the board…</string>
-    <string name="enrol_received">The board added this phone as record %1$d. Confirm with your fingerprint or face to keep its unlock key on this phone.</string>
+    <string name="enrol_received">The board added this phone as record %1$d. Check that Sapwood shows the same number, then confirm with your fingerprint or face to keep the unlock key on this phone.</string>
     <string name="enrol_confirm">Confirm</string>
     <string name="enrol_prompt_title">Keep the unlock key on this phone</string>
     <string name="enrol_not_confirmed">Not confirmed yet. Confirm to finish; if you leave now, revoke record %1$d on the board in Sapwood.</string>
