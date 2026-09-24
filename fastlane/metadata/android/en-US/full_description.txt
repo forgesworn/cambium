@@ -8,6 +8,7 @@ Security model:
 - All pairing state lives in Android Keystore-backed encrypted storage.
 - Per-app approval is tracked locally, in addition to whatever the hardware signer's own policy enforces. The signer remains the authority on what actually gets signed.
 - All NIP-46 payloads are NIP-44-encrypted.
+- Phone unlock is the one exception, and it is opt-in: a Heartwood set up to be unlocked from this phone gives it an unlock secret for that board. It signs nothing, is useless without the board's own flash, and is released only by your screen lock, once per unlock.
 
 Features:
 
@@ -18,6 +19,8 @@ Features:
 - Per-identity bounded priority queues reserve room for user work. Exact relay-authentication duplicates coalesce and cache briefly; distinct AUTH bursts are admitted one at a time, never retried internally, and paused for 60 seconds after a transport failure.
 - Persistent per-app approval or denial, with a connected-apps list to review and forget choices.
 - Optional keep-warm foreground service so silent signing skips the reconnect penalty.
+- Phone unlock: a Heartwood that restarts locked after a power cut asks this phone to unlock it. The notification names the board, why it restarted and on which network, and warns that anyone holding the board can make it ask. One tap and your screen lock unlock it. Nothing on the wire names the phone.
+- Says when a paired signer has gone quiet (a power cut or network problem at the board).
 - A metadata-only activity log (app, method, event kind, identity, outcome — never any content).
 - Optional biometric or device-credential app lock on the management screen and approval decisions.
 

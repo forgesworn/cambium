@@ -15,7 +15,7 @@ what store metadata points at (F-Droid's `Donate:` field takes one URL).
 | GitHub Releases | **Live** (0.4.3 current; v0.2.0 onward) | Ours (the 0.2.0 trust root) |
 | Obtainium | **Live** via the 0.4.3 GitHub release | Ours |
 | Zapstore | **Live** (0.4.3 current; v0.3.2 onward) | Ours |
-| F-Droid | **MR open: [fdroiddata!42875](https://gitlab.com/fdroid/fdroiddata/-/merge_requests/42875)** — reviewed ("mostly ready"), in the test queue; the fork branch now tracks 0.4.3/versionCode 13 | Ours, when the reproducibility check passes |
+| F-Droid | **Live** ([fdroiddata!42875](https://gitlab.com/fdroid/fdroiddata/-/merge_requests/42875) merged 2026-09-13, 0.4.3 listed); new tags are picked up automatically | Ours, when the reproducibility check passes |
 | IzzyOnDroid (optional extra) | Eligible; their tracker moved to Codeberg (account needed) | Ours |
 | Accrescent | **Blocked externally** — registration is allowlist-only | Ours |
 
@@ -84,7 +84,15 @@ converted to a temporary PKCS12 for it (`keytool -importkeystore`), deleted afte
 Each future release: run the same command after the GitHub release is up (the config pulls the
 latest release), or add it as a release-checklist step.
 
-## F-Droid (submission ready)
+## F-Droid (live)
+
+The inclusion merge request was merged on 2026-09-13 and 0.4.3 is listed. From here
+`AutoUpdateMode: Version` picks up each `vX.Y.Z` tag, rebuilds it, and publishes our signed APK
+from `Binaries:` (`releases/download/v%v/cambium-%v.apk`) only if the rebuild matches it: build
+the release APK from the exact tagged commit with a clean tree, and name the asset exactly so.
+The history below is kept for reference.
+
+### Submission history
 
 Everything F-Droid reads from the app repo is now in place: `fastlane/metadata/android/en-US/`
 (title, summary, full description, per-versionCode changelogs, 512×512 icon). Tags are clean
@@ -156,8 +164,7 @@ Everything on our side is already satisfied, so when it opens this is quick:
 2. Tag `vX.Y.Z`, build, publish the GitHub release (APK + SHA256SUMS + AppVerifier block).
 3. `SIGN_WITH=... zsp publish --quiet --skip-preview zapstore.yaml`, with someone at the Heartwood
    to confirm the signing request.
-4. While fdroiddata!42875 is still open, add a `Builds:` entry for the new tag and bump
-   `CurrentVersion`/`CurrentVersionCode` in `docs/fdroid/dev.forgesworn.cambium.yml`, and push the
-   same change to the `cambium` branch of the fdroiddata fork.
-5. Obtainium and IzzyOnDroid pick the release up automatically; F-Droid does too, once the MR in
-   step 4 is merged.
+4. Nothing to do for F-Droid: the merged recipe tracks tags. Check a few days later that the new
+   version appears (`https://f-droid.org/api/v1/packages/dev.forgesworn.cambium`); if it does not,
+   the rebuild did not match our APK and needs investigating.
+5. Obtainium and IzzyOnDroid pick the release up automatically.
