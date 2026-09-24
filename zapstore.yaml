@@ -16,9 +16,14 @@ description: |
   remote NIP-46 bunker directly, but they all support NIP-55 external signers.
   Cambium fills that gap: it registers as a signer, but it is not one.
 
-  No user secrets ever touch the phone. Compromising the phone exposes only the
-  ability to request signatures — which the hardware signer's policy engine and
-  physical confirmation button still gate — never the identity key itself.
+  No user identity keys ever touch the phone. Compromising the phone exposes
+  only the ability to request signatures, which the hardware signer's policy
+  engine and physical confirmation button still gate, never the identity key
+  itself.
+
+  Phone unlock (opt-in): a Heartwood that restarts locked after a power cut asks
+  this phone to unlock it. One tap and your screen lock send the board's unlock
+  secret, which signs nothing and is useless without the board's own flash.
 
   Native Android apps can use Cambium silently after approval. Websites can use
   NIP-55 nostrsigner: links with an explicit one-shot approval and a validated

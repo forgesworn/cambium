@@ -1,0 +1,6 @@
+Phone unlock for a Heartwood (0.18.0-beta.17+) that restarts locked after a power cut.
+
+- The board asks this phone; one tap and your screen lock unlock it.
+- The unlock key needs your PIN, password or strong biometric for every use.
+- No tag names the phone on the wire; each unlock is sent from a throwaway key.
+- Cambium says when a paired signer goes quiet.
