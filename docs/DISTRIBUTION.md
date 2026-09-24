@@ -12,18 +12,19 @@ what store metadata points at (F-Droid's `Donate:` field takes one URL).
 
 | Channel | Status | Signature users get |
 |---|---|---|
-| GitHub Releases | **Live** (0.4.3 current; v0.2.0 onward) | Ours (the 0.2.0 trust root) |
-| Obtainium | **Live** via the 0.4.3 GitHub release | Ours |
-| Zapstore | **Live** (0.4.3 current; v0.3.2 onward) | Ours |
+| GitHub Releases | **Live** (0.5.0 current; v0.2.0 onward) | Ours (the 0.2.0 trust root) |
+| Obtainium | **Live** via the 0.5.0 GitHub release | Ours |
+| Zapstore | **Live** (0.5.0 current; v0.3.2 onward) | Ours |
 | F-Droid | **Live** ([fdroiddata!42875](https://gitlab.com/fdroid/fdroiddata/-/merge_requests/42875) merged 2026-09-13, 0.4.3 listed); new tags are picked up automatically | Ours, when the reproducibility check passes |
 | IzzyOnDroid (optional extra) | Eligible; their tracker moved to Codeberg (account needed) | Ours |
 | Accrescent | **Blocked externally** — registration is allowlist-only | Ours |
 
 ## GitHub Releases (live)
 
-0.4.3 was published and read back on 2026-08-14. Its APK SHA-256 is
-`857453f021569c9dffc59afc96e295e4b96afe21cd49224b1aecaaa06d65e983`, and its signing
-certificate matches the 0.2.0 trust root below.
+0.5.0 was published and read back on 2026-09-24, built from the tagged commit (`d0ea215`) in a
+clean tree for F-Droid's reproducibility check. Its APK SHA-256 is
+`9ccbf226e18036a57e6f402f81a55c7be7dd1986703af7e0581084e0a4e6d182`, and its signing certificate
+matches the 0.2.0 trust root below.
 
 The existing flow: bump `versionCode`/`versionName`, tag `vX.Y.Z`, build with the release
 keystore (`~/keystores/cambium-release.credentials`), upload the APK plus `SHA256SUMS`, and
@@ -44,10 +45,13 @@ obtainium://add/https://github.com/forgesworn/cambium
 
 ## Zapstore (live)
 
-Version 0.4.3 was published on 2026-08-14 through the publisher Heartwood bunker connection. The
+Version 0.5.0 was published on 2026-09-24 through the publisher Heartwood bunker connection (the
+first attempt timed out on the Blossom upload-auth signature while no one was at the board; a
+retry with the owner approving on the Heartwood went through). The previous release, 0.4.3, went
+out on 2026-08-14. The
 kind 32267 app, kind 30063 release and kind 3063 file events are live on `wss://relay.zapstore.dev`
 under the publisher identity below. The CDN serves the APK byte-identically to GitHub (SHA-256
-`857453f021569c9dffc59afc96e295e4b96afe21cd49224b1aecaaa06d65e983`) and the matching icon. The
+`857453f021569c9dffc59afc96e295e4b96afe21cd49224b1aecaaa06d65e983`) and the matching icon (0.5.0: SHA-256 `9ccbf226…d182`, read back byte-identical). The
 catalog page may take a short while to refresh its release list after relay publication.
 
 **First published 2026-07-14 (v0.3.2), signed via a Heartwood `bunker://` connection** — the
