@@ -97,6 +97,64 @@
     <string name="method_nip44_decrypt">nip44_decrypt</string>
     <string name="method_decrypt_zap_event">decrypt_zap_event</string>
 
+    <!-- Phone unlock -->
+    <string name="keep_alive_notification_text_listening">Listening for your Heartwood\'s unlock requests.</string>
+    <string name="unlock_channel_name">Unlock requests</string>
+    <string name="unlock_channel_description">A Heartwood that restarted locked and is asking this phone to unlock it.</string>
+    <string name="status_channel_name">Signer status</string>
+    <string name="status_channel_description">A paired signer has stopped answering, or is still locked after an unlock.</string>
+    <string name="unlock_unknown_network">unknown network</string>
+    <string name="unlock_context_line">%1$s, %2$s, restart #%3$d</string>
+    <string name="unlock_last_heard">It last answered Cambium %1$s.</string>
+    <string name="unlock_warning">This also appears if someone else powers the board on. Only unlock if you expect it.</string>
+    <string name="unlock_notification_title">Heartwood %1$s restarted</string>
+    <string name="unlock_notification_text">%1$s. Unlock?</string>
+    <string name="unlock_action">Unlock</string>
+    <string name="unlock_not_now">Not now</string>
+    <string name="unlock_title">Unlock %1$s?</string>
+    <string name="unlock_waiting">No current request from this board. While it is locked it asks every minute, and this screen updates when it does.</string>
+    <string name="unlock_details">firmware %1$s, access point %2$s, asked %3$d s ago</string>
+    <string name="unlock_key_gone">This phone\'s unlock key for the board is gone, usually because the fingerprints or face enrolled on the phone changed. Forget the board here, revoke its record in Sapwood, and set up phone unlock again.</string>
+    <string name="unlock_sending">Sending…</string>
+    <string name="unlock_sent">Sent. The board shows \"Unlocked by\" on its screen within a few seconds. If it is still locked in a minute, Cambium tells you.</string>
+    <string name="unlock_send_failed">No relay accepted the unlock. Check this phone\'s connection and try again; the board keeps asking every minute.</string>
+    <string name="unlock_board_forgotten">This board is no longer set up for phone unlock.</string>
+    <string name="unlock_still_locked_title">%1$s is still locked</string>
+    <string name="unlock_still_locked_text">It kept asking after this phone answered. Its record for this phone may have been revoked. Unlock it from Sapwood, or set up phone unlock again.</string>
+    <string name="quiet_title">Heartwood gone quiet: %1$s</string>
+    <string name="quiet_text">No answer to the last two scheduled checks. A power cut or a network problem at the board? If it restarts locked, Cambium asks you to unlock it.</string>
+
+    <string name="unlock_section_label">Phone unlock</string>
+    <string name="unlock_section_body">After a restart, these boards can ask this phone to unlock them. Cambium keeps listening while any are set up here.</string>
+    <string name="unlock_setup_button">Set up phone unlock</string>
+    <string name="unlock_setup_again_button">Set up phone unlock again</string>
+    <string name="unlock_board_asking">Asking to be unlocked</string>
+    <string name="unlock_forget_button">Forget</string>
+    <string name="unlock_forget_confirm_title">Forget %1$s?</string>
+    <string name="unlock_forget_confirm_body">This phone will no longer be able to unlock the board. The board still has record %1$d for this phone: revoke it in Sapwood or over USB, so the key cannot be used by a copy of this phone.</string>
+    <string name="battery_button">Allow Cambium to run in the background</string>
+
+    <string name="enrol_title">Unlock %1$s from this phone</string>
+    <string name="enrol_body">In Sapwood, add this phone under \"Phones that can unlock\" by scanning the code, then press the button on the board. Nothing secret is in the code, and nothing secret passes through Sapwood.</string>
+    <string name="enrol_qr_description">Phone unlock enrolment code</string>
+    <string name="enrol_copy">Copy code</string>
+    <string name="enrol_waiting">Waiting for the board…</string>
+    <string name="enrol_received">The board added this phone as record %1$d. Confirm with your fingerprint or face to keep its unlock key on this phone.</string>
+    <string name="enrol_confirm">Confirm</string>
+    <string name="enrol_prompt_title">Keep the unlock key on this phone</string>
+    <string name="enrol_not_confirmed">Not confirmed yet. Confirm to finish; if you leave now, revoke record %1$d on the board in Sapwood.</string>
+    <string name="enrol_keystore_failed">This phone could not create a key for it: %1$s</string>
+    <string name="enrol_done">Done. This phone can unlock the board (record %1$d). Cambium now listens for it in the background.</string>
+    <string name="enrol_finished">Finished</string>
+    <string name="enrol_close">Close</string>
+    <string name="enrol_needs_biometric">Phone unlock needs a fingerprint or face unlock of the strong class set up on this phone, because it is what releases the unlock key.</string>
+    <string name="enrol_no_relays">This pairing has no relays Cambium can use.</string>
+
+    <plurals name="unlock_board_detail">
+        <item quantity="one">Board record %1$d, %2$d relay</item>
+        <item quantity="other">Board record %1$d, %2$d relays</item>
+    </plurals>
+
     <plurals name="status_paired_count">
         <item quantity="one">%1$d signer paired</item>
         <item quantity="other">%1$d signers paired</item>

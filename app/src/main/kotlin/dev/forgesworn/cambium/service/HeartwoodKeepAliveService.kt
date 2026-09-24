@@ -16,10 +16,17 @@ import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import dev.forgesworn.cambium.MainActivity
 import dev.forgesworn.cambium.R
+import dev.forgesworn.cambium.pairing.Pairing
 import dev.forgesworn.cambium.pairing.PairingStore
-import dev.forgesworn.cambium.signer.HeartwoodResult
 import dev.forgesworn.cambium.signer.HeartwoodRequestPriority
+import dev.forgesworn.cambium.signer.HeartwoodResult
 import dev.forgesworn.cambium.signer.HeartwoodSession
+import dev.forgesworn.cambium.signer.displayLabel
+import dev.forgesworn.cambium.signer.isPolicyRefusal
+import dev.forgesworn.cambium.unlock.Reachability
+import dev.forgesworn.cambium.unlock.UnlockCoordinator
+import dev.forgesworn.cambium.unlock.UnlockNotifications
+import dev.forgesworn.cambium.unlock.UnlockStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -62,16 +69,28 @@ import kotlinx.coroutines.launch
  * identity's ping can never delay or shed another identity's. With a realistic handful of paired
  * signers this stays well inside [PING_INTERVAL_MILLIS]; there is no per-identity scheduling here,
  * only a single sequential sweep every cycle.
+ *
+ * Phone unlock rides on the same service. While any board is set up to be unlocked from this
+ * phone ([UnlockStore]), the service runs whether or not the keep-warm toggle is on, and keeps
+ * [UnlockCoordinator]'s lock listener alive: the point is to hear the board after a power cut
+ * while the owner is away. The pings' results feed [Reachability], which raises one "gone quiet"
+ * notification when paired signers stop answering. Only these scheduled pings count: Cambium
+ * never pings because of something it saw on a relay, since a ping seconds after a lock message
+ * would tie that message to this phone's stable NIP-46 key.
  */
 class HeartwoodKeepAliveService : Service() {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private lateinit var pairingStore: PairingStore
+    private lateinit var unlockStore: UnlockStore
     private var pingJob: Job? = null
+    /** The signers named in the "gone quiet" notification now showing, so it is posted once per change. */
+    private var quietShown: List<String> = emptyList()
 
     override fun onCreate() {
         super.onCreate()
         pairingStore = PairingStore(this)
+        unlockStore = UnlockStore(this)
         createNotificationChannel()
     }
 
@@ -101,6 +120,7 @@ class HeartwoodKeepAliveService : Service() {
     override fun onDestroy() {
         pingJob?.cancel()
         scope.cancel()
+        CoroutineScope(Dispatchers.IO).launch { UnlockCoordinator.stop() }
         super.onDestroy()
     }
 
@@ -109,23 +129,65 @@ class HeartwoodKeepAliveService : Service() {
         pingJob = scope.launch {
             while (isActive) {
                 val pairings = pairingStore.pairings()
-                if (pairings.isEmpty() || !pairingStore.isKeepAliveEnabled()) {
+                val pinging = pairings.isNotEmpty() && pairingStore.isKeepAliveEnabled()
+                if (!pinging && !unlockStore.hasEnrolments()) {
                     break
                 }
-                for (pairing in pairings) {
-                    val tag = pairing.signerPubkeyHex.take(8)
-                    when (val result = HeartwoodSession.trySilent(
-                        pairing,
-                        priority = HeartwoodRequestPriority.MAINTENANCE,
-                    ) { it.getPublicKey() }?.result) {
-                        is HeartwoodResult.Success -> Log.d(TAG, "keepalive ping ok ($tag)")
-                        is HeartwoodResult.Failure -> Log.d(TAG, "keepalive ping failed ($tag): ${result.error}")
-                        null -> Log.d(TAG, "keepalive ping skipped ($tag): worker already busy")
-                    }
+                // Cheap when nothing changed; picks up a board set up or forgotten since.
+                UnlockCoordinator.sync(this@HeartwoodKeepAliveService)
+                if (pinging) {
+                    pingAll(pairings)
                 }
                 delay(PING_INTERVAL_MILLIS)
             }
+            UnlockCoordinator.stop()
             stopSelf()
+        }
+    }
+
+    private suspend fun pingAll(pairings: List<Pairing>) {
+        val records = unlockStore.reachability().filterKeys { key -> pairings.any { it.signerPubkeyHex == key } }.toMutableMap()
+        for (pairing in pairings) {
+            val tag = pairing.signerPubkeyHex.take(8)
+            val result = HeartwoodSession.trySilent(
+                pairing,
+                priority = HeartwoodRequestPriority.MAINTENANCE,
+            ) { it.getPublicKey() }?.result
+            when (result) {
+                is HeartwoodResult.Success -> Log.d(TAG, "keepalive ping ok ($tag)")
+                is HeartwoodResult.Failure -> Log.d(TAG, "keepalive ping failed ($tag): ${result.error}")
+                null -> Log.d(TAG, "keepalive ping skipped ($tag): worker already busy")
+            }
+            // A refusal is an answer: the signer is there. A skipped ping says nothing either way.
+            if (result != null) {
+                val answered = result is HeartwoodResult.Success ||
+                    (result is HeartwoodResult.Failure && isPolicyRefusal(result.error))
+                records[pairing.signerPubkeyHex] =
+                    Reachability.afterPing(records[pairing.signerPubkeyHex], answered, System.currentTimeMillis())
+            }
+        }
+        unlockStore.setReachability(records)
+        updateQuietAlert(pairings, records)
+    }
+
+    /**
+     * One notification naming every signer that has gone quiet. A signer that shares a relay with
+     * a board asking to be unlocked right now is left out: its silence is explained by the unlock
+     * prompt already on screen.
+     */
+    private fun updateQuietAlert(pairings: List<Pairing>, records: Map<String, Reachability.Record>) {
+        val asking = unlockStore.enrolments().filter { UnlockCoordinator.currentRequest(it.id) != null }
+        val quiet = pairings
+            .filter { Reachability.isQuiet(records[it.signerPubkeyHex]) }
+            .filterNot { pairing -> asking.any { board -> board.relays.any { relay -> pairing.relays.any { it.trimEnd('/') == relay } } } }
+            .map { it.displayLabel() }
+            .sorted()
+        if (quiet == quietShown) return
+        quietShown = quiet
+        if (quiet.isEmpty()) {
+            UnlockNotifications.cancelQuiet(this)
+        } else {
+            UnlockNotifications.showQuiet(this, quiet)
         }
     }
 
@@ -150,7 +212,12 @@ class HeartwoodKeepAliveService : Service() {
         )
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle(getString(R.string.keep_alive_notification_title))
-            .setContentText(getString(R.string.keep_alive_notification_text))
+            .setContentText(
+                getString(
+                    if (unlockStore.hasEnrolments()) R.string.keep_alive_notification_text_listening
+                    else R.string.keep_alive_notification_text,
+                ),
+            )
             .setSmallIcon(R.drawable.ic_notification)
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)

@@ -85,7 +85,8 @@ Android apps              Websites
   "defer/ask" -- `SignerProvider` has no way to ask which identity was meant from the silent path
   at all, and `SignerActivity` can only show the picker on the *first* intent of an activity
   instance (see `nip55/IntentGate.kt`).
-- `signer/HeartwoodClient.kt` -- **the only file that imports `rust.nostr.sdk`**. Wraps
+- `signer/HeartwoodClient.kt` -- **one of only two files that import `rust.nostr.sdk`** (the other is
+  `signer/UnlockRelay.kt`, below). Wraps
   `NostrConnect` (rust-nostr's NIP-46 client) behind the `HeartwoodClient` interface so the
   implementation can be swapped or faked without touching pairing storage or the NIP-55 surface.
   Also hosts `ClientKeys` (ephemeral keypair generation) and `npubDisplay` for the same reason:
@@ -541,11 +542,39 @@ Android apps              Websites
   (`isKeepAliveEnabled`/`setKeepAliveEnabled`), not the service, so `MainActivity` and
   `service/BootReceiver.kt` agree on state without talking to each other directly.
 - `service/BootReceiver.kt` -- restarts `HeartwoodKeepAliveService` after a reboot, gated on both
-  the toggle and still being paired. Uses `goAsync()` and does the `PairingStore` read (a
+  the toggle and still being paired, or on any board being set up for phone unlock (the service
+  runs for those regardless of the toggle). Uses `goAsync()` and does the `PairingStore` read (a
   synchronous Keystore-backed EncryptedSharedPreferences init) and the service start on
   `Dispatchers.IO`, not the calling thread -- `BOOT_COMPLETED` delivery is the worst possible
   window to block the main thread, with every other receiver and the rest of the boot sequence
   contending for it too.
+- `unlock/` -- phone unlock for a Heartwood that restarted locked (design:
+  heartwood-esp32 `docs/specs/2026-09-24-phone-unlock-design.md`, private). Pure Kotlin and
+  JVM-tested: `PhoneUnlock.kt` (K = HKDF(S), the per-boot hint, opening the sealed lock message with
+  `ChaCha20.kt` + HMAC-SHA256, the delivery plaintext, and `judge`, the prompt rule) held to the
+  firmware's own vectors (`src/test/resources/phone-unlock-v1.json`, copied from heartwood-esp32
+  `common/tests/fixtures/`; regenerate only with a deliberate format bump there);
+  `Enrolment.kt` (the `heartwood-unlock:enrol?...` code Cambium shows, and the kind-24137 hand-off,
+  whose content is the board's enrolment answer passed through); `LockMatcher.kt` (matching one
+  announcement against every enrolled board, relay-list following, and `Reachability`, the
+  "gone quiet" rule). Android-side: `SlotSecretVault.kt` (per-board Keystore AES key, strong
+  biometric only, per-use, invalidated on enrolment change, StrongBox when present),
+  `UnlockStore.kt` (enrolments and ping records in their own EncryptedSharedPreferences, `commit()`
+  writes), `UnlockCoordinator.kt` (process-wide listener owner: current requests as a `StateFlow`,
+  sent deliveries, "still locked" detection from a same-boot repeat 25 s after answering),
+  `UnlockNotifications.kt`, `UnlockActivity.kt` (always acts on the board's *current* request, not
+  the notification's) and `UnlockEnrolActivity.kt` (enrolment key in memory only; `configChanges`
+  so a rotation cannot lose it).
+
+  Metadata rules the code must keep (design section 6): the lock subscription has no filter but
+  the kind; the relay client has no signer (no NIP-42 answer with a stable key); every delivery is
+  from a fresh key; nothing pings the board because of a lock message (the gone-quiet alert uses
+  only the keep-alive's scheduled pings).
+- `signer/UnlockRelay.kt` -- the rust-nostr half of phone unlock: throwaway-key delivery events,
+  opening the enrolment hand-off (NIP-44), and `RelayWatch`, one signer-less `Client` per purpose
+  (the unfiltered 24135 listener; the enrolment screen's rendezvous subscription). Native calls
+  follow `RustNostrHeartwoodClient`'s rule: `NonCancellable` on IO, and the notification loop is
+  ended by `shutdown()`, never by cancelling the coroutine inside it.
 
 ## Conventions
 

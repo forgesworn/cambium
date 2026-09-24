@@ -1,0 +1,224 @@
+package dev.forgesworn.cambium.unlock
+
+import android.Manifest
+import android.annotation.SuppressLint
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Build
+import android.os.Bundle
+import android.os.PowerManager
+import android.provider.Settings
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AppCompatActivity
+import androidx.biometric.BiometricPrompt
+import androidx.core.content.ContextCompat
+import androidx.core.view.isVisible
+import androidx.lifecycle.lifecycleScope
+import com.google.zxing.BarcodeFormat
+import com.journeyapps.barcodescanner.BarcodeEncoder
+import dev.forgesworn.cambium.R
+import dev.forgesworn.cambium.databinding.ActivityUnlockEnrolBinding
+import dev.forgesworn.cambium.pairing.Pairing
+import dev.forgesworn.cambium.pairing.PairingStore
+import dev.forgesworn.cambium.service.HeartwoodKeepAliveService
+import dev.forgesworn.cambium.signer.RelayWatch
+import dev.forgesworn.cambium.signer.UnlockNostr
+import dev.forgesworn.cambium.signer.displayLabel
+import dev.forgesworn.cambium.toHex
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import java.security.SecureRandom
+import javax.crypto.Cipher
+
+/**
+ * Makes this phone an unlock phone for the board behind one paired identity.
+ *
+ * 1. Shows an [EnrolmentCode]: a one-off enrolment pubkey, a one-off rendezvous tag and the
+ *    relays to meet on. Its secret half stays in this activity's memory and nowhere else.
+ * 2. Sapwood (or the bench script) enrols the pubkey on the board, which needs a press there,
+ *    and publishes the board's sealed answer tagged with the rendezvous tag.
+ * 3. Cambium opens it, and a strong biometric seals the slot secret under a new Keystore key
+ *    ([SlotSecretVault]). Only then is the enrolment stored, the listener started, and the
+ *    keep-alive switched on, so the phone hears the board after a power cut.
+ *
+ * Nothing secret is ever on screen or passes through Sapwood. If the owner leaves before the
+ * fingerprint, the secret is dropped and the screen says which board record to revoke.
+ * Declared with `configChanges` in the manifest so a rotation does not lose the enrolment key.
+ */
+class UnlockEnrolActivity : AppCompatActivity() {
+
+    private lateinit var binding: ActivityUnlockEnrolBinding
+    private lateinit var pairing: Pairing
+    private var enrolSecretHex: String? = null
+    private var watch: RelayWatch? = null
+    private var pending: HandOff? = null
+    private var keyAlias: String? = null
+    private var stored = false
+
+    private val notificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        binding = ActivityUnlockEnrolBinding.inflate(layoutInflater)
+        setContentView(binding.root)
+        binding.enrolDoneButton.setOnClickListener { finish() }
+        binding.enrolConfirmButton.setOnClickListener { promptSeal() }
+        binding.enrolBatteryButton.setOnClickListener { requestBatteryExemption() }
+
+        val signer = intent.getStringExtra(EXTRA_SIGNER_PUBKEY)
+        pairing = PairingStore(this).pairings().firstOrNull { it.signerPubkeyHex == signer } ?: return finish()
+        binding.enrolTitle.text = getString(R.string.enrol_title, pairing.displayLabel())
+
+        if (!SlotSecretVault.canUse(this)) {
+            showOnly(getString(R.string.enrol_needs_biometric))
+            return
+        }
+        val relays = pairing.relays.map { it.trimEnd('/') }.filter(::isRelayUrl).distinct()
+        if (relays.isEmpty()) {
+            showOnly(getString(R.string.enrol_no_relays))
+            return
+        }
+
+        val (secretHex, pubkeyHex) = UnlockNostr.newEnrolmentKey()
+        enrolSecretHex = secretHex
+        val rendezvous = ByteArray(16).also { SecureRandom().nextBytes(it) }.toHex()
+        val code = EnrolmentCode(pubkeyHex, rendezvous, EnrolmentCode.fitLabel(Build.MODEL), relays).encode()
+        binding.enrolCode.text = code
+        binding.enrolQr.setImageBitmap(BarcodeEncoder().encodeBitmap(code, BarcodeFormat.QR_CODE, 720, 720))
+        binding.enrolCopyButton.setOnClickListener {
+            getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText("Heartwood unlock enrolment", code))
+        }
+        binding.enrolStatus.text = getString(R.string.enrol_waiting)
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+
+        lifecycleScope.launch {
+            watch = RelayWatch.handOff(relays, rendezvous) { raw -> runOnUiThread { onHandOff(raw) } }
+        }
+    }
+
+    override fun onDestroy() {
+        val closing = watch
+        watch = null
+        // lifecycleScope is already cancelled here; the stop itself is NonCancellable native work.
+        if (closing != null) CoroutineScope(Dispatchers.IO).launch { closing.stop() }
+        if (!stored) {
+            pending?.wipe()
+            keyAlias?.let(SlotSecretVault::delete)
+        }
+        enrolSecretHex = null
+        super.onDestroy()
+    }
+
+    private fun onHandOff(raw: RawAnnouncement) {
+        if (pending != null || stored || isFinishing) return
+        val secret = enrolSecretHex ?: return
+        val envelope = HandOffParser.envelope(raw.content) ?: return
+        val decrypted = UnlockNostr.openHandOff(secret, envelope.ephemeralPubkeyHex, envelope.sealed) ?: return
+        val handOff = HandOffParser.plain(decrypted, envelope) ?: return
+        pending = handOff
+        // The enrolment key has done its one job.
+        enrolSecretHex = null
+        binding.enrolQr.isVisible = false
+        binding.enrolCode.isVisible = false
+        binding.enrolCopyButton.isVisible = false
+        binding.enrolStatus.text = getString(R.string.enrol_received, handOff.id)
+        binding.enrolConfirmButton.isVisible = true
+        promptSeal()
+    }
+
+    private fun promptSeal() {
+        val handOff = pending ?: return
+        val alias = keyAlias ?: SlotSecretVault.newAlias().also { keyAlias = it }
+        val cipher: Cipher = runCatching { SlotSecretVault.encryptCipher(alias) }.getOrElse {
+            binding.enrolStatus.text = getString(R.string.enrol_keystore_failed, it.message ?: it.javaClass.simpleName)
+            return
+        }
+        BiometricPrompt(
+            this,
+            ContextCompat.getMainExecutor(this),
+            object : BiometricPrompt.AuthenticationCallback() {
+                override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                    val unlocked = result.cryptoObject?.cipher ?: return
+                    finishEnrolment(handOff, alias, SlotSecretVault.seal(unlocked, handOff.slotSecret))
+                }
+
+                override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                    binding.enrolStatus.text = getString(R.string.enrol_not_confirmed, handOff.id)
+                }
+            },
+        ).authenticate(
+            BiometricPrompt.PromptInfo.Builder()
+                .setTitle(getString(R.string.enrol_prompt_title))
+                .setSubtitle(pairing.displayLabel())
+                .setAllowedAuthenticators(SlotSecretVault.AUTHENTICATORS)
+                .setNegativeButtonText(getString(android.R.string.cancel))
+                .build(),
+            BiometricPrompt.CryptoObject(cipher),
+        )
+    }
+
+    private fun finishEnrolment(handOff: HandOff, alias: String, sealedSecret: String) {
+        val phoneKey = PhoneUnlock.phoneKey(handOff.slotSecret)
+        UnlockStore(this).put(
+            UnlockEnrolment(
+                id = handOff.id,
+                boardLabel = pairing.displayLabel(),
+                signerPubkeyHex = pairing.signerPubkeyHex,
+                relays = (handOff.relays + pairing.relays).map { it.trimEnd('/') }.filter(::isRelayUrl).distinct(),
+                phoneKeyHex = phoneKey.toHex(),
+                keyAlias = alias,
+                sealedSecretB64 = sealedSecret,
+                enrolledAtMillis = System.currentTimeMillis(),
+            ),
+        )
+        phoneKey.fill(0)
+        handOff.wipe()
+        pending = null
+        stored = true
+
+        // A phone that can unlock is only useful if it is listening when the power comes back.
+        PairingStore(this).setKeepAliveEnabled(true)
+        HeartwoodKeepAliveService.start(this)
+
+        binding.enrolConfirmButton.isVisible = false
+        binding.enrolStatus.text = getString(R.string.enrol_done, handOff.id)
+        binding.enrolBatteryButton.isVisible = !isIgnoringBatteryOptimisations(this)
+        binding.enrolDoneButton.setText(R.string.enrol_finished)
+    }
+
+    @SuppressLint("BatteryLife")
+    private fun requestBatteryExemption() {
+        // Cambium's whole job here is to be reachable after a power cut at home while the owner
+        // is away; Android's battery optimisation would stop the listener exactly then.
+        startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName")))
+        binding.enrolBatteryButton.isVisible = false
+    }
+
+    private fun showOnly(message: String) {
+        binding.enrolBody.isVisible = false
+        binding.enrolQr.isVisible = false
+        binding.enrolCode.isVisible = false
+        binding.enrolCopyButton.isVisible = false
+        binding.enrolStatus.text = message
+    }
+
+    companion object {
+        private const val EXTRA_SIGNER_PUBKEY = "signer_pubkey"
+
+        fun intent(context: Context, signerPubkeyHex: String): Intent =
+            Intent(context, UnlockEnrolActivity::class.java).putExtra(EXTRA_SIGNER_PUBKEY, signerPubkeyHex)
+
+        fun isIgnoringBatteryOptimisations(context: Context): Boolean =
+            context.getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(context.packageName)
+    }
+}
