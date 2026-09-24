@@ -241,6 +241,51 @@
                 android:text="@string/activity_log_button" />
         </LinearLayout>
 
+        <!-- Phone unlock: boards this phone can unlock after a restart. Independent of the
+             paired signers (unpairing does not forget a board), so visible whenever one exists. -->
+        <LinearLayout
+            android:id="@+id/unlockSection"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="24dp"
+            android:orientation="vertical"
+            android:visibility="gone"
+            tools:visibility="visible">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:fontFamily="monospace"
+                android:text="@string/unlock_section_label"
+                android:textColor="@color/on_background_muted" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:fontFamily="monospace"
+                android:text="@string/unlock_section_body"
+                android:textColor="@color/on_background_muted"
+                android:textSize="12sp" />
+
+            <LinearLayout
+                android:id="@+id/unlockBoardsContainer"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:orientation="vertical" />
+
+            <Button
+                android:id="@+id/unlockBatteryButton"
+                style="@style/Widget.Material3.Button.OutlinedButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:fontFamily="monospace"
+                android:text="@string/battery_button"
+                android:visibility="gone"
+                tools:visibility="visible" />
+        </LinearLayout>
+
         <!-- Pairing form: always available, so a second (or third, ...) signer can be added the
              same way as the first. -->
         <LinearLayout

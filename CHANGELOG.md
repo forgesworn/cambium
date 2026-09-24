@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Phone unlock. A Heartwood (0.18.0-beta.17 or later) that restarts locked after a power cut can
+  ask this phone to unlock it: a notification with the board's restart reason, network and restart
+  count, then one tap and the phone's screen lock (PIN, password or strong biometric). The unlock
+  secret sits under a Keystore key that needs that authentication for every use; lock messages are read unfiltered and matched locally; each unlock goes out from a
+  throwaway key. Set up from a paired signer's row; Sapwood's enrolment panel is not released yet
+  (`scripts/phone-unlock.mjs enrol-for` in heartwood-esp32 stands in for it).
+- The keep-warm service now says when a paired signer has gone quiet (two failed scheduled checks
+  in a row), and runs whenever a board is set up for phone unlock.
 - The store description now says 64-bit Android 8.1+ devices: the APK ships arm64-v8a and
   x86_64 only, so 32-bit ARM phones were never able to install it despite the old wording.
 

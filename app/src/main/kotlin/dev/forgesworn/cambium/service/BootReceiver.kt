@@ -4,6 +4,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import dev.forgesworn.cambium.pairing.PairingStore
+import dev.forgesworn.cambium.unlock.UnlockStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -11,7 +12,9 @@ import kotlinx.coroutines.launch
 /**
  * Restarts [HeartwoodKeepAliveService] after a reboot, but only if the user had actually turned
  * the keep-warm toggle on and Cambium is still paired -- a fresh install or an unpaired device
- * gets no background service at all. `BOOT_COMPLETED` is a protected broadcast (only the system
+ * gets no background service at all. A board set up for phone unlock also starts it (see
+ * [HeartwoodKeepAliveService]): a phone that restarts abroad must still hear its board's lock
+ * messages. `BOOT_COMPLETED` is a protected broadcast (only the system
  * can send it), so this can safely be `exported="true"` in the manifest.
  *
  * `PairingStore`'s first read does a synchronous Keystore-backed EncryptedSharedPreferences init,
@@ -22,13 +25,15 @@ import kotlinx.coroutines.launch
  */
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        if (intent.action != Intent.ACTION_BOOT_COMPLETED) return
+        // An update kills the running service like a reboot does, and would otherwise leave phone
+        // unlock deaf until the phone next restarts.
+        if (intent.action != Intent.ACTION_BOOT_COMPLETED && intent.action != Intent.ACTION_MY_PACKAGE_REPLACED) return
 
         val pendingResult = goAsync()
         CoroutineScope(Dispatchers.IO).launch {
             try {
                 val pairingStore = PairingStore(context)
-                if (pairingStore.isPaired() && pairingStore.isKeepAliveEnabled()) {
+                if ((pairingStore.isPaired() && pairingStore.isKeepAliveEnabled()) || UnlockStore(context).hasEnrolments()) {
                     HeartwoodKeepAliveService.start(context)
                 }
             } finally {

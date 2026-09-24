@@ -10,7 +10,9 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.core.view.isVisible
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanIntentResult
 import com.journeyapps.barcodescanner.ScanOptions
@@ -19,6 +21,7 @@ import dev.forgesworn.cambium.applock.AppLockStore
 import dev.forgesworn.cambium.databinding.ActivityMainBinding
 import dev.forgesworn.cambium.databinding.ItemConnectedAppBinding
 import dev.forgesworn.cambium.databinding.ItemPairingBinding
+import dev.forgesworn.cambium.databinding.ItemUnlockBoardBinding
 import dev.forgesworn.cambium.log.ActivityLogActivity
 import dev.forgesworn.cambium.pairing.AppPermissionState
 import dev.forgesworn.cambium.pairing.BunkerUri
@@ -36,6 +39,12 @@ import dev.forgesworn.cambium.signer.HeartwoodSession
 import dev.forgesworn.cambium.signer.RustNostrHeartwoodClient
 import dev.forgesworn.cambium.signer.displayLabel
 import dev.forgesworn.cambium.signer.npubDisplay
+import dev.forgesworn.cambium.unlock.UnlockActivity
+import dev.forgesworn.cambium.unlock.UnlockCoordinator
+import dev.forgesworn.cambium.unlock.UnlockEnrolActivity
+import dev.forgesworn.cambium.unlock.UnlockEnrolment
+import dev.forgesworn.cambium.unlock.UnlockNotifications
+import dev.forgesworn.cambium.unlock.UnlockStore
 import kotlinx.coroutines.launch
 
 /**
@@ -47,6 +56,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
     private lateinit var pairingStore: PairingStore
     private lateinit var appLockStore: AppLockStore
+    private lateinit var unlockStore: UnlockStore
 
     // Registered as fields (not inside onCreate) per the ActivityResult contract: this must
     // happen before the activity reaches STARTED, and works even though `binding` -- referenced
@@ -72,12 +82,24 @@ class MainActivity : AppCompatActivity() {
         setContentView(binding.root)
         pairingStore = PairingStore(this)
         appLockStore = AppLockStore(this)
+        unlockStore = UnlockStore(this)
 
         binding.pairButton.setOnClickListener { onPairClicked() }
         binding.scanButton.setOnClickListener { onScanClicked() }
         binding.unpairAllButton.setOnClickListener { onUnpairAllClicked() }
         binding.activityLogButton.setOnClickListener { startActivity(Intent(this, ActivityLogActivity::class.java)) }
         binding.unlockButton.setOnClickListener { promptUnlock() }
+        binding.unlockBatteryButton.setOnClickListener {
+            startActivity(
+                Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, android.net.Uri.parse("package:$packageName")),
+            )
+        }
+        // A board asking to be unlocked shows on its row while this screen is open.
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.RESUMED) {
+                UnlockCoordinator.requests.collect { if (binding.contentSection.isVisible) renderUnlockBoards() }
+            }
+        }
 
         // The actual lock check happens in onResume, which always runs right after onCreate too
         // (onCreate -> onStart -> onResume, nothing is drawn before onResume completes) -- no
@@ -131,6 +153,7 @@ class MainActivity : AppCompatActivity() {
             resources.getQuantityString(R.plurals.status_paired_count, pairings.size, pairings.size)
         }
         binding.pairedSection.isVisible = pairings.isNotEmpty()
+        renderUnlockBoards()
         if (pairings.isNotEmpty()) {
             renderPairingsList(pairings)
             setKeepAliveToggleChecked(pairingStore.isKeepAliveEnabled())
@@ -180,6 +203,11 @@ class MainActivity : AppCompatActivity() {
             row.pairingNpubValue.text = npubDisplay(pairing.signerPubkeyHex)
             row.pairingRelaysValue.text = pairing.relays.joinToString("\n")
             row.pairingUnpairButton.setOnClickListener { onUnpairRowClicked(pairing) }
+            val unlockSetUp = unlockStore.enrolments().any { it.signerPubkeyHex == pairing.signerPubkeyHex }
+            row.pairingUnlockButton.setText(if (unlockSetUp) R.string.unlock_setup_again_button else R.string.unlock_setup_button)
+            row.pairingUnlockButton.setOnClickListener {
+                startActivity(UnlockEnrolActivity.intent(this, pairing.signerPubkeyHex))
+            }
             binding.pairingsListContainer.addView(row.root)
         }
     }
@@ -195,7 +223,7 @@ class MainActivity : AppCompatActivity() {
                 // pairings() empty (see HeartwoodKeepAliveService), but that could be up to a
                 // full PING_INTERVAL_MILLIS away -- stopping it here immediately avoids leaving a
                 // "keeping your signer warm" notification showing with nothing left to keep warm.
-                if (pairingStore.pairings().isEmpty()) {
+                if (pairingStore.pairings().isEmpty() && !unlockStore.hasEnrolments()) {
                     HeartwoodKeepAliveService.stop(this)
                 }
                 render()
@@ -210,8 +238,57 @@ class MainActivity : AppCompatActivity() {
             .setMessage(R.string.unpair_all_confirm_body)
             .setPositiveButton(R.string.unpair_all_button) { _, _ ->
                 pairingStore.clearAll()
-                HeartwoodKeepAliveService.stop(this)
+                // Boards set up for phone unlock are kept (they are forgotten one by one, below),
+                // and the service keeps listening for them.
+                if (unlockStore.hasEnrolments()) {
+                    HeartwoodKeepAliveService.start(this)
+                } else {
+                    HeartwoodKeepAliveService.stop(this)
+                }
                 lifecycleScope.launch { HeartwoodSession.shutdownAll() }
+                render()
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    /** Boards this phone can unlock, each with a Forget action and, while it is asking, Unlock. */
+    private fun renderUnlockBoards() {
+        val boards = unlockStore.enrolments().sortedBy { it.boardLabel }
+        binding.unlockSection.isVisible = boards.isNotEmpty()
+        binding.unlockBoardsContainer.removeAllViews()
+        for (board in boards) {
+            val row = ItemUnlockBoardBinding.inflate(layoutInflater, binding.unlockBoardsContainer, false)
+            row.boardLabelValue.text = board.boardLabel
+            row.boardDetailValue.text = resources.getQuantityString(
+                R.plurals.unlock_board_detail,
+                board.relays.size,
+                board.id,
+                board.relays.size,
+            )
+            val asking = UnlockCoordinator.currentRequest(board.id) != null
+            row.boardStatusValue.isVisible = asking
+            row.boardStatusValue.setText(R.string.unlock_board_asking)
+            row.boardUnlockButton.isVisible = asking
+            row.boardUnlockButton.setOnClickListener { startActivity(UnlockActivity.intent(this, board.id)) }
+            row.boardForgetButton.setOnClickListener { onForgetBoardClicked(board) }
+            binding.unlockBoardsContainer.addView(row.root)
+        }
+        binding.unlockBatteryButton.isVisible = boards.isNotEmpty() && !UnlockEnrolActivity.isIgnoringBatteryOptimisations(this)
+    }
+
+    private fun onForgetBoardClicked(board: UnlockEnrolment) {
+        AlertDialog.Builder(this)
+            .setTitle(getString(R.string.unlock_forget_confirm_title, board.boardLabel))
+            .setMessage(getString(R.string.unlock_forget_confirm_body, board.id))
+            .setPositiveButton(R.string.unlock_forget_button) { _, _ ->
+                unlockStore.remove(board.id)
+                UnlockCoordinator.forget(board.id)
+                UnlockNotifications.cancelRequest(this, board.id)
+                lifecycleScope.launch { UnlockCoordinator.sync(this@MainActivity) }
+                if (!unlockStore.hasEnrolments() && (!pairingStore.isKeepAliveEnabled() || pairingStore.pairings().isEmpty())) {
+                    HeartwoodKeepAliveService.stop(this)
+                }
                 render()
             }
             .setNegativeButton(android.R.string.cancel, null)

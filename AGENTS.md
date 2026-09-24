@@ -85,7 +85,8 @@ Android apps              Websites
   "defer/ask" -- `SignerProvider` has no way to ask which identity was meant from the silent path
   at all, and `SignerActivity` can only show the picker on the *first* intent of an activity
   instance (see `nip55/IntentGate.kt`).
-- `signer/HeartwoodClient.kt` -- **the only file that imports `rust.nostr.sdk`**. Wraps
+- `signer/HeartwoodClient.kt` -- **one of only two files that import `rust.nostr.sdk`** (the other is
+  `signer/UnlockRelay.kt`, below). Wraps
   `NostrConnect` (rust-nostr's NIP-46 client) behind the `HeartwoodClient` interface so the
   implementation can be swapped or faked without touching pairing storage or the NIP-55 surface.
   Also hosts `ClientKeys` (ephemeral keypair generation) and `npubDisplay` for the same reason:
@@ -522,16 +523,15 @@ Android apps              Websites
 - `service/HeartwoodKeepAliveService.kt` -- optional, off-by-default foreground service that keeps
   the process (and so `HeartwoodSession`'s warm `NostrConnect`) alive between requests, closing the
   previously-tracked "only warm while the process happens to be running" gap. Pings Heartwood every
-  8 minutes via `HeartwoodSession.trySilent(pairing) { it.getPublicKey() }` -- a read-only,
-  always-safe operation Heartwood answers without a physical button; rust-nostr's client bindings
-  have no lower-level "ping" primitive to call instead (checked directly against the AAR with
-  `javap`: neither `NostrConnect` nor `NostrConnectInterface` declare one). `trySilent`, not
-  `withClient`: the ping must go through the shedding path, since `withClient` always queues and a
-  slow/unreachable Heartwood would let a scheduled ping occupy the single worker for up to the
-  silent timeout, inflating queue depth against `MAX_QUEUED` and shedding a real Amethyst burst
-  into visible popups -- the exact regression `HeartwoodSession`'s admission control exists to
-  prevent. A refusal (queue non-empty) is also the right outcome on its own terms: it means the
-  session is demonstrably warm already, so the ping was redundant. `targetSdk` 35 requires
+  8 minutes via `HeartwoodSession.withClient(pairing, MAINTENANCE) { it.getPublicKey() }` -- a
+  read-only, always-safe operation Heartwood answers without a physical button; rust-nostr's client
+  bindings have no lower-level "ping" primitive to call instead (checked directly against the AAR
+  with `javap`: neither `NostrConnect` nor `NostrConnectInterface` declare one). MAINTENANCE is
+  admitted only into an empty worker, so a slow or unreachable Heartwood never lets a ping inflate
+  queue depth and shed a real Amethyst burst into visible popups; a busy worker answers `Busy` at
+  once, which means the session is demonstrably warm anyway. It was `trySilent` until phone unlock
+  needed the gone-quiet alert: `trySilent` answers `null` for both "busy" and "no answer in time",
+  and an unreachable signer is precisely the case the alert has to see. `targetSdk` 35 requires
   an explicit `foregroundServiceType`; there is no built-in type for "hold a NIP-46 connection
   open", so this follows Amber's own `ConnectivityService` (verified against its actual source,
   `greenart7c3/Amber` `service/ConnectivityService.kt` and manifest): `specialUse`, declared in the
@@ -541,11 +541,41 @@ Android apps              Websites
   (`isKeepAliveEnabled`/`setKeepAliveEnabled`), not the service, so `MainActivity` and
   `service/BootReceiver.kt` agree on state without talking to each other directly.
 - `service/BootReceiver.kt` -- restarts `HeartwoodKeepAliveService` after a reboot, gated on both
-  the toggle and still being paired. Uses `goAsync()` and does the `PairingStore` read (a
+  the toggle and still being paired, or on any board being set up for phone unlock (the service
+  runs for those regardless of the toggle). Uses `goAsync()` and does the `PairingStore` read (a
   synchronous Keystore-backed EncryptedSharedPreferences init) and the service start on
   `Dispatchers.IO`, not the calling thread -- `BOOT_COMPLETED` delivery is the worst possible
   window to block the main thread, with every other receiver and the rest of the boot sequence
   contending for it too.
+- `unlock/` -- phone unlock for a Heartwood that restarted locked (design:
+  heartwood-esp32 `docs/specs/2026-09-24-phone-unlock-design.md`, private). Pure Kotlin and
+  JVM-tested: `PhoneUnlock.kt` (K = HKDF(S), the per-boot hint, opening the sealed lock message with
+  `ChaCha20.kt` + HMAC-SHA256, the delivery plaintext, and `judge`, the prompt rule) held to the
+  firmware's own vectors (`src/test/resources/phone-unlock-v1.json`, copied from heartwood-esp32
+  `common/tests/fixtures/`; regenerate only with a deliberate format bump there);
+  `Enrolment.kt` (the `heartwood-unlock:enrol?...` code Cambium shows, and the kind-24137 hand-off,
+  whose content is the board's enrolment answer passed through); `LockMatcher.kt` (matching one
+  announcement against every enrolled board, relay-list following, and `Reachability`, the
+  "gone quiet" rule). Android-side: `SlotSecretVault.kt` (per-board Keystore AES key, per-use
+  authentication by strong biometric or, on API 30+, the device credential (the owner's
+  GrapheneOS phone has no biometrics, deliberately), invalidated on biometric enrolment change,
+  StrongBox when present),
+  `UnlockStore.kt` (enrolments and ping records in their own EncryptedSharedPreferences, `commit()`
+  writes), `UnlockCoordinator.kt` (process-wide listener owner: current requests as a `StateFlow`,
+  sent deliveries, "still locked" detection from a same-boot repeat 25 s after answering),
+  `UnlockNotifications.kt`, `UnlockActivity.kt` (always acts on the board's *current* request, not
+  the notification's) and `UnlockEnrolActivity.kt` (enrolment key in memory only; `configChanges`
+  so a rotation cannot lose it).
+
+  Metadata rules the code must keep (design section 6): the lock subscription has no filter but
+  the kind; the relay client has no signer (no NIP-42 answer with a stable key); every delivery is
+  from a fresh key; nothing pings the board because of a lock message (the gone-quiet alert uses
+  only the keep-alive's scheduled pings).
+- `signer/UnlockRelay.kt` -- the rust-nostr half of phone unlock: throwaway-key delivery events,
+  opening the enrolment hand-off (NIP-44), and `RelayWatch`, one signer-less `Client` per purpose
+  (the unfiltered 24135 listener; the enrolment screen's rendezvous subscription). Native calls
+  follow `RustNostrHeartwoodClient`'s rule: `NonCancellable` on IO, and the notification loop is
+  ended by `shutdown()`, never by cancelling the coroutine inside it.
 
 ## Conventions
 

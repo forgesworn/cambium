@@ -22,6 +22,10 @@ jobs:
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          # The action's default also asks for the long-removed 'tools' package, which the
+          # runner image's cmdline-tools 16.0 refuses outright (CI red from 2026-09-24).
+          packages: platform-tools
 
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
@@ -55,6 +59,10 @@ jobs:
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          # The action's default also asks for the long-removed 'tools' package, which the
+          # runner image's cmdline-tools 16.0 refuses outright (CI red from 2026-09-24).
+          packages: platform-tools
 
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew

@@ -28,6 +28,9 @@ back.
   addition to* whatever Heartwood's own slot policy enforces. Cambium's local layer is a
   convenience filter; Heartwood remains the authority on what actually gets signed.
 - All NIP-46 payloads are NIP-44-encrypted, matching Heartwood's firmware.
+- **Phone unlock is the one exception, and it is opt-in.** A board set up to be unlocked from this
+  phone gives it an *unlock secret* for that board (see below). It is not an identity key and signs
+  nothing.
 
 ```
 Android apps              Websites
@@ -60,6 +63,59 @@ On a healthy kept-warm session, a fresh signing request takes one relay round tr
 completes in roughly half a second to a couple of seconds. A cold reconnect, contention, or an
 unhealthy relay can take longer. Repeat deterministic decrypts and exact duplicate NIP-42 AUTH
 requests can be answered from bounded per-identity caches without another hardware round trip.
+
+## Phone unlock (Heartwood 0.18.0-beta.17 or later)
+
+A Heartwood that keeps its keys encrypted comes back locked after a power cut. With phone unlock set
+up, it asks this phone instead of waiting for Sapwood: a notification says which board restarted,
+why (power-on, brownout, watchdog), on which network and how many times, and one tap plus your
+phone's screen lock unlocks it. There is no server, no Google push and no third-party app involved.
+
+**Setting it up.** On a paired signer, tap *Set up phone unlock*. Cambium shows a code. In
+Sapwood, add the phone under *Phones that can unlock* by scanning it, then press the button on the
+board. (Until Sapwood's panel ships, heartwood-esp32's `scripts/phone-unlock.mjs enrol-for --code
+'<code>'` does the same over USB.) The board hands this phone its unlock secret, sealed to a key that exists only on that
+screen, and Cambium asks for your screen lock to keep it. Set up at least two devices, so a phone lost
+abroad does not strand the board.
+
+**What the phone holds, per board.**
+
+- The *unlock secret* S. It opens the board's data key, which is useless without the board's own
+  flash. It sits under an Android Keystore key that the phone releases only after you
+  authenticate, once per unlock: with the phone's own PIN, pattern or password, or a strong
+  (class 3) fingerprint or face if you use one (on Android 10 and older, only the biometric).
+  StrongBox where the phone has one; destroyed if a biometric is added or changed, or the screen
+  lock removed (set it up again afterwards). If you prefer no biometrics on your phone, because a
+  finger or face can be forced, a PIN-only phone works.
+- A *phone key* K derived from S, in encrypted storage without a biometric, so Cambium can
+  recognise and read the board's lock messages in the background. K cannot unlock the board, but
+  whoever has it can write a convincing fake lock message for this phone; tapping that would send
+  S to them. The warning below applies to that as much as to a stolen board.
+
+**Always a tap.** The board has no flash encryption or secure boot, so whoever holds it can make it
+ask to be unlocked, on any network, with any story. The notification says so every time. Only
+unlock when you expect it. Cambium never unlocks on its own, and there is no setting to make it.
+
+**No stable phone identifier on the wire.** A locked board's message carries no tag naming this
+phone, only a hint that changes with every restart. Cambium reads *every* lock message on its
+relays and matches locally, so a subscription says nothing about which board it waits for. Each
+unlock is sent from a fresh throwaway key, to that board's own relays only. Cambium never contacts
+the board because a lock message arrived. What a relay can still see: this phone's IP address; that
+the connection which just sent an unlock answered one particular lock message, so the relay can
+tie that IP to that board's restart; and, if Cambium's ordinary NIP-46 pairing uses the same relay,
+the same IP talking to the signer. Use relays you run, or a VPN or Tor on the phone, if that
+matters to you.
+
+The enrolment hand-off is not signed by anything the phone already trusts, so anyone who sees the
+enrolment code could try to answer it first. Cambium shows a six-character check code, large: check
+Sapwood shows the same one. If two different answers arrive, Cambium keeps neither.
+
+**Gone quiet.** When the keep-warm service is on, Cambium also says when a paired signer stops
+answering its scheduled checks (two in a row, eight minutes apart), so you hear about a power cut
+before the board is even back.
+
+**Losing the phone.** Revoke its record on the board from Sapwood or over USB. Nothing else on the
+board changes. *Forget* in Cambium removes the phone's side; the screen reminds you to do both.
 
 ## Install
 
@@ -112,7 +168,9 @@ work. Exact NIP-42 AUTH duplicates coalesce and cache briefly; at most one disti
 is admitted per identity, it is never retried internally, and a transport failure opens a 60-second
 AUTH circuit while ordinary signing, reactions, and encryption remain available. Cambium also has
 persistent per-app approval or denial, an optional keep-warm foreground service, a metadata-only
-activity log, and an optional biometric app lock. Kind-level permissions live on the signer itself
+activity log, an optional biometric app lock, and phone unlock for a Heartwood that restarted
+locked (unlock secret behind the Keystore and the phone's screen lock, unfiltered lock
+listener, throwaway-key delivery). Kind-level permissions live on the signer itself
 (Heartwood's policy engine, managed via Sapwood), not on the phone.
 
 ### Private zaps

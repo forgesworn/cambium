@@ -6,6 +6,9 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- Phone unlock: the lock listener has to survive while the owner is away, which Android's
+         battery optimisation would otherwise stop. Asked for once, after enrolment. -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <!-- Camera is for QR pairing convenience only: pasting the bunker link works without it,
          so camera-less devices (and anyone who declines the permission) can still pair. -->
@@ -69,6 +72,23 @@
             android:exported="false"
             android:theme="@style/Theme.Cambium" />
 
+        <!-- Phone unlock. Neither is exported: the unlock screen is reached from Cambium's own
+             notification or main screen, and enrolment from a pairing row. configChanges keeps
+             the enrolment key (memory only), and an open fingerprint prompt, across a rotation. -->
+        <activity
+            android:name=".unlock.UnlockActivity"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|uiMode|density|fontScale|locale|layoutDirection"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:launchMode="singleTop"
+            android:theme="@style/Theme.Cambium" />
+
+        <activity
+            android:name=".unlock.UnlockEnrolActivity"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|uiMode|density|fontScale|locale|layoutDirection"
+            android:exported="false"
+            android:theme="@style/Theme.Cambium" />
+
         <provider
             android:name=".nip55.SignerProvider"
             android:authorities="dev.forgesworn.cambium.GET_PUBLIC_KEY;dev.forgesworn.cambium.SIGN_EVENT;dev.forgesworn.cambium.NIP04_ENCRYPT;dev.forgesworn.cambium.NIP44_ENCRYPT;dev.forgesworn.cambium.NIP04_DECRYPT;dev.forgesworn.cambium.NIP44_DECRYPT;dev.forgesworn.cambium.PING;dev.forgesworn.cambium.DECRYPT_ZAP_EVENT"
@@ -81,11 +101,11 @@
             android:foregroundServiceType="specialUse">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Keep the NIP-46 connection to the paired Heartwood signer warm for faster responses" />
+                android:value="Keep the NIP-46 connection to the paired Heartwood signer warm for faster responses, and listen for its unlock requests after a restart" />
         </service>
 
-        <!-- BOOT_COMPLETED is a protected broadcast: only the system can send it, so this is safe
-             to export. BootReceiver itself checks the keep-warm toggle and pairing before doing
+        <!-- BOOT_COMPLETED and MY_PACKAGE_REPLACED are protected broadcasts: only the system can
+             send them, so this is safe to export. BootReceiver itself checks the keep-warm toggle and pairing before doing
              anything. -->
         <receiver
             android:name=".service.BootReceiver"
@@ -93,6 +113,7 @@
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
             </intent-filter>
         </receiver>
 
