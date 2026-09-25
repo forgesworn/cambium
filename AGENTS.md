@@ -552,17 +552,32 @@ Android apps              Websites
   JVM-tested: `PhoneUnlock.kt` (K = HKDF(S), the per-boot hint, opening the sealed lock message with
   `ChaCha20.kt` + HMAC-SHA256, the delivery plaintext, and `judge`, the prompt rule) held to the
   firmware's own vectors (`src/test/resources/phone-unlock-v1.json`, copied from heartwood-esp32
-  `common/tests/fixtures/`; regenerate only with a deliberate format bump there);
+  `common/tests/fixtures/`; regenerate only with a deliberate format bump there). Kind 24135 also
+  carries a relay-update variant -- identical construction to a lock announcement, only the sealed
+  `t` differs (`"relays"` instead of `"locked"`), sent whenever the board's own relay list changes
+  outside of a restart; `phone-unlock-v1-relays.json` (also copied from heartwood-esp32) is its
+  vector. `judge` returns `NOT_LOCKED` for it unconditionally (checked before staleness/replay/
+  duplicate), so it never raises a prompt; `LockMatcher.withRelaysFrom` follows its relay list the
+  same as a lock announcement's, regardless of verdict.
   `Enrolment.kt` (the `heartwood-unlock:enrol?...` code Cambium shows, and the kind-24137 hand-off,
   whose content is the board's enrolment answer passed through); `LockMatcher.kt` (matching one
   announcement against every enrolled board, relay-list following, and `Reachability`, the
-  "gone quiet" rule). Android-side: `SlotSecretVault.kt` (per-board Keystore AES key, per-use
-  authentication by strong biometric or, on API 30+, the device credential (the owner's
+  "gone quiet" rule); `RelayGate.kt` (`RelayJitter`, a uniform 30 s-10 min draw from a
+  `SecureRandom` by default, and `RelayGate`, which withholds a relay a message just taught Cambium
+  about until that jitter elapses -- a relay Cambium already knows, from pairing/enrolment/a prior
+  session, is trusted immediately with no delay; both take their randomness/jitter as constructor
+  parameters so `RelayGateTest`/`RelayJitterTest` run entirely on `kotlinx.coroutines.test`'s
+  virtual time rather than real minutes). Android-side: `SlotSecretVault.kt` (per-board Keystore AES
+  key, per-use authentication by strong biometric or, on API 30+, the device credential (the owner's
   GrapheneOS phone has no biometrics, deliberately), invalidated on biometric enrolment change,
   StrongBox when present),
   `UnlockStore.kt` (enrolments and ping records in their own EncryptedSharedPreferences, `commit()`
   writes), `UnlockCoordinator.kt` (process-wide listener owner: current requests as a `StateFlow`,
-  sent deliveries, "still locked" detection from a same-boot repeat 25 s after answering),
+  sent deliveries, "still locked" detection from a same-boot repeat 25 s after answering; owns the
+  `RelayGate` -- a board's relays are trusted the first time its id is seen this process, a relay
+  a running board later teaches it about goes through `RelayGate.learn`, and `deliver`'s target
+  relays come straight from the lock message/enrolment, never gated, so answering a genuine prompt
+  is never held up by another relay's jitter),
   `UnlockNotifications.kt`, `UnlockActivity.kt` (always acts on the board's *current* request, not
   the notification's) and `UnlockEnrolActivity.kt` (enrolment key in memory only; `configChanges`
   so a rotation cannot lose it).
@@ -570,7 +585,9 @@ Android apps              Websites
   Metadata rules the code must keep (design section 6): the lock subscription has no filter but
   the kind; the relay client has no signer (no NIP-42 answer with a stable key); every delivery is
   from a fresh key; nothing pings the board because of a lock message (the gone-quiet alert uses
-  only the keep-alive's scheduled pings).
+  only the keep-alive's scheduled pings); a relay Cambium has never spoken to before does not see
+  its first connection from this phone land at the same moment the board's broadcast changed
+  (`RelayGate`'s jitter).
 - `signer/UnlockRelay.kt` -- the rust-nostr half of phone unlock: throwaway-key delivery events,
   opening the enrolment hand-off (NIP-44), and `RelayWatch`, one signer-less `Client` per purpose
   (the unfiltered 24135 listener; the enrolment screen's rendezvous subscription). Native calls

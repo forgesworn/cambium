@@ -63,6 +63,33 @@ class PhoneUnlockTest {
         assertEquals(field("delivery"), PhoneUnlock.deliveryJson(context.id, s))
     }
 
+    /**
+     * The firmware's relay-update vector (heartwood-esp32
+     * `common/tests/fixtures/phone-unlock-v1-relays.json`): identical construction to a lock
+     * announcement, only `t` differs. A phone opens it exactly the same way and never prompts.
+     */
+    @Test
+    fun `the firmware relay-update vector opens and is never a prompt`() {
+        val text = javaClass.classLoader!!.getResource("phone-unlock-v1-relays.json")!!.readText()
+        val fixture = Json.parseToJsonElement(text) as JsonObject
+        fun field(name: String) = fixture[name]!!.jsonPrimitive.content
+        val s = field("slot_secret").hexToBytesOrNull()!!
+        val k = PhoneUnlock.phoneKey(s)
+        assertEquals(field("phone_key"), k.toHex())
+        val author = field("author").hexToBytesOrNull()!!
+        assertEquals(field("hint"), PhoneUnlock.hint(k, author))
+        val context = Json.decodeFromJsonElement(LockContext.serializer(), fixture["context"]!!)
+        assertEquals(ctx(PhoneUnlock.TYPE_RELAYS), context)
+        assertEquals(PhoneUnlock.TYPE_RELAYS, context.t)
+        val sealed = PhoneUnlock.sealContext(k, author, json(context), field("nonce").hexToBytesOrNull()!!)
+        assertEquals(field("content"), sealed)
+        assertEquals(context, PhoneUnlock.openContext(k, author, field("content")))
+        assertEquals(
+            Verdict.NOT_LOCKED,
+            PhoneUnlock.judge(context, author.toHex(), 1_800_000_000L, 1_800_000_000L, null),
+        )
+    }
+
     @Test
     fun `a phone recognises and opens its own announcement only`() {
         val k = PhoneUnlock.phoneKey(bytes(1))
