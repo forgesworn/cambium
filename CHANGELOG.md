@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.7.0 (2026-09-26)
 
 - Adding a phone now scans Sapwood's own invite QR instead of the other way round: "Add a phone"
   in Sapwood shows a one-off invite, and this phone's "Scan Sapwood's code" reads it, builds its
