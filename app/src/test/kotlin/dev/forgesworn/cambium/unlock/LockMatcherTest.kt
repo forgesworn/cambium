@@ -28,9 +28,16 @@ class LockMatcherTest {
         last = last,
     )
 
-    private fun announcement(forEnrolment: UnlockEnrolment, id: Long = forEnrolment.id, boot: Long = 5, createdAt: Long = now): RawAnnouncement {
+    private fun announcement(
+        forEnrolment: UnlockEnrolment,
+        id: Long = forEnrolment.id,
+        boot: Long = 5,
+        createdAt: Long = now,
+        t: String = "locked",
+        relays: List<String> = listOf("wss://new.example"),
+    ): RawAnnouncement {
         val k = forEnrolment.phoneKeyHex.hexToBytesOrNull()!!
-        val context = LockContext(1, "locked", id, boot, "power-on", "home", "", "0.18.0-beta.17", listOf("wss://new.example"))
+        val context = LockContext(1, t, id, boot, "power-on", "home", "", "0.18.0-beta.17", relays)
         val content = PhoneUnlock.sealContext(k, author, Json.encodeToString(LockContext.serializer(), context), ByteArray(12))
         return RawAnnouncement("e".repeat(64), authorHex, createdAt, content, PhoneUnlock.hint(k, author))
     }
@@ -67,6 +74,37 @@ class LockMatcherTest {
         assertEquals(Verdict.PROMPT, LockMatcher.match(announcement(desk, boot = 6), listOf(desk), now)?.verdict)
         assertEquals(Verdict.REPLAY, LockMatcher.match(announcement(desk, boot = 4), listOf(desk), now)?.verdict)
         assertEquals(Verdict.STALE, LockMatcher.match(announcement(desk, boot = 6, createdAt = now - 600), listOf(desk), now)?.verdict)
+    }
+
+    @Test
+    fun `a relay-update message is matched and opened but never prompts`() {
+        val desk = enrolment(1, 1)
+        val match = LockMatcher.match(announcement(desk, t = "relays"), listOf(desk), now)
+        assertNotNull(match)
+        assertEquals("relays", match.context.t)
+        assertEquals(Verdict.NOT_LOCKED, match.verdict)
+        // withRelaysFrom follows it regardless of verdict, exactly like a lock announcement would.
+        val followed = LockMatcher.withRelaysFrom(match.enrolment, match.context)
+        assertEquals(listOf("wss://relay.example", "wss://new.example"), followed.relays)
+    }
+
+    @Test
+    fun `a duplicate or stale relay-update never prompts either`() {
+        val desk = enrolment(1, 1, last = LastPrompt(5, authorHex))
+        // Same boot and author as the recorded last prompt: a lock announcement here would be
+        // Verdict.DUPLICATE; a relay-update is NOT_LOCKED regardless.
+        assertEquals(Verdict.NOT_LOCKED, LockMatcher.match(announcement(desk, t = "relays"), listOf(desk), now)?.verdict)
+        // An older boot: a lock announcement here would be Verdict.REPLAY; still NOT_LOCKED.
+        assertEquals(
+            Verdict.NOT_LOCKED,
+            LockMatcher.match(announcement(desk, t = "relays", boot = 4), listOf(desk), now)?.verdict,
+        )
+        // Outside the announce-age window: a lock announcement here would be Verdict.STALE; still
+        // NOT_LOCKED.
+        assertEquals(
+            Verdict.NOT_LOCKED,
+            LockMatcher.match(announcement(desk, t = "relays", boot = 6, createdAt = now - 600), listOf(desk), now)?.verdict,
+        )
     }
 
     @Test

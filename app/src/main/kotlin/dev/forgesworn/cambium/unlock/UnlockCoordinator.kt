@@ -54,6 +54,15 @@ object UnlockCoordinator {
     @Volatile private var boards: List<UnlockEnrolment> = emptyList()
 
     /**
+     * Gates which relays are actually connected to: a board's relays at the point it is first seen
+     * this process (pairing, enrolment, restart) are trusted immediately, but a relay a lock or
+     * relay-update message teaches Cambium about while a board is already known waits out a jitter
+     * first -- see [RelayGate] and [onAnnouncement].
+     */
+    private val relayGate = RelayGate()
+    private val knownBoardIds = ConcurrentHashMap.newKeySet<Long>()
+
+    /**
      * Starts, restarts or stops the listener so it watches exactly the enrolled boards' relays.
      * Runs to completion even if the caller is cancelled (an activity closed mid-start): a relay
      * client started but never recorded in [watch] could never be stopped.
@@ -62,7 +71,14 @@ object UnlockCoordinator {
         mutex.withLock {
             val app = context.applicationContext
             boards = UnlockStore(app).enrolments()
-            val relays = LockMatcher.relayUnion(boards)
+            // A board seen for the first time this process (fresh pairing, enrolment, or the
+            // process's first sync after a restart) has its relays trusted at once: they came from
+            // pairing/enrolment, not from a stray relay message. A board already known keeps
+            // whatever relayGate already granted it -- a newly learned relay for it only becomes
+            // ready once onAnnouncement's jitter elapses.
+            val freshBoards = boards.filter { knownBoardIds.add(it.id) }
+            if (freshBoards.isNotEmpty()) relayGate.trust(freshBoards.flatMap { it.relays })
+            val relays = relayGate.ready(LockMatcher.relayUnion(boards))
             if (relays == watchedRelays && watch != null) return@withLock
             watch?.stop()
             watch = null
@@ -90,6 +106,15 @@ object UnlockCoordinator {
         _requests.update { it - enrolmentId }
         sent.remove(enrolmentId)
         warnedStillLocked.remove(enrolmentId)
+        knownBoardIds.remove(enrolmentId)
+        // The caller removes the enrolment from the store before calling this, but boards (this
+        // process's cache) has not been reloaded yet, so the forgotten board's relays are still
+        // here to prune -- unless another remaining board still needs one of them.
+        val forgotten = boards.firstOrNull { it.id == enrolmentId }
+        if (forgotten != null) {
+            val stillNeeded = boards.asSequence().filter { it.id != enrolmentId }.flatMap { it.relays }.toSet()
+            relayGate.untrust(forgotten.relays.filterNot { it in stillNeeded })
+        }
     }
 
     private fun onAnnouncement(app: Context, raw: RawAnnouncement) {
@@ -99,10 +124,15 @@ object UnlockCoordinator {
         val store = UnlockStore(app)
 
         // Any authentic message carries the board's relay list: follow it, whatever the verdict.
+        // The relay list itself is trusted and persisted at once; connecting to any brand-new
+        // relay in it is delayed by a jitter (relayGate.learn), so a relay Cambium has never spoken
+        // to before cannot correlate its first connection to the moment this message arrived.
         val followed = LockMatcher.withRelaysFrom(match.enrolment, match.context)
         if (followed !== match.enrolment) {
+            val newRelays = followed.relays.filterNot { it in match.enrolment.relays }
             store.modify(id) { it.copy(relays = followed.relays) }
-            scope.launch { sync(app) }
+            boards = boards.map { if (it.id == id) it.copy(relays = followed.relays) else it }
+            relayGate.learn(scope, newRelays) { scope.launch { sync(app) } }
         }
 
         when (match.verdict) {
@@ -138,6 +168,15 @@ object UnlockCoordinator {
      * wipes [slotSecret] afterwards and has already checked [request] is still the board's
      * current one. The delivery goes only to the relays the board itself listed, not to every
      * relay this phone listens on. True once at least one relay accepted it.
+     *
+     * The board may have moved to a brand-new relay less than a jitter ago (that is exactly what
+     * the relay-update message is for): if we waited out [relayGate]'s jitter here too, a delivery
+     * could sit unconnected to the board's new relay for up to 10 minutes. The owner's tap already
+     * exposes the timing -- there is nothing left to protect by delaying it -- so a genuine lock
+     * prompt's own relays are trusted immediately, before [sync] rebuilds the watch and waits for
+     * the connection. [match]'s verdict is only ever `PROMPT` for `t == "locked"` (see
+     * [PhoneUnlock.judge]), so a relay-update can never reach this method, but the check is kept
+     * explicit rather than relied on implicitly.
      */
     suspend fun deliver(context: Context, request: Request, slotSecret: ByteArray): Boolean {
         val app = context.applicationContext
@@ -146,6 +185,9 @@ object UnlockCoordinator {
             match.announcement.authorHex,
             PhoneUnlock.deliveryJson(match.enrolment.id, slotSecret),
         )
+        if (match.context.t == PhoneUnlock.TYPE_LOCKED) {
+            relayGate.trust(match.context.relays.map { it.trimEnd('/') }.filter(::isRelayUrl))
+        }
         sync(app)
         val targets = match.context.relays.map { it.trimEnd('/') }.filter(::isRelayUrl)
             .ifEmpty { match.enrolment.relays }
