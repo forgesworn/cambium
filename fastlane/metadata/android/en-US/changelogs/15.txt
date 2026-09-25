@@ -1,0 +1,5 @@
+Enrol this phone for unlock over the relay, with a Heartwood on 0.18.0-beta.19 or later.
+
+- Cambium shows five request words next to the enrol code; compare them with the board's card before holding the button.
+- Phone labels are kept to printable ASCII, so the board never refuses one.
+- Relays learned from a relay-update message wait a random 30 s to 10 min before Cambium connects to them.

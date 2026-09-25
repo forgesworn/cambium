@@ -25,8 +25,8 @@ android {
         applicationId = "dev.forgesworn.cambium"
         minSdk = 27
         targetSdk = 35
-        versionCode = 14
-        versionName = "0.5.0"
+        versionCode = 15
+        versionName = "0.6.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
