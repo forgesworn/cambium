@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.6.0 (2026-09-25)
+
+- Enrolling this phone for unlock over the relay. A Heartwood on 0.18.0-beta.19 or later shows a
+  five-word request code on its "ADD UNLOCK PHONE" card, derived from the one-off key this phone
+  made; Cambium now shows the same five words next to the enrol code. Compare them before holding
+  the board's button: a browser's copy proves nothing. If the board says it added the phone but
+  nothing arrives here, revoke the id in Sapwood.
+- Phone labels are transliterated to printable ASCII (accents and fullwidth forms to their plain
+  base, anything else dropped), matching what the firmware accepts.
+- Relays learned from a board's relay-update message wait a random 30 seconds to 10 minutes before
+  Cambium connects to them, so a new relay cannot tie this phone's first connection to the moment
+  the board's broadcast reached it. Relays Cambium already knows connect at once, and a genuine
+  unlock prompt's own relays are trusted straight away, so unlocking is never delayed.
+
 ## 0.5.0 (2026-09-24)
 
 - Phone unlock. A Heartwood (0.18.0-beta.17 or later) that restarts locked after a power cut can
