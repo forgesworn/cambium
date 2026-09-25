@@ -222,12 +222,15 @@ class UnlockEnrolActivity : AppCompatActivity() {
         // between "connected" and "about to publish".
         CoroutineScope(Dispatchers.IO).launch {
             val started = RelayWatch.handOff(combined, code.rendezvous) { raw -> runOnUiThread { onHandOff(raw) } }
-            if (destroyed) {
-                started.stop()
-                return@launch
+            // Views and `watch` belong to the UI thread, as in startHandOffWatch.
+            runOnUiThread {
+                if (destroyed) {
+                    CoroutineScope(Dispatchers.IO).launch { started.stop() }
+                } else {
+                    watch = started
+                    publishInviteReply()
+                }
             }
-            watch = started
-            publishInviteReply()
         }
     }
 
