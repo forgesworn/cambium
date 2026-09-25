@@ -100,6 +100,7 @@ class UnlockEnrolActivity : AppCompatActivity() {
         val rendezvous = ByteArray(16).also { SecureRandom().nextBytes(it) }.toHex()
         val code = EnrolmentCode(pubkeyHex, rendezvous, EnrolmentCode.fitLabel(Build.MODEL), relays).encode()
         binding.enrolCode.text = code
+        binding.enrolWords.text = requestWords(pubkeyHex).orEmpty()
         binding.enrolQr.setImageBitmap(BarcodeEncoder().encodeBitmap(code, BarcodeFormat.QR_CODE, 720, 720))
         binding.enrolCopyButton.setOnClickListener {
             getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText("Heartwood unlock enrolment", code))
@@ -177,6 +178,8 @@ class UnlockEnrolActivity : AppCompatActivity() {
         pending = handOff
         binding.enrolQr.isVisible = false
         binding.enrolCode.isVisible = false
+        binding.enrolWords.isVisible = false
+        binding.enrolWordsHint.isVisible = false
         binding.enrolCopyButton.isVisible = false
         binding.enrolStatus.text = getString(R.string.enrol_received)
         binding.enrolCheckCode.text = checkCode(envelope.ephemeralPubkeyHex).orEmpty()
@@ -277,6 +280,8 @@ class UnlockEnrolActivity : AppCompatActivity() {
         binding.enrolBody.isVisible = false
         binding.enrolQr.isVisible = false
         binding.enrolCode.isVisible = false
+        binding.enrolWords.isVisible = false
+        binding.enrolWordsHint.isVisible = false
         binding.enrolCopyButton.isVisible = false
         binding.enrolStatus.text = message
     }

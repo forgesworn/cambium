@@ -4,6 +4,7 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.net.URLDecoder
 import java.net.URLEncoder
+import java.text.Normalizer
 
 /**
  * What Cambium shows (as a QR and as text) when it asks to become an unlock phone:
@@ -40,14 +41,21 @@ data class EnrolmentCode(
         private val HEX64 = Regex("^[0-9a-f]{64}$")
         private val HEX32 = Regex("^[0-9a-f]{32}$")
 
-        /** Trims [raw] to the board's label limit without splitting a UTF-8 sequence. */
+        /**
+         * Fits [raw] to the board's label limit as printable ASCII (0x20-0x7E), which is all the
+         * firmware now accepts for a label -- on the cable as well as over the relay, so this must
+         * hold whatever the board's own model name string throws at it. NFKD decomposition first,
+         * so an accented letter or a fullwidth character (e.g. "é", "ｓｗｉｍ") reduces to its plain
+         * ASCII base rather than being dropped outright; anything left outside the printable range
+         * (control characters, emoji, combining marks NFKD peeled off) is simply removed. A label
+         * built entirely of non-ASCII input still falls back to "phone", matching the empty-input
+         * case.
+         */
         fun fitLabel(raw: String): String {
-            val trimmed = raw.trim().ifEmpty { "phone" }
-            var end = trimmed.length
-            while (trimmed.substring(0, end).toByteArray(Charsets.UTF_8).size > MAX_LABEL_BYTES) end--
-            // Never leave half of a surrogate pair behind.
-            if (end > 0 && Character.isHighSurrogate(trimmed[end - 1])) end--
-            return trimmed.substring(0, end)
+            val ascii = Normalizer.normalize(raw, Normalizer.Form.NFKD).filter { it.code in 0x20..0x7E }
+            val trimmed = ascii.trim().ifEmpty { "phone" }
+            // Every remaining character is single-byte ASCII, so length and byte count agree.
+            return trimmed.take(MAX_LABEL_BYTES).trim().ifEmpty { "phone" }
         }
 
         fun parse(text: String): EnrolmentCode? {
@@ -101,6 +109,27 @@ fun checkCode(ephemeralPubkeyHex: String): String? {
 }
 
 private const val CHECK_CONTEXT = "heartwood-unlock:enrol-check"
+
+/**
+ * The four words the board shows on its "ADD UNLOCK PHONE" card before the press, derived from
+ * this phone's own one-off enrolment pubkey P: spoken-token's `deriveToken(P,
+ * 'heartwood-unlock:enrol-request', 0, { format: 'words', count: 4 })`, i.e. word `i` is
+ * `WORDLIST[uint16_be(digest[2i..2i+2]) % 2048]` of `HMAC-SHA256(P, utf8(context) || counter_be32)`.
+ * Cambium must show the same words: the phone is the trusted side (it made P), so the owner
+ * compares the board's words against *this* screen, not a browser's copy of the enrolment code,
+ * which proves nothing. Held to the firmware's own frozen vectors in `EnrolmentTest`.
+ */
+fun requestWords(enrolPubkeyHex: String): String? {
+    val key = enrolPubkeyHex.hexToBytesOrNull()?.takeIf { it.size == 32 } ?: return null
+    val mac = javax.crypto.Mac.getInstance("HmacSHA256").apply { init(javax.crypto.spec.SecretKeySpec(key, "HmacSHA256")) }
+    val digest = mac.doFinal(REQUEST_CONTEXT.toByteArray(Charsets.UTF_8) + ByteArray(4))
+    return (0 until 4).joinToString(" ") { i ->
+        val index = ((digest[2 * i].toInt() and 0xFF) shl 8) or (digest[2 * i + 1].toInt() and 0xFF)
+        SpokenWords.WORDLIST[index % SpokenWords.WORDLIST.size]
+    }
+}
+
+private const val REQUEST_CONTEXT = "heartwood-unlock:enrol-request"
 
 /** The sealed hand-off's plaintext, as the phone opens it: `{v:1, id, s, relays}`. */
 class HandOff(val id: Long, val slotSecret: ByteArray, val relays: List<String>) {
