@@ -12,20 +12,20 @@ what store metadata points at (F-Droid's `Donate:` field takes one URL).
 
 | Channel | Status | Signature users get |
 |---|---|---|
-| GitHub Releases | **Live** (0.6.0 current; v0.2.0 onward) | Ours (the 0.2.0 trust root) |
-| Obtainium | **Live** via the 0.6.0 GitHub release | Ours |
-| Zapstore | **Live** (0.5.0 current, 0.6.0 not yet published; v0.3.2 onward) | Ours |
+| GitHub Releases | **Live** (0.7.0 current; v0.2.0 onward) | Ours (the 0.2.0 trust root) |
+| Obtainium | **Live** via the 0.7.0 GitHub release | Ours |
+| Zapstore | **Live** (0.5.0 current, 0.6.0 and 0.7.0 not yet published; v0.3.2 onward) | Ours |
 | F-Droid | **Live** ([fdroiddata!42875](https://gitlab.com/fdroid/fdroiddata/-/merge_requests/42875) merged 2026-09-13; still lists only 0.4.3 on 2026-09-25, so 0.5.0 has not come through); new tags are picked up automatically | Ours, when the reproducibility check passes |
 | IzzyOnDroid (optional extra) | Eligible; their tracker moved to Codeberg (account needed) | Ours |
 | Accrescent | **Blocked externally** — registration is allowlist-only | Ours |
 
 ## GitHub Releases (live)
 
-0.6.0 was published and read back on 2026-09-25, built from the tagged commit (`35d8de4`) in a
+0.7.0 was published and read back on 2026-09-26, built from the tagged commit (`6559364`) in a
 clean tree for F-Droid's reproducibility check. Its APK SHA-256 is
-`d83a5882f05fb5340b57f62a0947f689efc0f4f8c97563bcfa7b208e0b16a960`, and its signing certificate
-matches the 0.2.0 trust root below. The previous release, 0.5.0 (2026-09-24, `d0ea215`), has SHA-256
-`9ccbf226e18036a57e6f402f81a55c7be7dd1986703af7e0581084e0a4e6d182`.
+`341b1f77ccd288a19606b7a4a8207c83120b8842dc5fda4cf33a325efe46ca7a`, and its signing certificate
+matches the 0.2.0 trust root below. The previous release, 0.6.0 (2026-09-25, `35d8de4`), has SHA-256
+`d83a5882f05fb5340b57f62a0947f689efc0f4f8c97563bcfa7b208e0b16a960`.
 
 The existing flow: bump `versionCode`/`versionName`, tag `vX.Y.Z`, build with the release
 keystore (`~/keystores/cambium-release.credentials`), upload the APK plus `SHA256SUMS`, and
