@@ -1,45 +1,23 @@
 package dev.forgesworn.cambium.unlock
 
-import dev.forgesworn.cambium.toHex
-
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertNotNull
 
 class InviteReplyTest {
 
-    private val invSecret = "11".repeat(32).hexToBytesOrNull()!!
-    private val invPubkeyHex = Secp256k1.publicKeyXOnly(invSecret).toHex()
-    private val invite = InviteUri(invPubkeyHex, "cd".repeat(16), 2_000_000L, listOf("wss://relay.example"))
-    private val code = EnrolmentCode("ab".repeat(32), "ef".repeat(16), "phone", listOf("wss://own.example")).encode()
+    private val invite = InviteUri("ab".repeat(32), "cd".repeat(16), 2_000_000L, listOf("wss://relay.example"))
 
     @Test
-    fun `the reply carries the invite's rendezvous and expiry, and nothing else`() {
-        val throwaway = "22".repeat(32).hexToBytesOrNull()!!
-        val nonce = ByteArray(32) { 9 }
-        val reply = InviteReplyBuilder.build(invite, code, throwaway, nonce)
-        assertNotNull(reply)
-        assertEquals(invite.rendezvous, reply.rendezvous)
-        assertEquals(invite.expiresAtSecs, reply.expiresAtSecs)
-        assertEquals(Secp256k1.publicKeyXOnly(throwaway).toHex(), reply.throwawayPubkeyHex)
+    fun `the reply carries exactly the invite's rendezvous and expiry, nothing else`() {
+        assertEquals(
+            listOf("h" to invite.rendezvous, "expiration" to "2000000"),
+            InviteReplyBuilder.tags(invite),
+        )
     }
 
     @Test
-    fun `the content decrypts, with inv's own secret, back to the exact enrolment code`() {
-        val throwaway = "33".repeat(32).hexToBytesOrNull()!!
-        val nonce = ByteArray(32) { 5 }
-        val reply = InviteReplyBuilder.build(invite, code, throwaway, nonce)
-        assertNotNull(reply)
-        assertEquals(code, Nip44.decrypt(invSecret, reply.throwawayPubkeyHex, reply.content))
-    }
-
-    @Test
-    fun `a fresh call with default randomness never reuses a throwaway key or nonce`() {
-        val a = InviteReplyBuilder.build(invite, code)
-        val b = InviteReplyBuilder.build(invite, code)
-        assertNotNull(a)
-        assertNotNull(b)
-        assert(a.throwawayPubkeyHex != b.throwawayPubkeyHex)
-        assert(a.content != b.content)
+    fun `a different invite produces different tag values`() {
+        val other = invite.copy(rendezvous = "ef".repeat(16), expiresAtSecs = 3_000_000L)
+        assertEquals(listOf("h" to "ef".repeat(16), "expiration" to "3000000"), InviteReplyBuilder.tags(other))
     }
 }

@@ -6,12 +6,14 @@ import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
 
 /**
- * NIP-44 v2, pure Kotlin ([Secp256k1] for the ECDH, [ChaCha20] for the stream cipher already used
- * for phone unlock's own sealed messages). Only used to build and check the invite reply's content
- * (`InviteReply.kt`): rust-nostr's `nip44Encrypt` (see `signer/UnlockRelay.kt`) exposes no way to
- * pin the nonce, and cannot run on the host JVM at all (native code per ABI), so it cannot be held
- * to the shared Sapwood/Cambium test vector directly. [encrypt] takes the nonce explicitly so a
- * test can fix it; production code draws 32 random bytes.
+ * **Test-only.** NIP-44 v2, pure Kotlin ([Secp256k1] for the ECDH, [ChaCha20] for the stream
+ * cipher already used for phone unlock's own sealed messages), so `EnrolInviteVectorTest` can hold
+ * the enrol-invite reply's wire format (an `InviteReplyBuilder.tags` shape, NIP-44 v2 encrypted) to
+ * the shared Sapwood/Cambium vector on the host JVM: rust-nostr's own `nip44Encrypt` (used by
+ * production, `signer/UnlockRelay.kt`'s `UnlockNostr.inviteReplyEvent`) exposes no way to pin the
+ * nonce, and cannot run on the host JVM at all (native code per ABI), so it cannot be checked
+ * against a fixed vector directly. [encrypt] takes the nonce explicitly for exactly that reason;
+ * nothing here is reachable from `app/src/main`.
  */
 internal object Nip44 {
     private const val VERSION: Byte = 2

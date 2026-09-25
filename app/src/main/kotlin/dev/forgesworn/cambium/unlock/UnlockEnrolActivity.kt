@@ -207,13 +207,10 @@ class UnlockEnrolActivity : AppCompatActivity() {
         binding.enrolWords.isVisible = true
         binding.enrolWordsHint.isVisible = true
 
-        val reply = InviteReplyBuilder.build(invite, code.encode())
-        if (reply == null) {
+        val event = runCatching { UnlockNostr.inviteReplyEvent(invite, code.encode()) }.getOrElse {
             binding.enrolStatus.text = getString(R.string.enrol_send_failed)
             return
         }
-        val event = UnlockNostr.inviteReplyEvent(reply)
-        reply.throwawaySecret.fill(0) // signed; the throwaway key has no further purpose
         pendingInviteReply = event
         pendingInviteRelays = invite.relays
         binding.enrolStatus.text = getString(R.string.enrol_sending)

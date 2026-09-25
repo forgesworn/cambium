@@ -3,14 +3,15 @@ package dev.forgesworn.cambium.unlock
 import java.math.BigInteger
 
 /**
- * Just enough secp256k1 (affine point arithmetic over [P], double-and-add scalar multiplication)
- * to compute a BIP-340 x-only public key and an x-only ECDH shared point for [Nip44]. Pure Kotlin,
- * `java.math.BigInteger` only: rust-nostr already does this natively, but only on a real device
- * (see `signer/HeartwoodClient.kt`'s class doc -- native code per ABI cannot load on the host
- * JVM), and the invite reply's content must be byte-identical to Sapwood's vector under a fixed
- * throwaway secret and nonce, which needs its own implementation held to that vector rather than
- * a black box. Only ever called once per invite scan (building the reply) or once per test, so
- * naive affine arithmetic (a modular inverse per addition) is not worth optimising away.
+ * **Test-only.** Just enough secp256k1 (affine point arithmetic over [P], double-and-add scalar
+ * multiplication) to compute a BIP-340 x-only public key and an x-only ECDH shared point for
+ * [Nip44]. This is not production code: it is naive, non-constant-time affine arithmetic (a
+ * modular inverse per addition), acceptable only because it exists purely so
+ * `EnrolInviteVectorTest` can check Sapwood's wire format (NIP-44 v2 content, tags) byte for byte
+ * on the host JVM, where rust-nostr's actual, constant-time implementation cannot load at all
+ * (native code per ABI -- see `signer/HeartwoodClient.kt`'s class doc). Production
+ * (`signer/UnlockRelay.kt`'s `UnlockNostr.inviteReplyEvent`) uses rust-nostr's `Keys`/
+ * `nip44Encrypt` throughout, never this file.
  */
 internal object Secp256k1 {
     val P: BigInteger = BigInteger("FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC2F", 16)

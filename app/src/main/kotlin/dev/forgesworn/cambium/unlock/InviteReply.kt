@@ -1,49 +1,21 @@
 package dev.forgesworn.cambium.unlock
 
-import dev.forgesworn.cambium.toHex
-import java.security.SecureRandom
-
 /**
- * Cambium's answer to a Sapwood invite ([InviteUri]): everything needed to build and sign the
- * kind-24137 reply event, except the actual signing (rust-nostr, native, see
- * `signer/UnlockRelay.kt`'s `inviteReplyEvent`) -- this class stays pure Kotlin so it can be held
- * to the shared Sapwood/Cambium test vector on the host JVM.
+ * The shaping of an enrol-invite reply event (spec v1) that has nothing to do with cryptography:
+ * exactly two tags, `h` (the invite's own rendezvous `ri`) and `expiration` (NIP-40, the invite's
+ * own `x`), and nothing else. Pure Kotlin, no rust-nostr, shared between the production builder
+ * (`signer/UnlockRelay.kt`'s `UnlockNostr.inviteReplyEvent`, which turns these into real `Tag`s,
+ * NIP-44-encrypts the plaintext, and signs, all through rust-nostr) and `EnrolInviteVectorTest`
+ * (which checks the same tag values against the shared Sapwood/Cambium vector), so both are held
+ * to one copy of this shape rather than two that could quietly drift apart.
  *
- * [throwawaySecret] is the reply's author: a fresh key with no other purpose, never persisted.
- * The caller is responsible for `fill(0)`-ing it once the event is signed -- this class only
- * builds the plaintext-to-ciphertext transform, so it cannot itself know when signing is done.
- * [content] is `NIP-44 v2 encrypt(EnrolmentCode.encode())` to the invite's `inv` key; [rendezvous]
- * and [expiresAtSecs] are exactly the invite's `ri`/`x`, carried through as the reply event's only
- * tags (`h`, `expiration`).
+ * The actual encryption is deliberately not here: rust-nostr's Kotlin bindings expose no way to
+ * pin the NIP-44 nonce and cannot load on the host JVM at all (native code per ABI -- see
+ * `pairing/BunkerUri.kt`'s class doc), so production and the vector test cannot share that step.
+ * The vector test instead holds a test-only reference NIP-44 v2 implementation
+ * (`src/test/kotlin/.../Nip44.kt`, `Secp256k1.kt`) to the vector directly.
  */
-class InviteReply(
-    val throwawaySecret: ByteArray,
-    val throwawayPubkeyHex: String,
-    val content: String,
-    val rendezvous: String,
-    val expiresAtSecs: Long,
-)
-
 object InviteReplyBuilder {
-
-    /**
-     * Builds the reply to [invite], sealing [enrolmentCode] (an [EnrolmentCode.encode] string) so
-     * only whoever holds `inv`'s secret half can read it. [throwawaySecret] and [nonce] are
-     * injectable so a test can pin them to the shared vector; production callers take the
-     * defaults, a fresh 32 bytes of each from [SecureRandom]. Null only if the invite's `k` is not
-     * a usable public key (already checked by [InviteUri.parse]'s hex64 rule, so this should not
-     * happen for a value that parsed).
-     */
-    fun build(
-        invite: InviteUri,
-        enrolmentCode: String,
-        throwawaySecret: ByteArray = randomBytes(32),
-        nonce: ByteArray = randomBytes(32),
-    ): InviteReply? {
-        val pubkeyHex = Secp256k1.publicKeyXOnly(throwawaySecret).toHex()
-        val content = Nip44.encrypt(throwawaySecret, invite.inviterPubkeyHex, enrolmentCode, nonce) ?: return null
-        return InviteReply(throwawaySecret, pubkeyHex, content, invite.rendezvous, invite.expiresAtSecs)
-    }
-
-    private fun randomBytes(size: Int): ByteArray = ByteArray(size).also { SecureRandom().nextBytes(it) }
+    fun tags(invite: InviteUri): List<Pair<String, String>> =
+        listOf("h" to invite.rendezvous, "expiration" to invite.expiresAtSecs.toString())
 }
