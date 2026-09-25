@@ -1,6 +1,8 @@
 package dev.forgesworn.cambium.signer
 
 import android.util.Log
+import dev.forgesworn.cambium.toHex
+import dev.forgesworn.cambium.unlock.InviteReply
 import dev.forgesworn.cambium.unlock.PhoneUnlock
 import dev.forgesworn.cambium.unlock.RawAnnouncement
 import kotlinx.coroutines.CoroutineScope
@@ -63,6 +65,21 @@ object UnlockNostr {
         return EventBuilder(Kind(PhoneUnlock.DELIVERY_KIND.toUShort()), content)
             .tags(listOf(Tag.publicKey(board)))
             .signWithKeys(throwaway)
+    }
+
+    /**
+     * Signs [reply] (an [InviteReply]'s already-encrypted content, from Sapwood's invite) into a
+     * kind-[PhoneUnlock.HANDOFF_KIND] event tagged `["h", rendezvous]` and `["expiration", x]`,
+     * nothing else, per the enrol-invite spec. The caller must `fill(0)` [reply]'s
+     * [InviteReply.throwawaySecret] once this returns -- the key has no other purpose.
+     */
+    fun inviteReplyEvent(reply: InviteReply): Event {
+        val keys = Keys.parse(reply.throwawaySecret.toHex())
+        val tags = listOf(
+            Tag.parse(listOf("h", reply.rendezvous)),
+            Tag.expiration(Timestamp.fromSecs(reply.expiresAtSecs.toULong())),
+        )
+        return EventBuilder(Kind(PhoneUnlock.HANDOFF_KIND.toUShort()), reply.content).tags(tags).signWithKeys(keys)
     }
 }
 

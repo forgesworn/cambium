@@ -1,0 +1,16 @@
+{
+  "v": 1,
+  "invSecretHex": "1111111111111111111111111111111111111111111111111111111111111111",
+  "invPubkeyHex": "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
+  "throwawaySecretHex": "2222222222222222222222222222222222222222222222222222222222222222",
+  "throwawayPubkeyHex": "466d7fcae563e5cb09a0d1870bb580344804617879a14949cf22285f1bae3f27",
+  "rendezvousHex": "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3",
+  "expiresAt": 1700000600,
+  "relays": [
+    "wss://relay.example"
+  ],
+  "inviteUri": "heartwood-unlock:invite?v=1&k=4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa&r=c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3&x=1700000600&relay=wss%3A%2F%2Frelay.example",
+  "nonceHex": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+  "plaintext": "heartwood-unlock:enrol?v=1&p=a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1&r=b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2&label=Pixel+8+Pro&relay=wss%3A%2F%2Frelay.example",
+  "eventContent": "Au7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u0TDw30nArD+b9g3ZhAyoBhzPzJhbrpXUgEX7lQdBe8cqghOn4bOanto8zvp2HlLfZzo4jVDcOM5E34V9nnuK4E3EtVmdF4sSunx+7hzokB2LSJtLywBY/tbQxJm7L+Qo27pLG5dqFJCMUhf6HxlAlnGaB1VQqi6osw6+UoPIg4GqPFlikxyGYHOEeWbbe2TE9LtYRUPnEqm174W0kzYr3Z5Lhbv/wJnQZ317DqPIDQyU1Ywzh7g3AaH0u8K5cMJITFHDa/XguyZYWyNqTTCWbHjo36ho/AGqUPooZ9PGHuxfsw=="
+}
