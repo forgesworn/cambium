@@ -108,10 +108,10 @@ class EnrolmentTest {
      */
     @Test
     fun `the request words match the board's frozen vectors`() {
-        assertEquals("swim behind stand bugle", requestWords("ab".repeat(32)))
-        assertEquals("talent humble reform admit", requestWords("00".repeat(32)))
-        assertEquals("profit buddy moment aim", requestWords("42".repeat(32)))
-        assertEquals("what attitude price easy", requestWords("ff".repeat(32)))
+        assertEquals("swim behind stand bugle female", requestWords("ab".repeat(32)))
+        assertEquals("talent humble reform admit narrow", requestWords("00".repeat(32)))
+        assertEquals("profit buddy moment aim kitten", requestWords("42".repeat(32)))
+        assertEquals("what attitude price easy large", requestWords("ff".repeat(32)))
         assertNull(requestWords("abcd"))
     }
 }

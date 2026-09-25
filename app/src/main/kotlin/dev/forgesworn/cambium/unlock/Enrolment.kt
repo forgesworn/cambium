@@ -110,10 +110,13 @@ fun checkCode(ephemeralPubkeyHex: String): String? {
 
 private const val CHECK_CONTEXT = "heartwood-unlock:enrol-check"
 
+/** How many words the request code has. */
+const val REQUEST_CODE_WORDS = 5
+
 /**
- * The four words the board shows on its "ADD UNLOCK PHONE" card before the press, derived from
+ * The five words the board shows on its "ADD UNLOCK PHONE" card before the press, derived from
  * this phone's own one-off enrolment pubkey P: spoken-token's `deriveToken(P,
- * 'heartwood-unlock:enrol-request', 0, { format: 'words', count: 4 })`, i.e. word `i` is
+ * 'heartwood-unlock:enrol-request', 0, { format: 'words', count: 5 })` (55 bits), i.e. word `i` is
  * `WORDLIST[uint16_be(digest[2i..2i+2]) % 2048]` of `HMAC-SHA256(P, utf8(context) || counter_be32)`.
  * Cambium must show the same words: the phone is the trusted side (it made P), so the owner
  * compares the board's words against *this* screen, not a browser's copy of the enrolment code,
@@ -123,7 +126,7 @@ fun requestWords(enrolPubkeyHex: String): String? {
     val key = enrolPubkeyHex.hexToBytesOrNull()?.takeIf { it.size == 32 } ?: return null
     val mac = javax.crypto.Mac.getInstance("HmacSHA256").apply { init(javax.crypto.spec.SecretKeySpec(key, "HmacSHA256")) }
     val digest = mac.doFinal(REQUEST_CONTEXT.toByteArray(Charsets.UTF_8) + ByteArray(4))
-    return (0 until 4).joinToString(" ") { i ->
+    return (0 until REQUEST_CODE_WORDS).joinToString(" ") { i ->
         val index = ((digest[2 * i].toInt() and 0xFF) shl 8) or (digest[2 * i + 1].toInt() and 0xFF)
         SpokenWords.WORDLIST[index % SpokenWords.WORDLIST.size]
     }
