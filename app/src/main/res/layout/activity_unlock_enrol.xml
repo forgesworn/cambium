@@ -50,6 +50,29 @@
             android:textSize="10sp"
             tools:text="heartwood-unlock:enrol?v=1&amp;p=…" />
 
+        <TextView
+            android:id="@+id/enrolWords"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center_horizontal"
+            android:layout_marginTop="12dp"
+            android:fontFamily="monospace"
+            android:gravity="center"
+            android:letterSpacing="0.05"
+            android:textColor="@color/accent"
+            android:textSize="22sp"
+            android:textStyle="bold"
+            tools:text="swim behind stand bugle" />
+
+        <TextView
+            android:id="@+id/enrolWordsHint"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:fontFamily="monospace"
+            android:text="@string/enrol_words_hint"
+            android:textColor="@color/on_background_muted" />
+
         <Button
             android:id="@+id/enrolCopyButton"
             style="@style/Widget.Material3.Button.OutlinedButton"

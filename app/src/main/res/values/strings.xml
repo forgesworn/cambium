@@ -145,9 +145,10 @@
     <string name="enrol_title">Unlock %1$s from this phone</string>
     <string name="enrol_body">In Sapwood, add this phone under \"Phones that can unlock\" by scanning the code, then press the button on the board. Nothing secret is in the code, and nothing secret passes through Sapwood.</string>
     <string name="enrol_qr_description">Phone unlock enrolment code</string>
+    <string name="enrol_words_hint">Your signer will show these five words. Hold its button only if they match; it shows the check code after you hold it.</string>
     <string name="enrol_copy">Copy code</string>
-    <string name="enrol_waiting">Waiting for the board…</string>
-    <string name="enrol_received">The board added this phone. Check that Sapwood shows the same six characters, then confirm with your phone\'s screen lock to keep the unlock key on this phone.</string>
+    <string name="enrol_waiting">Waiting for the board… If it says it added this phone but nothing arrives here, revoke the id it shows in Sapwood.</string>
+    <string name="enrol_received">The board added this phone. Check that the board shows the same six characters, then confirm with your phone\'s screen lock to keep the unlock key on this phone.</string>
     <string name="enrol_confirm">Confirm</string>
     <string name="enrol_prompt_title">Keep the unlock key on this phone</string>
     <string name="enrol_not_confirmed">Not confirmed yet. Confirm to finish; if you leave now, revoke record %1$d on the board in Sapwood.</string>

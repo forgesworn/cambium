@@ -40,15 +40,34 @@ class EnrolmentTest {
     }
 
     @Test
-    fun `labels are cut to the board's 16 bytes without splitting a character`() {
+    fun `labels are cut to the board's 16 bytes`() {
         assertEquals("Pixel 8", EnrolmentCode.fitLabel("  Pixel 8  "))
         assertEquals("phone", EnrolmentCode.fitLabel(" "))
         assertEquals("abcdefghijklmnop", EnrolmentCode.fitLabel("abcdefghijklmnopqrst"))
-        // "é" is two bytes: seven of them fill 14, an eighth fits exactly, a ninth does not.
-        assertEquals("é".repeat(8), EnrolmentCode.fitLabel("é".repeat(9)))
-        // A four-byte emoji at the boundary is dropped whole.
-        val cut = EnrolmentCode.fitLabel("abcdefghijklmn😀")
-        assertEquals("abcdefghijklmn", cut)
+    }
+
+    /**
+     * The board refuses any label that is not printable ASCII (0x20-0x7E), on the cable too, so
+     * `fitLabel` must never hand it anything else.
+     */
+    @Test
+    fun `labels are reduced to printable ASCII`() {
+        // An accented letter decomposes to its plain ASCII base rather than being dropped.
+        assertEquals("e".repeat(9), EnrolmentCode.fitLabel("é".repeat(9)))
+        assertEquals("Zoe's phone", EnrolmentCode.fitLabel("Zoë's phone"))
+        // Fullwidth Latin characters reduce to ordinary ASCII the same way.
+        assertEquals("swim", EnrolmentCode.fitLabel("ｓｗｉｍ"))
+        // A four-byte emoji has no ASCII equivalent and is dropped whole.
+        assertEquals("abcdefghijklmn", EnrolmentCode.fitLabel("abcdefghijklmn😀"))
+        // Control characters, separators and zero-width characters are all dropped, never passed through.
+        assertEquals("xswim behind", EnrolmentCode.fitLabel("x\nswim behind"))
+        assertEquals("nul", EnrolmentCode.fitLabel("nul\u0000"))
+        assertEquals("del", EnrolmentCode.fitLabel("del\u007f"))
+        assertEquals("nelx", EnrolmentCode.fitLabel("nel\u0085x"))
+        assertEquals("x", EnrolmentCode.fitLabel(" x"))
+        assertEquals("swim", EnrolmentCode.fitLabel("​swim"))
+        // A label built entirely of non-ASCII input still falls back rather than coming back empty.
+        assertEquals("phone", EnrolmentCode.fitLabel("あいう"))
     }
 
     @Test
@@ -81,5 +100,18 @@ class EnrolmentTest {
         assertEquals("9B6 164", checkCode("ab".repeat(32)))
         assertEquals("EF1 645", checkCode("00".repeat(32)))
         assertNull(checkCode("abcd"))
+    }
+
+    /**
+     * Frozen vectors from heartwood-esp32's `request_code`/`request_words` tests -- the board's
+     * request code and Cambium's must match byte for byte.
+     */
+    @Test
+    fun `the request words match the board's frozen vectors`() {
+        assertEquals("swim behind stand bugle female", requestWords("ab".repeat(32)))
+        assertEquals("talent humble reform admit narrow", requestWords("00".repeat(32)))
+        assertEquals("profit buddy moment aim kitten", requestWords("42".repeat(32)))
+        assertEquals("what attitude price easy large", requestWords("ff".repeat(32)))
+        assertNull(requestWords("abcd"))
     }
 }
