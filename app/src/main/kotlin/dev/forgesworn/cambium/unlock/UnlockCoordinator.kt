@@ -107,6 +107,14 @@ object UnlockCoordinator {
         sent.remove(enrolmentId)
         warnedStillLocked.remove(enrolmentId)
         knownBoardIds.remove(enrolmentId)
+        // The caller removes the enrolment from the store before calling this, but boards (this
+        // process's cache) has not been reloaded yet, so the forgotten board's relays are still
+        // here to prune -- unless another remaining board still needs one of them.
+        val forgotten = boards.firstOrNull { it.id == enrolmentId }
+        if (forgotten != null) {
+            val stillNeeded = boards.asSequence().filter { it.id != enrolmentId }.flatMap { it.relays }.toSet()
+            relayGate.untrust(forgotten.relays.filterNot { it in stillNeeded })
+        }
     }
 
     private fun onAnnouncement(app: Context, raw: RawAnnouncement) {
@@ -160,6 +168,15 @@ object UnlockCoordinator {
      * wipes [slotSecret] afterwards and has already checked [request] is still the board's
      * current one. The delivery goes only to the relays the board itself listed, not to every
      * relay this phone listens on. True once at least one relay accepted it.
+     *
+     * The board may have moved to a brand-new relay less than a jitter ago (that is exactly what
+     * the relay-update message is for): if we waited out [relayGate]'s jitter here too, a delivery
+     * could sit unconnected to the board's new relay for up to 10 minutes. The owner's tap already
+     * exposes the timing -- there is nothing left to protect by delaying it -- so a genuine lock
+     * prompt's own relays are trusted immediately, before [sync] rebuilds the watch and waits for
+     * the connection. [match]'s verdict is only ever `PROMPT` for `t == "locked"` (see
+     * [PhoneUnlock.judge]), so a relay-update can never reach this method, but the check is kept
+     * explicit rather than relied on implicitly.
      */
     suspend fun deliver(context: Context, request: Request, slotSecret: ByteArray): Boolean {
         val app = context.applicationContext
@@ -168,6 +185,9 @@ object UnlockCoordinator {
             match.announcement.authorHex,
             PhoneUnlock.deliveryJson(match.enrolment.id, slotSecret),
         )
+        if (match.context.t == PhoneUnlock.TYPE_LOCKED) {
+            relayGate.trust(match.context.relays.map { it.trimEnd('/') }.filter(::isRelayUrl))
+        }
         sync(app)
         val targets = match.context.relays.map { it.trimEnd('/') }.filter(::isRelayUrl)
             .ifEmpty { match.enrolment.relays }

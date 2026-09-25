@@ -574,10 +574,22 @@ Android apps              Websites
   `UnlockStore.kt` (enrolments and ping records in their own EncryptedSharedPreferences, `commit()`
   writes), `UnlockCoordinator.kt` (process-wide listener owner: current requests as a `StateFlow`,
   sent deliveries, "still locked" detection from a same-boot repeat 25 s after answering; owns the
-  `RelayGate` -- a board's relays are trusted the first time its id is seen this process, a relay
-  a running board later teaches it about goes through `RelayGate.learn`, and `deliver`'s target
-  relays come straight from the lock message/enrolment, never gated, so answering a genuine prompt
-  is never held up by another relay's jitter),
+  `RelayGate` -- a board's relays are trusted the first time its id is seen this process, a relay a
+  running board later teaches it about while passively listening goes through `RelayGate.learn`,
+  and `forget` prunes a forgotten board's relays out of the ready set, unless another remaining
+  board still needs one of them. `deliver` -- an owner-tapped, genuine unlock -- trusts its own lock
+  message's relays outright (`relayGate.trust`) before calling `sync`, rather than routing them
+  through `learn`'s jitter: the owner's tap already exposes the timing, so there is nothing left to
+  protect by delaying, and this is exactly the case the relay-update message exists for (the board
+  restarted locked on a relay it only announced less than a jitter ago; without this, the delivery
+  would go to the board's *old* relays, where it is no longer listening, until the jitter finally
+  elapsed). Guarded on `t == "locked"` even though `judge` already guarantees a relay-update can
+  never produce a `PROMPT`. `sync` itself blocks until `RelayWatch.locks` has tried to connect
+  (`waitForConnection`, ~10 s), so by the time `deliver` reaches `RelayWatch.publish` the newly
+  trusted relay is normally already in its `added` set; `publish`'s fallback to whatever is
+  already connected only matters if that connection attempt itself failed, and is left as-is
+  deliberately -- retrying or waiting longer there has no better chance of reaching an unreachable
+  relay and would only slow down every other delivery too),
   `UnlockNotifications.kt`, `UnlockActivity.kt` (always acts on the board's *current* request, not
   the notification's) and `UnlockEnrolActivity.kt` (enrolment key in memory only; `configChanges`
   so a rotation cannot lose it).

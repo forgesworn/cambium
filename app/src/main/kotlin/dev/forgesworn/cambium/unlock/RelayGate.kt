@@ -49,6 +49,15 @@ class RelayGate(private val jitter: () -> Duration = { RelayJitter.next() }) {
     }
 
     /**
+     * Drops [relays] from the ready set -- a board being forgotten. Cheap best-effort cleanup, not
+     * required for correctness: a relay already scheduled in [learn] (`pending`) is left alone and
+     * simply becomes ready, harmlessly, whenever its jitter elapses.
+     */
+    fun untrust(relays: Collection<String>) {
+        readyRelays -= relays.toSet()
+    }
+
+    /**
      * Schedules each of [relays] not already ready or already scheduled to become ready after a
      * jitter, on [scope], calling [onReady] once each one does. Returns immediately -- the wait
      * happens in the launched coroutines, never on the caller, so this never delays the caller's

@@ -90,4 +90,41 @@ class RelayGateTest {
         gate.learn(this, listOf("wss://a.example", "wss://b.example")) {}
         assertEquals(2, draws)
     }
+
+    /**
+     * The bug UnlockCoordinator.deliver guards against: a board moved to a brand-new relay less
+     * than a jitter ago (a relay-update) and then restarted locked, announcing on that same new
+     * relay. If a genuine lock delivery had to wait out the jitter too, it would go to the board's
+     * stale relay for up to 10 minutes -- exactly the case the relay-update exists to avoid.
+     * `trust()` is how `deliver` escapes the jitter: it must make an already-learn()-scheduled
+     * relay ready at once, with the pending jitter's own callback still safe to fire later.
+     */
+    @Test
+    fun `a lock delivery trusting an already-jittered relay makes it ready immediately`() = runTest {
+        var jitterCalls = 0
+        val gate = RelayGate(jitter = { jitterCalls++; Duration.ofMinutes(9) })
+        var readyCalls = 0
+        // A passive relay-update taught Cambium about this relay a moment ago; still on jitter.
+        gate.learn(this, listOf("wss://new.example")) { readyCalls++ }
+        assertEquals(emptyList(), gate.ready(listOf("wss://new.example")))
+
+        // The board then restarts locked and announces on that same relay; the owner taps unlock.
+        gate.trust(listOf("wss://new.example"))
+        assertEquals(listOf("wss://new.example"), gate.ready(listOf("wss://new.example")), "trust() must not wait for the jitter")
+
+        // The original jitter is still scheduled; letting it elapse must not misbehave (it simply
+        // re-confirms readiness and fires its own onReady once, harmlessly).
+        advanceUntilIdle()
+        assertEquals(1, jitterCalls)
+        assertEquals(1, readyCalls)
+        assertEquals(listOf("wss://new.example"), gate.ready(listOf("wss://new.example")))
+    }
+
+    @Test
+    fun `untrust drops a relay from the ready set`() {
+        val gate = RelayGate(jitter = { Duration.ofMinutes(1) })
+        gate.trust(listOf("wss://a.example", "wss://b.example"))
+        gate.untrust(listOf("wss://a.example"))
+        assertEquals(listOf("wss://b.example"), gate.ready(listOf("wss://a.example", "wss://b.example")))
+    }
 }
