@@ -1,0 +1,5 @@
+Add this phone for unlock by scanning Sapwood's code.
+
+- In Sapwood, choose Add a phone; in Cambium, tap Set up phone unlock, then Scan Sapwood's code. No code to carry to the computer by hand.
+- The phone's reply is encrypted to that one Sapwood page and sent once, with Retry if no relay takes it.
+- Compare the five words as before. Show a code instead keeps the old direction.
