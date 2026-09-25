@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- Adding a phone now scans Sapwood's own invite QR instead of the other way round: "Add a phone"
+  in Sapwood shows a one-off invite, and this phone's "Scan Sapwood's code" reads it, builds its
+  usual enrolment, seals it with NIP-44 to a fresh throwaway key, and publishes the reply once to
+  the invite's relays, with a Retry if no relay accepts it. From there it is exactly as before:
+  waiting for the board's hand-off, then the five request words, then the check code. Scanning a
+  bunker link or another phone's own enrol code here gets a wrong-direction message; "Show a code
+  instead" keeps the original phone-shows-a-QR flow for a Sapwood with no camera-visible screen.
+
 ## 0.6.0 (2026-09-25)
 
 - Enrolling this phone for unlock over the relay. A Heartwood on 0.18.0-beta.19 or later shows a

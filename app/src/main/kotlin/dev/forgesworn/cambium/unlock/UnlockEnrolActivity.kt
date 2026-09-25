@@ -20,6 +20,9 @@ import androidx.core.view.isVisible
 import androidx.lifecycle.lifecycleScope
 import com.google.zxing.BarcodeFormat
 import com.journeyapps.barcodescanner.BarcodeEncoder
+import com.journeyapps.barcodescanner.ScanContract
+import com.journeyapps.barcodescanner.ScanIntentResult
+import com.journeyapps.barcodescanner.ScanOptions
 import dev.forgesworn.cambium.R
 import dev.forgesworn.cambium.databinding.ActivityUnlockEnrolBinding
 import dev.forgesworn.cambium.pairing.Pairing
@@ -33,34 +36,47 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import rust.nostr.sdk.Event
 import java.security.SecureRandom
 import javax.crypto.Cipher
 
 /**
  * Makes this phone an unlock phone for the board behind one paired identity.
  *
- * 1. Shows an [EnrolmentCode]: a one-off enrolment pubkey, a one-off rendezvous tag and the
- *    relays to meet on. Its secret half stays in this activity's memory and nowhere else.
- * 2. Sapwood (or the bench script) enrols the pubkey on the board, which needs a press there,
- *    and publishes the board's sealed answer tagged with the rendezvous tag.
- * 3. Cambium opens it, and the owner's screen lock (PIN or strong biometric) seals the slot secret under a new Keystore key
- *    ([SlotSecretVault]). Only then is the enrolment stored, the listener started, and the
- *    keep-alive switched on, so the phone hears the board after a power cut.
+ * The primary path (enrol-invite spec v1) reverses the optical step: Sapwood shows an invite QR,
+ * this phone scans it.
+ *
+ * 1. "Scan Sapwood's code" scans and strictly parses an [InviteUri]. A bunker link or another
+ *    phone's own enrolment code gets a helpful wrong-direction message ([EnrolInviteScan]).
+ * 2. Cambium then builds its [EnrolmentCode] exactly as before (a one-off enrolment pubkey, a
+ *    one-off rendezvous tag, this phone's relays), seals it to the invite's `inv` key
+ *    ([InviteReplyBuilder]) and publishes the reply once to the invite's relays. Sending/sent/
+ *    failed shows on screen, with a Retry that republishes the exact same signed event.
+ * 3. From there it is exactly the old flow: waits for the board's hand-off (now on its own relays
+ *    plus the invite's relays), shows the five request words, then the check code, then the
+ *    fingerprint that seals the slot secret under a new Keystore key ([SlotSecretVault]). Only
+ *    then is the enrolment stored, the listener started, and the keep-alive switched on, so the
+ *    phone hears the board after a power cut.
+ *
+ * "Show a code instead" keeps the original direction (this phone shows a QR, Sapwood scans it) as
+ * a secondary option, for a Sapwood with no camera-visible screen or an older build.
  *
  * Nothing secret is ever on screen or passes through Sapwood. If the owner leaves before the
  * fingerprint, or waits more than [PENDING_TIMEOUT_MILLIS], the secret is dropped and the screen
  * says which board record to revoke.
  *
- * The hand-off is not signed by anything the phone already trusts, so anyone who saw the code
- * could race in an answer of their own. Two guards: the screen shows the board record number for
- * the owner to compare with what Sapwood (or the bench script) reports, and a second, different
- * answer arriving before the fingerprint blocks the enrolment outright.
+ * The hand-off is not signed by anything the phone already trusts, so anyone who saw the code (or
+ * the invite) could race in an answer of their own. Three guards: the owner compares the five
+ * request words between this phone and Sapwood (or the board's own card) before confirming, the
+ * board shows the same five words before its button press, and a second, different answer arriving
+ * before the fingerprint blocks the enrolment outright.
  * Declared with `configChanges` in the manifest so a rotation does not lose the enrolment key.
  */
 class UnlockEnrolActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityUnlockEnrolBinding
     private lateinit var pairing: Pairing
+    private lateinit var relays: List<String>
     private var enrolSecretHex: String? = null
     private var watch: RelayWatch? = null
     private var pending: HandOff? = null
@@ -71,7 +87,15 @@ class UnlockEnrolActivity : AppCompatActivity() {
     private var conflicted = false
     @Volatile private var destroyed = false
 
+    /** Held for Retry: the exact signed event, and the invite's relays it targets. */
+    private var pendingInviteReply: Event? = null
+    private var pendingInviteRelays: List<String> = emptyList()
+
     private val notificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
+    private val scanLauncher = registerForActivityResult(ScanContract()) { result -> onInviteScanResult(result) }
+    private val cameraPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) launchScanner() else binding.enrolStatus.text = getString(R.string.enrol_camera_denied)
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -80,6 +104,9 @@ class UnlockEnrolActivity : AppCompatActivity() {
         binding.enrolDoneButton.setOnClickListener { finish() }
         binding.enrolConfirmButton.setOnClickListener { promptSeal() }
         binding.enrolBatteryButton.setOnClickListener { requestBatteryExemption() }
+        binding.enrolScanButton.setOnClickListener { onScanClicked() }
+        binding.enrolShowCodeButton.setOnClickListener { onShowCodeClicked() }
+        binding.enrolRetryButton.setOnClickListener { publishInviteReply() }
 
         val signer = intent.getStringExtra(EXTRA_SIGNER_PUBKEY)
         pairing = PairingStore(this).pairings().firstOrNull { it.signerPubkeyHex == signer } ?: return finish()
@@ -89,37 +116,16 @@ class UnlockEnrolActivity : AppCompatActivity() {
             showOnly(getString(R.string.enrol_needs_biometric))
             return
         }
-        val relays = pairing.relays.map { it.trimEnd('/') }.filter(::isRelayUrl).distinct()
+        relays = pairing.relays.map { it.trimEnd('/') }.filter(::isRelayUrl).distinct()
         if (relays.isEmpty()) {
             showOnly(getString(R.string.enrol_no_relays))
             return
         }
 
-        val (secretHex, pubkeyHex) = UnlockNostr.newEnrolmentKey()
-        enrolSecretHex = secretHex
-        val rendezvous = ByteArray(16).also { SecureRandom().nextBytes(it) }.toHex()
-        val code = EnrolmentCode(pubkeyHex, rendezvous, EnrolmentCode.fitLabel(Build.MODEL), relays).encode()
-        binding.enrolCode.text = code
-        binding.enrolWords.text = requestWords(pubkeyHex).orEmpty()
-        binding.enrolQr.setImageBitmap(BarcodeEncoder().encodeBitmap(code, BarcodeFormat.QR_CODE, 720, 720))
-        binding.enrolCopyButton.setOnClickListener {
-            getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText("Heartwood unlock enrolment", code))
-        }
-        binding.enrolStatus.text = getString(R.string.enrol_waiting)
-
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
         ) {
             notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
-        }
-
-        // Not lifecycleScope: a start cancelled half way would leave a relay client nobody can
-        // stop. The watch is recorded, or stopped at once if the screen closed meanwhile.
-        CoroutineScope(Dispatchers.IO).launch {
-            val started = RelayWatch.handOff(relays, rendezvous) { raw -> runOnUiThread { onHandOff(raw) } }
-            runOnUiThread {
-                if (destroyed) CoroutineScope(Dispatchers.IO).launch { started.stop() } else watch = started
-            }
         }
     }
 
@@ -135,6 +141,135 @@ class UnlockEnrolActivity : AppCompatActivity() {
         }
         enrolSecretHex = null
         super.onDestroy()
+    }
+
+    // -- Secondary path: this phone shows a QR, Sapwood scans it (unchanged from before this spec). --
+
+    private fun onShowCodeClicked() {
+        binding.enrolScanButton.isVisible = false
+        binding.enrolShowCodeButton.isVisible = false
+        binding.enrolBody.isVisible = false
+        binding.enrolShowCodeBody.isVisible = true
+
+        val code = buildOwnEnrolment()
+        val text = code.encode()
+        binding.enrolCode.text = text
+        binding.enrolCode.isVisible = true
+        binding.enrolWords.text = requestWords(code.enrolPubkeyHex).orEmpty()
+        binding.enrolWords.isVisible = true
+        binding.enrolWordsHint.isVisible = true
+        binding.enrolQr.setImageBitmap(BarcodeEncoder().encodeBitmap(text, BarcodeFormat.QR_CODE, 720, 720))
+        binding.enrolQr.isVisible = true
+        binding.enrolCopyButton.setOnClickListener {
+            getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText("Heartwood unlock enrolment", text))
+        }
+        binding.enrolCopyButton.isVisible = true
+        binding.enrolStatus.text = getString(R.string.enrol_waiting)
+
+        startHandOffWatch(relays, code.rendezvous)
+    }
+
+    // -- Primary path: Sapwood shows an invite, this phone scans it (enrol-invite spec v1). --
+
+    private fun onScanClicked() {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+            launchScanner()
+        } else {
+            cameraPermission.launch(Manifest.permission.CAMERA)
+        }
+    }
+
+    private fun launchScanner() {
+        val options = ScanOptions().apply {
+            setDesiredBarcodeFormats(ScanOptions.QR_CODE)
+            setPrompt(getString(R.string.qr_scan_prompt))
+            setBeepEnabled(false)
+            setOrientationLocked(true)
+        }
+        scanLauncher.launch(options)
+    }
+
+    private fun onInviteScanResult(result: ScanIntentResult) {
+        when (val evaluated = EnrolInviteScan.evaluate(result.contents)) {
+            is EnrolInviteScanResult.Accepted -> onInviteAccepted(evaluated.invite)
+            is EnrolInviteScanResult.Rejected -> binding.enrolStatus.text = evaluated.message
+            EnrolInviteScanResult.Cancelled -> Unit
+        }
+    }
+
+    private fun onInviteAccepted(invite: InviteUri) {
+        binding.enrolScanButton.isVisible = false
+        binding.enrolShowCodeButton.isVisible = false
+        binding.enrolBody.isVisible = false
+
+        val code = buildOwnEnrolment()
+        binding.enrolWords.text = requestWords(code.enrolPubkeyHex).orEmpty()
+        binding.enrolWords.isVisible = true
+        binding.enrolWordsHint.isVisible = true
+
+        val event = runCatching { UnlockNostr.inviteReplyEvent(invite, code.encode()) }.getOrElse {
+            binding.enrolStatus.text = getString(R.string.enrol_send_failed)
+            return
+        }
+        pendingInviteReply = event
+        pendingInviteRelays = invite.relays
+        binding.enrolStatus.text = getString(R.string.enrol_sending)
+
+        val combined = (relays + invite.relays).distinct()
+        // Not lifecycleScope: a start cancelled half way would leave a relay client nobody can
+        // stop. The watch is recorded, or stopped at once if the screen closed meanwhile. The
+        // publish itself waits for this same connect, so the reply is never lost to the race
+        // between "connected" and "about to publish".
+        CoroutineScope(Dispatchers.IO).launch {
+            val started = RelayWatch.handOff(combined, code.rendezvous) { raw -> runOnUiThread { onHandOff(raw) } }
+            // Views and `watch` belong to the UI thread, as in startHandOffWatch.
+            runOnUiThread {
+                if (destroyed) {
+                    CoroutineScope(Dispatchers.IO).launch { started.stop() }
+                } else {
+                    watch = started
+                    publishInviteReply()
+                }
+            }
+        }
+    }
+
+    /** Publishes [pendingInviteReply] to [pendingInviteRelays]. Retry calls this again, unchanged. */
+    private fun publishInviteReply() {
+        val event = pendingInviteReply ?: return
+        val current = watch ?: return
+        binding.enrolRetryButton.isVisible = false
+        binding.enrolStatus.text = getString(R.string.enrol_sending)
+        CoroutineScope(Dispatchers.IO).launch {
+            val ok = current.publish(event, pendingInviteRelays)
+            runOnUiThread {
+                if (destroyed) return@runOnUiThread
+                if (ok) {
+                    binding.enrolStatus.text = getString(R.string.enrol_sent)
+                } else {
+                    binding.enrolStatus.text = getString(R.string.enrol_send_failed)
+                    binding.enrolRetryButton.isVisible = true
+                }
+            }
+        }
+    }
+
+    // -- Shared by both paths. --
+
+    private fun buildOwnEnrolment(): EnrolmentCode {
+        val (secretHex, pubkeyHex) = UnlockNostr.newEnrolmentKey()
+        enrolSecretHex = secretHex
+        val rendezvous = ByteArray(16).also { SecureRandom().nextBytes(it) }.toHex()
+        return EnrolmentCode(pubkeyHex, rendezvous, EnrolmentCode.fitLabel(Build.MODEL), relays)
+    }
+
+    private fun startHandOffWatch(onRelays: List<String>, rendezvous: String) {
+        CoroutineScope(Dispatchers.IO).launch {
+            val started = RelayWatch.handOff(onRelays, rendezvous) { raw -> runOnUiThread { onHandOff(raw) } }
+            runOnUiThread {
+                if (destroyed) CoroutineScope(Dispatchers.IO).launch { started.stop() } else watch = started
+            }
+        }
     }
 
     private fun onHandOff(raw: RawAnnouncement) {
@@ -181,6 +316,7 @@ class UnlockEnrolActivity : AppCompatActivity() {
         binding.enrolWords.isVisible = false
         binding.enrolWordsHint.isVisible = false
         binding.enrolCopyButton.isVisible = false
+        binding.enrolRetryButton.isVisible = false
         binding.enrolStatus.text = getString(R.string.enrol_received)
         binding.enrolCheckCode.text = checkCode(envelope.ephemeralPubkeyHex).orEmpty()
         binding.enrolCheckCode.isVisible = true
@@ -278,6 +414,9 @@ class UnlockEnrolActivity : AppCompatActivity() {
 
     private fun showOnly(message: String) {
         binding.enrolBody.isVisible = false
+        binding.enrolScanButton.isVisible = false
+        binding.enrolShowCodeButton.isVisible = false
+        binding.enrolShowCodeBody.isVisible = false
         binding.enrolQr.isVisible = false
         binding.enrolCode.isVisible = false
         binding.enrolWords.isVisible = false

@@ -592,7 +592,7 @@ Android apps              Websites
   relay and would only slow down every other delivery too),
   `UnlockNotifications.kt`, `UnlockActivity.kt` (always acts on the board's *current* request, not
   the notification's) and `UnlockEnrolActivity.kt` (enrolment key in memory only; `configChanges`
-  so a rotation cannot lose it).
+  so a rotation cannot lose it; see the enrol-invite paragraph below for its primary scan flow).
 
   Metadata rules the code must keep (design section 6): the lock subscription has no filter but
   the kind; the relay client has no signer (no NIP-42 answer with a stable key); every delivery is
@@ -600,11 +600,42 @@ Android apps              Websites
   only the keep-alive's scheduled pings); a relay Cambium has never spoken to before does not see
   its first connection from this phone land at the same moment the board's broadcast changed
   (`RelayGate`'s jitter).
+
+  Enrol-invite (spec v1): Sapwood shows an invite QR, this phone scans it, reversing the earlier
+  phone-shows-a-QR direction (kept as `UnlockEnrolActivity`'s secondary "Show a code instead").
+  `InviteUri.kt` parses `heartwood-unlock:invite?v=1&k=...&r=...&x=...&relay=...` as strictly as
+  `EnrolmentCode.parse` (single-valued fields refuse a repeat, `x` must be in the future and no
+  more than an hour ahead, every relay is `wss://` or `ws://localhost` for a test bench,
+  deduplicated). `EnrolInviteScan.kt` is `pairing/QrPairingScan.kt`'s reverse-direction sibling: a
+  `bunker://`/`nostrconnect://` link or another phone's own `heartwood-unlock:enrol?...` code both
+  get a distinct wrong-direction message, since both are the opposite direction from an invite.
+  `InviteReply.kt` is deliberately thin: `InviteReplyBuilder.tags(invite)` is the reply event's
+  exactly-two tags (`h`/`expiration`), pure Kotlin, nothing cryptographic -- production
+  (`signer/UnlockRelay.kt`'s `inviteReplyEvent`, below) and `EnrolInviteVectorTest` both call this
+  one function rather than keeping two copies of the shape that could drift apart. All the actual
+  cryptography for the reply -- the fresh throwaway key, NIP-44 v2 encrypting
+  `EnrolmentCode.encode()` to the invite's `inv` key, signing -- runs entirely through rust-nostr in
+  production, the same as `deliveryEvent` below; nothing hand-rolled reaches `app/src/main`.
+
+  The shared Sapwood/Cambium test vector (`test/fixtures/enrol-invite-v1.json` in Sapwood, copied
+  byte-for-byte into `src/test/resources/enrol-invite-v1.json` here) still has to be checked byte
+  for byte on the host JVM, where rust-nostr's native code cannot load at all (see
+  `pairing/BunkerUri.kt`'s class doc) and its Kotlin bindings expose no way to pin the NIP-44 nonce
+  regardless. `EnrolInviteVectorTest` holds it to `InviteReplyBuilder.tags` for the tag values, and
+  to a **test-only** reference NIP-44 v2 (`src/test/kotlin/.../Nip44.kt`) and just enough secp256k1
+  (`Secp256k1.kt`, naive affine double-and-add, no attempt at constant time or speed) for the
+  content: decrypting the vector's content to its plaintext, and, given its fixed throwaway secret
+  and nonce, reproducing its exact ciphertext. Both files live under `app/src/test`, are never
+  reachable from `app/src/main`, and exist purely to check the wire format independently of
+  rust-nostr -- production never uses them.
 - `signer/UnlockRelay.kt` -- the rust-nostr half of phone unlock: throwaway-key delivery events,
-  opening the enrolment hand-off (NIP-44), and `RelayWatch`, one signer-less `Client` per purpose
-  (the unfiltered 24135 listener; the enrolment screen's rendezvous subscription). Native calls
-  follow `RustNostrHeartwoodClient`'s rule: `NonCancellable` on IO, and the notification loop is
-  ended by `shutdown()`, never by cancelling the coroutine inside it.
+  opening the enrolment hand-off (NIP-44), building and signing an enrol-invite reply
+  (`inviteReplyEvent`: `Keys.generate()`, `nip44Encrypt` with a random nonce, `InviteReplyBuilder.
+  tags` turned into real `Tag`s, `signWithKeys` -- see above), and `RelayWatch`, one signer-less
+  `Client` per purpose (the unfiltered 24135 listener; the enrolment screen's rendezvous
+  subscription, now also used to publish the invite reply). Native calls follow
+  `RustNostrHeartwoodClient`'s rule: `NonCancellable` on IO, and the notification loop is ended by
+  `shutdown()`, never by cancelling the coroutine inside it.
 
 ## Conventions
 

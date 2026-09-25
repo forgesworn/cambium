@@ -143,10 +143,18 @@
     <string name="battery_button">Allow Cambium to run in the background</string>
 
     <string name="enrol_title">Unlock %1$s from this phone</string>
-    <string name="enrol_body">In Sapwood, add this phone under \"Phones that can unlock\" by scanning the code, then press the button on the board. Nothing secret is in the code, and nothing secret passes through Sapwood.</string>
+    <string name="enrol_body">On Sapwood, click \"Add a phone\", then scan its code with this phone. Nothing secret is in the code, and nothing secret passes through Sapwood.</string>
+    <string name="enrol_scan_button">Scan Sapwood\'s code</string>
+    <string name="enrol_camera_denied">Camera permission is needed to scan. Use \"Show a code instead\" below.</string>
+    <string name="enrol_show_code_button">Show a code instead</string>
+    <string name="enrol_show_code_body">If Sapwood cannot scan or does not offer this, show this phone\'s own code instead: add it in Sapwood under \"Phones that can unlock\", then press the button on the board.</string>
     <string name="enrol_qr_description">Phone unlock enrolment code</string>
     <string name="enrol_words_hint">Your signer will show these five words. Hold its button only if they match; it shows the check code after you hold it.</string>
     <string name="enrol_copy">Copy code</string>
+    <string name="enrol_sending">Sending this phone\'s answer to Sapwood…</string>
+    <string name="enrol_sent">Sent. Waiting for the board…</string>
+    <string name="enrol_send_failed">No relay accepted the answer. Check this phone\'s connection and retry.</string>
+    <string name="enrol_retry">Retry</string>
     <string name="enrol_waiting">Waiting for the board… If it says it added this phone but nothing arrives here, revoke the id it shows in Sapwood.</string>
     <string name="enrol_received">The board added this phone. Check that the board shows the same six characters, then confirm with your phone\'s screen lock to keep the unlock key on this phone.</string>
     <string name="enrol_confirm">Confirm</string>

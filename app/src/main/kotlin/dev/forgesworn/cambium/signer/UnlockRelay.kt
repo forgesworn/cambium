@@ -1,6 +1,9 @@
 package dev.forgesworn.cambium.signer
 
 import android.util.Log
+import dev.forgesworn.cambium.toHex
+import dev.forgesworn.cambium.unlock.InviteReplyBuilder
+import dev.forgesworn.cambium.unlock.InviteUri
 import dev.forgesworn.cambium.unlock.PhoneUnlock
 import dev.forgesworn.cambium.unlock.RawAnnouncement
 import kotlinx.coroutines.CoroutineScope
@@ -63,6 +66,22 @@ object UnlockNostr {
         return EventBuilder(Kind(PhoneUnlock.DELIVERY_KIND.toUShort()), content)
             .tags(listOf(Tag.publicKey(board)))
             .signWithKeys(throwaway)
+    }
+
+    /**
+     * Builds and signs the enrol-invite reply to [invite] (spec v1): a fresh throwaway key,
+     * NIP-44 v2 content (a random nonce, entirely rust-nostr's own) sealing [enrolmentCode] to
+     * the invite's `inv` key, and exactly the two tags [InviteReplyBuilder.tags] says
+     * (`h`/`expiration`) -- the same pure shape `EnrolInviteVectorTest` checks against the shared
+     * Sapwood/Cambium vector. Everything cryptographic here is rust-nostr, never the hand-rolled,
+     * test-only NIP-44/secp256k1 that vector test uses to check the wire format independently.
+     */
+    fun inviteReplyEvent(invite: InviteUri, enrolmentCode: String): Event {
+        val throwaway = Keys.generate()
+        val inviter = PublicKey.parse(invite.inviterPubkeyHex)
+        val content = nip44Encrypt(throwaway.secretKey(), inviter, enrolmentCode, Nip44Version.V2)
+        val tags = InviteReplyBuilder.tags(invite).map { (name, value) -> Tag.parse(listOf(name, value)) }
+        return EventBuilder(Kind(PhoneUnlock.HANDOFF_KIND.toUShort()), content).tags(tags).signWithKeys(throwaway)
     }
 }
 
