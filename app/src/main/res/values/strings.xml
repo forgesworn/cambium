@@ -157,6 +157,8 @@
     <string name="enrol_retry">Retry</string>
     <string name="enrol_waiting">Waiting for the board… If it says it added this phone but nothing arrives here, revoke the id it shows in Sapwood.</string>
     <string name="enrol_received">The board added this phone. Check that the board shows the same six characters, then confirm with your phone\'s screen lock to keep the unlock key on this phone.</string>
+    <string name="enrol_check_code_label">Check code</string>
+    <string name="enrol_check_code_hint">This should match what Sapwood shows for this phone.</string>
     <string name="enrol_confirm">Confirm</string>
     <string name="enrol_prompt_title">Keep the unlock key on this phone</string>
     <string name="enrol_not_confirmed">Not confirmed yet. Confirm to finish; if you leave now, revoke record %1$d on the board in Sapwood.</string>

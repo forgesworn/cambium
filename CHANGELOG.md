@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- The check code stays on screen once enrolment finishes, labelled and with a reminder that it
+  should match what Sapwood shows, instead of disappearing as soon as the board's answer is
+  confirmed. It clears when the owner leaves the screen.
+
 ## 0.7.0 (2026-09-26)
 
 - Adding a phone now scans Sapwood's own invite QR instead of the other way round: "Add a phone"
