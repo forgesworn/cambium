@@ -1,0 +1,4 @@
+The check code stays on screen after adding a phone.
+
+- Once the phone is added, the check code stays on the Done screen, labelled, so you can finish comparing it with the board and Sapwood.
+- Release builds no longer carry git metadata, so F-Droid can reproduce this APK and publish updates again.
