@@ -12,20 +12,20 @@ what store metadata points at (F-Droid's `Donate:` field takes one URL).
 
 | Channel | Status | Signature users get |
 |---|---|---|
-| GitHub Releases | **Live** (0.7.0 current; v0.2.0 onward) | Ours (the 0.2.0 trust root) |
-| Obtainium | **Live** via the 0.7.0 GitHub release | Ours |
-| Zapstore | **Live** (0.5.0 current, 0.6.0 and 0.7.0 not yet published; v0.3.2 onward) | Ours |
-| F-Droid | **Live** ([fdroiddata!42875](https://gitlab.com/fdroid/fdroiddata/-/merge_requests/42875) merged 2026-09-13; still lists only 0.4.3 on 2026-09-25, so 0.5.0 has not come through); new tags are picked up automatically | Ours, when the reproducibility check passes |
+| GitHub Releases | **Live** (0.7.1 current; v0.2.0 onward) | Ours (the 0.2.0 trust root) |
+| Obtainium | **Live** via the 0.7.1 GitHub release | Ours |
+| Zapstore | **Live** (0.5.0 current, 0.6.0 to 0.7.1 not yet published; v0.3.2 onward) | Ours |
+| F-Droid | **Live** ([fdroiddata!42875](https://gitlab.com/fdroid/fdroiddata/-/merge_requests/42875) merged 2026-09-13; still lists only 0.4.3: 0.5.0 to 0.7.0 failed the reproducibility check, fixed from 0.7.1); new tags are picked up automatically | Ours, when the reproducibility check passes |
 | IzzyOnDroid (optional extra) | Eligible; their tracker moved to Codeberg (account needed) | Ours |
 | Accrescent | **Blocked externally** — registration is allowlist-only | Ours |
 
 ## GitHub Releases (live)
 
-0.7.0 was published and read back on 2026-09-26, built from the tagged commit (`6559364`) in a
-clean tree for F-Droid's reproducibility check. Its APK SHA-256 is
-`341b1f77ccd288a19606b7a4a8207c83120b8842dc5fda4cf33a325efe46ca7a`, and its signing certificate
-matches the 0.2.0 trust root below. The previous release, 0.6.0 (2026-09-25, `35d8de4`), has SHA-256
-`d83a5882f05fb5340b57f62a0947f689efc0f4f8c97563bcfa7b208e0b16a960`.
+0.7.1 was published and read back on 2026-09-26, built from the tagged commit (`d2fc9c3`) in a
+clean tree. Its APK SHA-256 is
+`f95512296a1b6421dbcce9fa7346cd82fc9c177132f0ea5a70eea9d035231f1d`, and its signing certificate
+matches the 0.2.0 trust root below. The previous release, 0.7.0 (2026-09-26, `6559364`), has SHA-256
+`341b1f77ccd288a19606b7a4a8207c83120b8842dc5fda4cf33a325efe46ca7a`.
 
 The existing flow: bump `versionCode`/`versionName`, tag `vX.Y.Z`, build with the release
 keystore (`~/keystores/cambium-release.credentials`), upload the APK plus `SHA256SUMS`, and
@@ -96,6 +96,13 @@ The inclusion merge request was merged on 2026-09-13 and 0.4.3 is listed. From h
 from `Binaries:` (`releases/download/v%v/cambium-%v.apk`) only if the rebuild matches it: build
 the release APK from the exact tagged commit with a clean tree, and name the asset exactly so.
 The history below is kept for reference.
+
+0.5.0 to 0.7.0 were never listed. F-Droid's checkupdates bot opened fdroiddata!50093 for 0.5.0,
+and its rebuild matched our APK except for `META-INF/version-control-info.textproto`: ours said
+`NO_VALID_GIT_FOUND` (built from a git worktree, where the Android Gradle plugin finds no
+repository), F-Droid's recorded the commit. From 0.7.1 the release build type sets
+`vcsInfo.include = false`, so that file is not written at all and the checkout no longer matters.
+0.6.0 and 0.7.0 have the same difference and cannot be fixed after the fact.
 
 ### Submission history
 
