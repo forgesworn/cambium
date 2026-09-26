@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.7.1 (2026-09-26)
 
 - The check code stays on screen once enrolment finishes, labelled and with a reminder that it
   should match the board and Sapwood, instead of disappearing as soon as the board's answer is
