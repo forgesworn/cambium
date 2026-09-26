@@ -14,7 +14,7 @@ what store metadata points at (F-Droid's `Donate:` field takes one URL).
 |---|---|---|
 | GitHub Releases | **Live** (0.7.1 current; v0.2.0 onward) | Ours (the 0.2.0 trust root) |
 | Obtainium | **Live** via the 0.7.1 GitHub release | Ours |
-| Zapstore | **Live** (0.5.0 current, 0.6.0 to 0.7.1 not yet published; v0.3.2 onward) | Ours |
+| Zapstore | **Live** (0.7.1 current; 0.6.0 and 0.7.0 were skipped; v0.3.2 onward) | Ours |
 | F-Droid | **Live** ([fdroiddata!42875](https://gitlab.com/fdroid/fdroiddata/-/merge_requests/42875) merged 2026-09-13; still lists only 0.4.3: 0.5.0 to 0.7.0 failed the reproducibility check, fixed from 0.7.1); new tags are picked up automatically | Ours, when the reproducibility check passes |
 | IzzyOnDroid (optional extra) | Eligible; their tracker moved to Codeberg (account needed) | Ours |
 | Accrescent | **Blocked externally** — registration is allowlist-only | Ours |
@@ -45,6 +45,12 @@ obtainium://add/https://github.com/forgesworn/cambium
 ```
 
 ## Zapstore (live)
+
+Version 0.7.1 was published on 2026-09-26 through the publisher Heartwood bunker connection, with
+the owner approving on the board. Its kind 3063 event carries SHA-256
+`f95512296a1b6421dbcce9fa7346cd82fc9c177132f0ea5a70eea9d035231f1d`, version code 17 and the
+trust-root certificate, and the CDN copy read back byte-identical. 0.6.0 and 0.7.0 were never
+published there.
 
 Version 0.5.0 was published on 2026-09-24 through the publisher Heartwood bunker connection (the
 first attempt timed out on the Blossom upload-auth signature while no one was at the board; a
