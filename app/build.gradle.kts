@@ -49,6 +49,10 @@ android {
     buildTypes {
         release {
             isMinifyEnabled = false
+            // Keep git metadata out of the APK: a build from a worktree or a tarball records
+            // NO_VALID_GIT_FOUND where F-Droid's clone records the commit, and that one file was
+            // enough to fail F-Droid's reproducible-build check for 0.5.0.
+            vcsInfo.include = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             if (releaseSigning.getProperty("storeFile") != null) {
                 signingConfig = signingConfigs.getByName("release")

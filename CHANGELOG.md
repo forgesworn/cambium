@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- The check code stays on screen once enrolment finishes, labelled and with a reminder that it
+  should match the board and Sapwood, instead of disappearing as soon as the board's answer is
+  confirmed. It clears when the owner leaves the screen.
+- Release builds no longer embed git metadata, so the APK built by F-Droid matches the one
+  published here whatever checkout it was built from.
+
 ## 0.7.0 (2026-09-26)
 
 - Adding a phone now scans Sapwood's own invite QR instead of the other way round: "Add a phone"

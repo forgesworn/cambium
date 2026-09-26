@@ -285,7 +285,7 @@ class UnlockEnrolActivity : AppCompatActivity() {
                 conflicted = true
                 binding.enrolBatteryButton.isVisible = false
                 binding.enrolStatus.text = getString(R.string.enrol_conflict_after, storedId, handOff.id)
-                binding.enrolCheckCode.isVisible = false
+                showCheckCode(false)
             }
             handOff.wipe()
             return
@@ -300,7 +300,7 @@ class UnlockEnrolActivity : AppCompatActivity() {
                 enrolSecretHex = null
                 binding.enrolConfirmButton.isVisible = false
                 binding.enrolStatus.text = getString(R.string.enrol_conflict, first.id, handOff.id)
-                binding.enrolCheckCode.isVisible = false
+                showCheckCode(false)
             }
             handOff.wipe()
             return
@@ -319,7 +319,7 @@ class UnlockEnrolActivity : AppCompatActivity() {
         binding.enrolRetryButton.isVisible = false
         binding.enrolStatus.text = getString(R.string.enrol_received)
         binding.enrolCheckCode.text = checkCode(envelope.ephemeralPubkeyHex).orEmpty()
-        binding.enrolCheckCode.isVisible = true
+        showCheckCode(true)
         binding.enrolConfirmButton.isVisible = true
         lifecycleScope.launch {
             delay(PENDING_TIMEOUT_MILLIS)
@@ -330,7 +330,7 @@ class UnlockEnrolActivity : AppCompatActivity() {
                 enrolSecretHex = null
                 binding.enrolConfirmButton.isVisible = false
                 binding.enrolStatus.text = getString(R.string.enrol_timed_out, handOff.id)
-                binding.enrolCheckCode.isVisible = false
+                showCheckCode(false)
             }
         }
         promptSeal()
@@ -393,8 +393,9 @@ class UnlockEnrolActivity : AppCompatActivity() {
         PairingStore(this).setKeepAliveEnabled(true)
         HeartwoodKeepAliveService.start(this)
 
+        // Left showing on Done: the owner may still be comparing it with Sapwood or the board's
+        // own card at this point, and it stays harmless to see once the slot secret is sealed.
         binding.enrolConfirmButton.isVisible = false
-        binding.enrolCheckCode.isVisible = false
         binding.enrolStatus.text = getString(R.string.enrol_done, handOff.id)
         binding.enrolBatteryButton.isVisible = !isIgnoringBatteryOptimisations(this)
         binding.enrolDoneButton.setText(R.string.enrol_finished)
@@ -411,6 +412,13 @@ class UnlockEnrolActivity : AppCompatActivity() {
     /** A pairing without a label would put a whole npub in the title; a short form reads better. */
     private fun shortLabel(pairing: Pairing): String =
         pairing.label?.takeIf { it.isNotBlank() } ?: pairing.displayLabel().let { if (it.length > 20) it.take(12) + "…" else it }
+
+    /** The check code and its label/hint always show or hide together. */
+    private fun showCheckCode(visible: Boolean) {
+        binding.enrolCheckCodeLabel.isVisible = visible
+        binding.enrolCheckCode.isVisible = visible
+        binding.enrolCheckCodeHint.isVisible = visible
+    }
 
     private fun showOnly(message: String) {
         binding.enrolBody.isVisible = false
