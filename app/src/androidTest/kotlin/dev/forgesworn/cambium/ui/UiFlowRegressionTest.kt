@@ -5,6 +5,7 @@ import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.net.Uri
+import android.os.SystemClock
 import android.view.View
 import android.widget.ImageView
 import android.widget.TextView
@@ -193,7 +194,7 @@ class UiFlowRegressionTest {
             launchNativeRequest(scenario)
             onView(withId(R.id.denyAlwaysLink)).perform(scrollTo(), click())
             assertEquals(AppPermissionState.DENIED, pairings.permission(context.packageName)?.state)
-            launchNativeRequest(scenario)
+            launchNativeRequest(scenario, expectApproval = false)
             onView(withId(R.id.approveButton)).check(doesNotExist())
         }
     }
@@ -315,13 +316,37 @@ class UiFlowRegressionTest {
     }
 
     @Suppress("DEPRECATION")
-    private fun launchNativeRequest(scenario: ActivityScenario<MainActivity>) {
+    private fun launchNativeRequest(scenario: ActivityScenario<MainActivity>, expectApproval: Boolean = true) {
         // Wait for the caller's window before launching a second activity from it.
         onView(withId(R.id.statusValue)).check(matches(isDisplayed()))
-        scenario.onActivity { activity ->
-            activity.startActivityForResult(Intent(activity, SignerActivity::class.java)
-                .setData(Uri.parse("nostrsigner:"))
-                .putExtra("type", "get_public_key"), 55)
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val monitor = instrumentation.addMonitor(SignerActivity::class.java.name, null, false)
+        try {
+            scenario.onActivity { activity ->
+                activity.startActivityForResult(Intent(activity, SignerActivity::class.java)
+                    .setData(Uri.parse("nostrsigner:"))
+                    .putExtra("type", "get_public_key"), 55)
+            }
+            val signer = monitor.waitForActivityWithTimeout(10_000)
+                ?: throw AssertionError("SignerActivity did not start")
+            // startActivityForResult queues the hand-off. Espresso can otherwise select the
+            // still-focused caller's root before the approval window is ready on a slow emulator.
+            val deadline = SystemClock.uptimeMillis() + 10_000
+            var ready = false
+            while (!ready && SystemClock.uptimeMillis() < deadline) {
+                instrumentation.waitForIdleSync()
+                instrumentation.runOnMainSync {
+                    ready = if (expectApproval) {
+                        signer.hasWindowFocus() && signer.findViewById<View>(R.id.approveButton)?.isShown == true
+                    } else {
+                        signer.isDestroyed
+                    }
+                }
+                if (!ready) SystemClock.sleep(25)
+            }
+            assertTrue("Signer request did not reach its expected window state", ready)
+        } finally {
+            instrumentation.removeMonitor(monitor)
         }
     }
 
