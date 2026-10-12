@@ -1,212 +1,200 @@
 <?xml version="1.0" encoding="utf-8"?>
-<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+<ScrollView
+    xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@color/background">
-
+    android:background="@color/background"
+    android:fillViewport="true">
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        android:padding="24dp">
-
-        <TextView
-            android:id="@+id/enrolTitle"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginBottom="8dp"
-            android:fontFamily="monospace"
-            android:textColor="@color/on_background"
-            android:textSize="22sp"
-            android:textStyle="bold"
-            tools:text="Unlock desk from this phone" />
-
-        <TextView
-            android:id="@+id/enrolBody"
+        android:padding="@dimen/screen_padding">
+        <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:fontFamily="monospace"
-            android:text="@string/enrol_body"
-            android:textColor="@color/on_background_muted" />
-
-        <Button
-            android:id="@+id/enrolScanButton"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="16dp"
-            android:fontFamily="monospace"
-            android:text="@string/enrol_scan_button" />
-
-        <Button
-            android:id="@+id/enrolShowCodeButton"
-            style="@style/Widget.Material3.Button.TextButton"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:fontFamily="monospace"
-            android:text="@string/enrol_show_code_button" />
-
-        <TextView
-            android:id="@+id/enrolShowCodeBody"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:fontFamily="monospace"
-            android:text="@string/enrol_show_code_body"
-            android:textColor="@color/on_background_muted"
-            android:visibility="gone"
-            tools:visibility="visible" />
-
-        <ImageView
-            android:id="@+id/enrolQr"
-            android:layout_width="280dp"
-            android:layout_height="280dp"
-            android:layout_gravity="center_horizontal"
-            android:layout_marginVertical="16dp"
-            android:background="@android:color/white"
-            android:contentDescription="@string/enrol_qr_description"
-            android:padding="8dp"
-            android:visibility="gone"
-            tools:visibility="visible" />
-
-        <TextView
-            android:id="@+id/enrolCode"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:fontFamily="monospace"
-            android:textColor="@color/on_background_muted"
-            android:textIsSelectable="true"
-            android:textSize="10sp"
-            android:visibility="gone"
-            tools:text="heartwood-unlock:enrol?v=1&amp;p=…"
-            tools:visibility="visible" />
-
-        <TextView
-            android:id="@+id/enrolWords"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_gravity="center_horizontal"
-            android:layout_marginTop="12dp"
-            android:fontFamily="monospace"
-            android:gravity="center"
-            android:letterSpacing="0.05"
-            android:textColor="@color/accent"
-            android:textSize="22sp"
-            android:textStyle="bold"
-            android:visibility="gone"
-            tools:text="swim behind stand bugle"
-            tools:visibility="visible" />
-
-        <TextView
-            android:id="@+id/enrolWordsHint"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:fontFamily="monospace"
-            android:text="@string/enrol_words_hint"
-            android:textColor="@color/on_background_muted"
-            android:visibility="gone"
-            tools:visibility="visible" />
-
-        <Button
-            android:id="@+id/enrolCopyButton"
-            style="@style/Widget.Material3.Button.OutlinedButton"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:fontFamily="monospace"
-            android:text="@string/enrol_copy"
-            android:visibility="gone"
-            tools:visibility="visible" />
-
-        <Button
-            android:id="@+id/enrolRetryButton"
-            style="@style/Widget.Material3.Button.OutlinedButton"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:fontFamily="monospace"
-            android:text="@string/enrol_retry"
-            android:visibility="gone"
-            tools:visibility="visible" />
-
-        <TextView
-            android:id="@+id/enrolStatus"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="16dp"
-            android:fontFamily="monospace"
-            android:textColor="@color/on_background"
-            tools:text="Waiting for the board…" />
-
-        <TextView
-            android:id="@+id/enrolCheckCodeLabel"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_gravity="center_horizontal"
-            android:layout_marginTop="16dp"
-            android:fontFamily="monospace"
-            android:gravity="center"
-            android:text="@string/enrol_check_code_label"
-            android:textColor="@color/on_background_muted"
-            android:visibility="gone"
-            tools:visibility="visible" />
-
-        <TextView
-            android:id="@+id/enrolCheckCode"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_gravity="center_horizontal"
-            android:fontFamily="monospace"
-            android:letterSpacing="0.2"
-            android:textColor="@color/accent"
-            android:textSize="48sp"
-            android:textStyle="bold"
-            android:visibility="gone"
-            tools:text="8131"
-            tools:visibility="visible" />
-
-        <TextView
-            android:id="@+id/enrolCheckCodeHint"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_gravity="center_horizontal"
-            android:fontFamily="monospace"
-            android:gravity="center"
-            android:text="@string/enrol_check_code_hint"
-            android:textColor="@color/on_background_muted"
-            android:visibility="gone"
-            tools:visibility="visible" />
-
-        <Button
-            android:id="@+id/enrolConfirmButton"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
-            android:fontFamily="monospace"
-            android:text="@string/enrol_confirm"
-            android:visibility="gone"
-            tools:visibility="visible" />
-
-        <Button
-            android:id="@+id/enrolBatteryButton"
-            style="@style/Widget.Material3.Button.OutlinedButton"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
-            android:fontFamily="monospace"
-            android:text="@string/battery_button"
-            android:visibility="gone"
-            tools:visibility="visible" />
-
-        <Button
-            android:id="@+id/enrolDoneButton"
-            style="@style/Widget.Material3.Button.TextButton"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
-            android:fontFamily="monospace"
-            android:text="@string/enrol_close" />
+            android:orientation="vertical"
+            style="@style/Widget.Cambium.Card">
+            <TextView
+                android:id="@+id/enrolTitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="8dp"
+                android:textColor="@color/on_background"
+                tools:text="Unlock desk from this phone"
+                android:textAppearance="@style/TextAppearance.Cambium.Title"
+                android:accessibilityHeading="true" />
+            <TextView
+                android:id="@+id/enrolBody"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/enrol_body"
+                android:textColor="@color/on_background_muted"
+                android:textAppearance="@style/TextAppearance.Cambium.Body" />
+            <Button
+                android:id="@+id/enrolScanButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:text="@string/enrol_scan_button" />
+            <Button
+                android:id="@+id/enrolShowCodeButton"
+                style="@style/Widget.Cambium.Button.Text"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="@string/enrol_show_code_button" />
+            <TextView
+                android:id="@+id/enrolShowCodeBody"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="@string/enrol_show_code_body"
+                android:textColor="@color/on_background_muted"
+                android:visibility="gone"
+                tools:visibility="visible"
+                android:textAppearance="@style/TextAppearance.Cambium.Body" />
+            <ImageView
+                android:id="@+id/enrolQr"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center_horizontal"
+                android:layout_marginVertical="16dp"
+                android:background="@android:color/white"
+                android:contentDescription="@string/enrol_qr_description"
+                android:padding="8dp"
+                android:visibility="gone"
+                tools:visibility="visible"
+                android:adjustViewBounds="true"
+                android:maxHeight="320dp"
+                android:scaleType="fitCenter" />
+            <TextView
+                android:id="@+id/enrolCode"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:textColor="@color/on_background_muted"
+                android:textIsSelectable="true"
+                android:visibility="gone"
+                tools:text="heartwood-unlock:enrol?v=1&amp;p=…"
+                tools:visibility="visible"
+                android:textAppearance="@style/TextAppearance.Cambium.Code" />
+            <TextView
+                android:id="@+id/enrolWords"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center_horizontal"
+                android:layout_marginTop="12dp"
+                android:gravity="center"
+                android:letterSpacing="0.05"
+                android:textColor="@color/accent"
+                android:textSize="22sp"
+                android:textStyle="bold"
+                android:visibility="gone"
+                tools:text="swim behind stand bugle"
+                tools:visibility="visible"
+                android:textAppearance="@style/TextAppearance.Cambium.Body"
+                android:fontFamily="monospace" />
+            <TextView
+                android:id="@+id/enrolWordsHint"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="@string/enrol_words_hint"
+                android:textColor="@color/on_background_muted"
+                android:visibility="gone"
+                tools:visibility="visible"
+                android:textAppearance="@style/TextAppearance.Cambium.Body" />
+            <Button
+                android:id="@+id/enrolCopyButton"
+                style="@style/Widget.Cambium.Button.Outlined"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="@string/enrol_copy"
+                android:visibility="gone"
+                tools:visibility="visible" />
+            <Button
+                android:id="@+id/enrolRetryButton"
+                style="@style/Widget.Cambium.Button.Outlined"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="@string/enrol_retry"
+                android:visibility="gone"
+                tools:visibility="visible" />
+            <TextView
+                android:id="@+id/enrolStatus"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:textColor="@color/on_background"
+                tools:text="Waiting for the board…"
+                android:textAppearance="@style/TextAppearance.Cambium.Body"
+                android:accessibilityLiveRegion="polite"
+                android:background="@drawable/row_background"
+                android:padding="16dp" />
+            <TextView
+                android:id="@+id/enrolCheckCodeLabel"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center_horizontal"
+                android:layout_marginTop="16dp"
+                android:gravity="center"
+                android:text="@string/enrol_check_code_label"
+                android:textColor="@color/on_background_muted"
+                android:visibility="gone"
+                tools:visibility="visible"
+                android:textAppearance="@style/TextAppearance.Cambium.Body" />
+            <TextView
+                android:id="@+id/enrolCheckCode"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center_horizontal"
+                android:letterSpacing="0.2"
+                android:textColor="@color/accent"
+                android:textSize="48sp"
+                android:textStyle="bold"
+                android:visibility="gone"
+                tools:text="8131"
+                tools:visibility="visible"
+                android:textAppearance="@style/TextAppearance.Cambium.Body"
+                android:fontFamily="monospace" />
+            <TextView
+                android:id="@+id/enrolCheckCodeHint"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center_horizontal"
+                android:gravity="center"
+                android:text="@string/enrol_check_code_hint"
+                android:textColor="@color/on_background_muted"
+                android:visibility="gone"
+                tools:visibility="visible"
+                android:textAppearance="@style/TextAppearance.Cambium.Body" />
+            <Button
+                android:id="@+id/enrolConfirmButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:text="@string/enrol_confirm"
+                android:visibility="gone"
+                tools:visibility="visible" />
+            <Button
+                android:id="@+id/enrolBatteryButton"
+                style="@style/Widget.Cambium.Button.Outlined"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:text="@string/battery_button"
+                android:visibility="gone"
+                tools:visibility="visible" />
+            <Button
+                android:id="@+id/enrolDoneButton"
+                style="@style/Widget.Cambium.Button.Text"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:text="@string/enrol_close" />
+        </LinearLayout>
     </LinearLayout>
 </ScrollView>

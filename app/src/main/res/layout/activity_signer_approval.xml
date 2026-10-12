@@ -1,269 +1,255 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Root is a dimmed, translucent overlay (see Theme.Cambium.Dialog): the sheet below is
-     centred and sized to content, so this reads as a modal over the calling app rather than
-     a full task switch. -->
+<!-- The visible approval stays in the existing translucent activity. All content scrolls
+     together so every decision remains reachable on small screens and with larger text. -->
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent">
 
-<LinearLayout
-    android:layout_width="320dp"
-    android:layout_height="wrap_content"
-    android:layout_gravity="center"
-    android:layout_margin="24dp"
-    android:background="@drawable/approval_sheet_background"
-    android:orientation="vertical"
-    android:padding="24dp">
-
-    <TextView
-        android:id="@+id/title"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginBottom="16dp"
-        android:fontFamily="monospace"
-        android:text="@string/approval_title"
-        android:textColor="@color/on_background"
-        android:textSize="18sp"
-        android:textStyle="bold" />
-
-    <LinearLayout
+    <ScrollView
+        android:id="@+id/approvalScroll"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="horizontal">
-
-        <TextView
-            android:id="@+id/callerLabel"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:fontFamily="monospace"
-            android:text="@string/approval_app_label"
-            android:textColor="@color/on_background_muted" />
-
-        <TextView
-            android:id="@+id/appValue"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="2"
-            android:fontFamily="monospace"
-            android:textColor="@color/on_background"
-            tools:text="org.example.app" />
-    </LinearLayout>
-
-    <TextView
-        android:id="@+id/webOneShotNote"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="8dp"
-        android:fontFamily="monospace"
-        android:text="@string/approval_web_one_shot_note"
-        android:textColor="@color/on_background_muted"
-        android:textSize="11sp"
-        android:visibility="gone"
-        tools:visibility="visible" />
-
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="8dp"
-        android:orientation="horizontal">
-
-        <TextView
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:fontFamily="monospace"
-            android:text="@string/approval_method_label"
-            android:textColor="@color/on_background_muted" />
-
-        <TextView
-            android:id="@+id/methodValue"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="2"
-            android:fontFamily="monospace"
-            android:textColor="@color/on_background"
-            tools:text="sign_event" />
-    </LinearLayout>
-
-    <LinearLayout
-        android:id="@+id/kindRow"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="8dp"
-        android:orientation="horizontal"
-        android:visibility="gone"
-        tools:visibility="visible">
-
-        <TextView
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:fontFamily="monospace"
-            android:text="@string/approval_kind_label"
-            android:textColor="@color/on_background_muted" />
-
-        <TextView
-            android:id="@+id/kindValue"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="2"
-            android:fontFamily="monospace"
-            android:textColor="@color/on_background"
-            tools:text="1" />
-    </LinearLayout>
-
-    <LinearLayout
-        android:id="@+id/permissionsRow"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="8dp"
-        android:orientation="vertical"
-        android:visibility="gone"
-        tools:visibility="visible">
+        android:layout_gravity="center"
+        android:layout_margin="@dimen/sheet_margin"
+        android:background="@drawable/approval_sheet_background"
+        android:clipToOutline="true"
+        android:overScrollMode="ifContentScrolls">
 
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="horizontal">
+            android:orientation="vertical"
+            android:padding="20dp">
 
             <TextView
-                android:layout_width="0dp"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:fontFamily="monospace"
-                android:text="@string/approval_permissions_label"
-                android:textColor="@color/on_background_muted" />
+                android:text="@string/approval_brand_label"
+                android:textAppearance="@style/TextAppearance.Cambium.Detail"
+                android:textColor="@color/accent" />
 
             <TextView
-                android:id="@+id/permissionsValue"
-                android:layout_width="0dp"
+                android:id="@+id/title"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_weight="2"
-                android:fontFamily="monospace"
+                android:layout_marginTop="8dp"
+                android:layout_marginBottom="20dp"
+                android:accessibilityHeading="true"
+                android:text="@string/approval_title"
+                android:textAppearance="@style/TextAppearance.Cambium.Title"
+                android:textSize="24sp" />
+
+            <TextView
+                android:id="@+id/callerLabel"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/approval_app_label"
+                android:textAppearance="@style/TextAppearance.Cambium.Detail" />
+
+            <TextView
+                android:id="@+id/appValue"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:breakStrategy="simple"
+                android:textAppearance="@style/TextAppearance.Cambium.Label"
+                tools:text="org.example.app" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:text="@string/approval_method_label"
+                android:textAppearance="@style/TextAppearance.Cambium.Detail" />
+
+            <TextView
+                android:id="@+id/methodValue"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:textAppearance="@style/TextAppearance.Cambium.Code"
                 android:textColor="@color/on_background"
-                tools:text="sign_event (kind 1), nip44_decrypt" />
+                android:textSize="14sp"
+                tools:text="sign_event" />
+
+            <LinearLayout
+                android:id="@+id/kindRow"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:orientation="vertical"
+                android:visibility="gone">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/approval_kind_label"
+                    android:textAppearance="@style/TextAppearance.Cambium.Detail" />
+
+                <TextView
+                    android:id="@+id/kindValue"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:textAppearance="@style/TextAppearance.Cambium.Code"
+                    android:textColor="@color/on_background"
+                    tools:text="1" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/permissionsRow"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:orientation="vertical"
+                android:visibility="gone">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/approval_permissions_label"
+                    android:textAppearance="@style/TextAppearance.Cambium.Detail" />
+
+                <TextView
+                    android:id="@+id/permissionsValue"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:textAppearance="@style/TextAppearance.Cambium.Code"
+                    android:textColor="@color/on_background"
+                    tools:text="sign_event (kind 1), nip44_decrypt" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="@string/approval_permissions_note"
+                    android:textAppearance="@style/TextAppearance.Cambium.Detail" />
+            </LinearLayout>
+
+            <!-- Name the identity on every request; only multiple pairings need a picker. -->
+            <LinearLayout
+                android:id="@+id/identityRow"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:orientation="vertical"
+                android:visibility="gone">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/approval_identity_label"
+                    android:textAppearance="@style/TextAppearance.Cambium.Detail" />
+
+                <Spinner
+                    android:id="@+id/identityPicker"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:contentDescription="@string/approval_identity_label"
+                    android:minHeight="48dp" />
+
+                <TextView
+                    android:id="@+id/singleIdentityValue"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:textAppearance="@style/TextAppearance.Cambium.Label"
+                    android:visibility="gone" />
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/identityRebindHint"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:accessibilityLiveRegion="polite"
+                android:textAppearance="@style/TextAppearance.Cambium.Detail"
+                android:textColor="@color/danger"
+                android:visibility="gone"
+                tools:text="Currently bound to Living room Heartwood" />
+
+            <TextView
+                android:id="@+id/webOneShotNote"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="20dp"
+                android:background="@drawable/row_background"
+                android:padding="12dp"
+                android:text="@string/approval_web_one_shot_note"
+                android:textAppearance="@style/TextAppearance.Cambium.Detail"
+                android:visibility="gone" />
+
+            <TextView
+                android:id="@+id/nativeRememberNote"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="20dp"
+                android:background="@drawable/row_background"
+                android:padding="12dp"
+                android:text="@string/approval_native_remember_note"
+                android:textAppearance="@style/TextAppearance.Cambium.Detail"
+                android:visibility="gone" />
+
+            <LinearLayout
+                android:id="@+id/decisionGroup"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:orientation="horizontal">
+
+                <Button
+                    android:id="@+id/declineButton"
+                    style="@style/Widget.Cambium.Button.Outlined"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginEnd="6dp"
+                    android:layout_weight="1"
+                    android:text="@string/approval_decline" />
+
+                <Button
+                    android:id="@+id/approveButton"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="6dp"
+                    android:layout_weight="1"
+                    android:text="@string/approval_approve" />
+            </LinearLayout>
+
+            <Button
+                android:id="@+id/denyAlwaysLink"
+                style="@style/Widget.Cambium.Button.Text"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="@string/approval_deny_always"
+                android:textColor="@color/danger" />
+
+            <LinearLayout
+                android:id="@+id/progressGroup"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="20dp"
+                android:accessibilityLiveRegion="polite"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:visibility="gone">
+
+                <ProgressBar
+                    android:layout_width="24dp"
+                    android:layout_height="24dp"
+                    android:layout_marginEnd="12dp"
+                    android:indeterminateTint="@color/accent" />
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="@string/approval_forwarding"
+                    android:textAppearance="@style/TextAppearance.Cambium.Body" />
+            </LinearLayout>
         </LinearLayout>
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:fontFamily="monospace"
-            android:text="@string/approval_permissions_note"
-            android:textColor="@color/on_background_muted"
-            android:textSize="11sp" />
-    </LinearLayout>
-
-    <!-- Only shown when more than one identity is paired: Approve otherwise always means the
-         sole pairing, same as when Cambium only ever paired one Heartwood. -->
-    <LinearLayout
-        android:id="@+id/identityRow"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="8dp"
-        android:orientation="horizontal"
-        android:visibility="gone"
-        tools:visibility="visible">
-
-        <TextView
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:fontFamily="monospace"
-            android:text="@string/approval_identity_label"
-            android:textColor="@color/on_background_muted" />
-
-        <Spinner
-            android:id="@+id/identityPicker"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="2" />
-    </LinearLayout>
-
-    <!-- Shown only while the picker's current selection differs from the app's existing bound
-         identity (see SignerActivity's identityPicker selection listener): a routine
-         re-approval never shows this, since the picker defaults to the existing binding. -->
-    <TextView
-        android:id="@+id/identityRebindHint"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="4dp"
-        android:fontFamily="monospace"
-        android:textColor="@color/danger"
-        android:textSize="11sp"
-        android:visibility="gone"
-        tools:text="Currently bound to Living room Heartwood"
-        tools:visibility="visible" />
-
-    <LinearLayout
-        android:id="@+id/decisionGroup"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="24dp"
-        android:orientation="horizontal">
-
-        <Button
-            android:id="@+id/declineButton"
-            style="@style/Widget.Material3.Button.OutlinedButton"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_marginEnd="8dp"
-            android:layout_weight="1"
-            android:fontFamily="monospace"
-            android:text="@string/approval_decline" />
-
-        <Button
-            android:id="@+id/approveButton"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="8dp"
-            android:layout_weight="1"
-            android:fontFamily="monospace"
-            android:text="@string/approval_approve" />
-    </LinearLayout>
-
-    <TextView
-        android:id="@+id/denyAlwaysLink"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_gravity="center_horizontal"
-        android:layout_marginTop="12dp"
-        android:background="?attr/selectableItemBackground"
-        android:clickable="true"
-        android:focusable="true"
-        android:fontFamily="monospace"
-        android:padding="4dp"
-        android:text="@string/approval_deny_always"
-        android:textColor="@color/danger"
-        android:textSize="12sp" />
-
-    <LinearLayout
-        android:id="@+id/progressGroup"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="24dp"
-        android:gravity="center_vertical"
-        android:orientation="horizontal"
-        android:visibility="gone"
-        tools:visibility="visible">
-
-        <ProgressBar
-            android:layout_width="24dp"
-            android:layout_height="24dp"
-            android:layout_marginEnd="12dp"
-            android:indeterminateTint="@color/accent" />
-
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:fontFamily="monospace"
-            android:text="@string/approval_forwarding"
-            android:textColor="@color/on_background_muted" />
-    </LinearLayout>
-
-</LinearLayout>
-
+    </ScrollView>
 </FrameLayout>

@@ -1,14 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Cambium</string>
+    <string name="home_tagline">Your keys stay on Heartwood.</string>
+    <string name="pair_section_title">Pair a signer</string>
+    <string name="pair_link_label">Pairing link</string>
+    <string name="pair_paste_alternative">or paste a pairing link</string>
 
     <string name="status_unpaired">Not paired</string>
     <string name="status_paired">Paired</string>
 
-    <string name="pair_hint">Scan the QR or paste the bunker:// URI shown by Sapwood\'s Connect an app flow.</string>
+    <string name="pair_hint">In Sapwood, choose “Connect an app”. Scan the QR code or paste its bunker:// link here.</string>
     <string name="pair_input_hint">bunker://…</string>
     <string name="pair_label_hint">Label (optional)</string>
-    <string name="pair_button">Pair</string>
+    <string name="pair_button">Pair signer</string>
     <string name="scan_qr_button">Scan QR</string>
     <string name="qr_scan_prompt">Point the camera at the QR shown by Sapwood.</string>
     <string name="camera_permission_denied">Camera access was declined. Pasting the bunker link above still works.</string>
@@ -49,15 +53,19 @@
     <string name="approval_unknown_caller">Unknown caller</string>
     <string name="approval_web_clipboard_caller">Clipboard</string>
     <string name="approval_web_one_shot_note">Website requests are approved once. Cambium never grants permission to the whole browser.</string>
+    <string name="approval_native_remember_note">Approve remembers this app for this identity. Decline only skips this request.</string>
+    <string name="approval_brand_label">Cambium · Heartwood signer</string>
 
     <string name="connected_apps_label">Connected apps</string>
-    <string name="connected_apps_empty">No apps yet.</string>
+    <string name="connected_apps_body">Your remembered choices. Forget an app to ask again next time.</string>
+    <string name="connected_apps_empty">No apps yet. Connect from a Nostr app and Cambium will ask for your approval.</string>
     <string name="connected_apps_forget">Forget</string>
     <string name="connected_apps_state_approved">Approved</string>
     <string name="connected_apps_state_denied">Denied</string>
 
     <string name="activity_log_button">Activity log</string>
     <string name="activity_log_title">Activity log</string>
+    <string name="back_button_description">Back</string>
     <string name="activity_log_body">What Cambium has done on your behalf. Timestamp, app, request and identity only: never a payload, a plaintext or a ciphertext.</string>
     <string name="activity_log_toggle_title">Log signer activity</string>
     <string name="activity_log_empty">No activity yet.</string>

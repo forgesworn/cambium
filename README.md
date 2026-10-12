@@ -126,9 +126,8 @@ needed; Cambium runs on any 64-bit Android 8.1+ device, including GrapheneOS (no
 services, no Firebase, no analytics).
 
 Also on [Zapstore](https://zapstore.dev/apps/naddr1qqtxgetk9enx7un8v4ehwmmjdchxxctdvf5h2mgprpmhxue69uhhyetvv9uju7npwpehgmmjv5hxgetkqgsd5x03e56tajjyhe6d5jesdkw3mkrtvdpua72vugkyn3h4nqtwt0grqsqqqlstem32ln),
-with v0.4.3 published from the same signing key as the GitHub release. An F-Droid listing is under
-review ([fdroiddata!42875](https://gitlab.com/fdroid/fdroiddata/-/merge_requests/42875)); live
-per-store status and details are kept in [docs/DISTRIBUTION.md](docs/DISTRIBUTION.md).
+and [F-Droid](https://f-droid.org/packages/dev.forgesworn.cambium/). Live per-store versions and
+details are kept in [docs/DISTRIBUTION.md](docs/DISTRIBUTION.md).
 
 Verify the APK signature with [AppVerifier](https://github.com/soupslurpr/AppVerifier) before
 installing:
