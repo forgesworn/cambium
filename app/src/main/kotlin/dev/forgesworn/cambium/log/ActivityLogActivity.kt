@@ -1,9 +1,10 @@
 package dev.forgesworn.cambium.log
 
 import android.os.Bundle
-import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
 import androidx.core.view.isVisible
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import dev.forgesworn.cambium.R
 import dev.forgesworn.cambium.applock.AppLockPrompt
 import dev.forgesworn.cambium.applock.AppLockStore
@@ -45,6 +46,7 @@ class ActivityLogActivity : AppCompatActivity() {
         binding.logToggle.setOnCheckedChangeListener { _, checked -> store.setEnabled(checked) }
         binding.clearButton.setOnClickListener { onClearClicked() }
         binding.unlockButton.setOnClickListener { promptUnlock() }
+        binding.backButton.setOnClickListener { finish() }
 
         // As in MainActivity, the lock check lives in onResume (which always runs right after
         // onCreate, before anything is drawn) -- render() is deliberately not called here, so a
@@ -99,12 +101,17 @@ class ActivityLogActivity : AppCompatActivity() {
             row.logMethodValue.text = entry.eventKind?.let { kind -> "${entry.method} (kind $kind)" } ?: entry.method
             row.logIdentityValue.text = entry.identityLabel ?: NO_IDENTITY_PLACEHOLDER
             row.logOutcomeValue.text = getString(outcomeLabel(entry.outcome))
+            row.logOutcomeValue.setTextColor(ContextCompat.getColor(this, when (entry.outcome) {
+                ActivityLogEntry.Outcome.SIGNED, ActivityLogEntry.Outcome.ANSWERED_FROM_CACHE -> R.color.accent
+                ActivityLogEntry.Outcome.REJECTED_POLICY, ActivityLogEntry.Outcome.REJECTED_USER -> R.color.warning
+                ActivityLogEntry.Outcome.FAILED -> R.color.danger
+            }))
             binding.logContainer.addView(row.root)
         }
     }
 
     private fun onClearClicked() {
-        AlertDialog.Builder(this)
+        MaterialAlertDialogBuilder(this)
             .setTitle(R.string.activity_log_clear_confirm_title)
             .setMessage(R.string.activity_log_clear_confirm_body)
             .setPositiveButton(R.string.activity_log_clear_button) { _, _ ->

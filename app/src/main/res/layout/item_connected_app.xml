@@ -1,53 +1,45 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools"
+    style="@style/Widget.Cambium.Row"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:gravity="center_vertical"
-    android:orientation="horizontal"
-    android:paddingVertical="8dp">
+    android:orientation="vertical">
 
-    <LinearLayout
-        android:layout_width="0dp"
+    <TextView
+        android:id="@+id/appPackageValue"
+        android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_weight="1"
-        android:orientation="vertical">
+        android:textAppearance="@style/TextAppearance.Cambium.Label"
+        tools:text="Amethyst" />
 
-        <TextView
-            android:id="@+id/appPackageValue"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:fontFamily="monospace"
-            android:textColor="@color/on_background"
-            tools:text="org.example.app" />
+    <TextView
+        android:id="@+id/appStateValue"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:background="@drawable/status_background"
+        android:paddingHorizontal="10dp"
+        android:paddingVertical="6dp"
+        android:textAppearance="@style/TextAppearance.Cambium.Detail"
+        android:textColor="@color/accent"
+        tools:text="Approved" />
 
-        <TextView
-            android:id="@+id/appStateValue"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:fontFamily="monospace"
-            android:textColor="@color/on_background_muted"
-            android:textSize="12sp"
-            tools:text="Approved" />
-
-        <TextView
-            android:id="@+id/appIdentityValue"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:fontFamily="monospace"
-            android:textColor="@color/on_background_muted"
-            android:textSize="12sp"
-            android:visibility="gone"
-            tools:text="Living room Heartwood"
-            tools:visibility="visible" />
-    </LinearLayout>
+    <TextView
+        android:id="@+id/appIdentityValue"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:textAppearance="@style/TextAppearance.Cambium.Detail"
+        android:visibility="gone"
+        tools:text="Living room Heartwood"
+        tools:visibility="visible" />
 
     <Button
         android:id="@+id/forgetButton"
-        style="@style/Widget.Material3.Button.TextButton"
+        style="@style/Widget.Cambium.Button.Text"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:fontFamily="monospace"
+        android:layout_gravity="end"
         android:text="@string/connected_apps_forget" />
-
 </LinearLayout>

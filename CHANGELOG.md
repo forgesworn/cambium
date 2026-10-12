@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.8.0 (2026-10-12)
+
+- Refresh the pairing, connected-apps, activity-log and phone-unlock screens with clearer
+  sections, labelled inputs, larger controls and colours that follow the system light/dark theme.
+- Approval panels name the identity and scroll with enlarged text. Identity labels wrap and
+  decision buttons stack on narrow screens or with larger system text. Native requests explain
+  remembered approval and website requests remain visibly one-shot. Signing, pairing, permission
+  and unlock rules are unchanged.
+
 ## 0.7.1 (2026-09-26)
 
 - The check code stays on screen once enrolment finishes, labelled and with a reminder that it

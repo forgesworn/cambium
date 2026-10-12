@@ -8,10 +8,12 @@ import android.net.Uri
 import android.os.Bundle
 import android.widget.AdapterView
 import android.widget.ArrayAdapter
+import android.widget.LinearLayout
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.isVisible
+import androidx.core.view.updateLayoutParams
 import androidx.lifecycle.lifecycleScope
 import dev.forgesworn.cambium.R
 import dev.forgesworn.cambium.applock.AppLockPrompt
@@ -35,6 +37,7 @@ import dev.forgesworn.cambium.signer.HeartwoodSession
 import dev.forgesworn.cambium.signer.displayLabel
 import dev.forgesworn.cambium.signer.npubWire
 import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
 
 private const val EXTRA_TYPE = "type"
 private const val EXTRA_ID = "id"
@@ -281,6 +284,7 @@ class SignerActivity : AppCompatActivity() {
             else getString(R.string.approval_unknown_caller)
         binding.methodValue.text = methodLabel(request)
         binding.webOneShotNote.isVisible = context.web != null
+        binding.nativeRememberNote.isVisible = context.nativeCallingPackage != null
 
         val kind = (request as? Nip55Request.SignEvent)?.let { extractEventKind(it.eventJson) }
         binding.kindRow.isVisible = kind != null
@@ -288,8 +292,8 @@ class SignerActivity : AppCompatActivity() {
             binding.kindValue.text = kind.toString()
         }
 
-        // Only worth showing once there is more than one pairing to choose between; with exactly
-        // one, Approve always means that one pairing, same as before Cambium supported more.
+        // Name the sole identity too, without introducing a choice where there is none.
+        // With exactly one, Approve still always means that pairing.
         // Default selection precedence: the request's current_user match, else the caller's
         // existing bound identity, else the first pairing. For an already-approved caller this
         // sheet shows precisely when their current_user could not be honoured silently -- either
@@ -301,12 +305,15 @@ class SignerActivity : AppCompatActivity() {
         // moved the picker themselves) sees a clear warning before Approve would do that,
         // rather than relying on the precedence alone to prevent a silent rebind.
         val boundPubkeyHex = context.permission?.boundIdentityPubkeyHex
-        binding.identityRow.isVisible = pairings.size > 1
+        binding.identityRow.isVisible = true
+        binding.identityPicker.isVisible = pairings.size > 1
+        binding.singleIdentityValue.isVisible = pairings.size == 1
+        binding.singleIdentityValue.text = pairings.singleOrNull()?.displayLabel()
         binding.identityRebindHint.isVisible = false
         if (pairings.size > 1) {
             binding.identityPicker.adapter = ArrayAdapter(
                 this,
-                android.R.layout.simple_spinner_dropdown_item,
+                R.layout.item_identity_choice,
                 pairings.map { it.displayLabel() },
             )
             val preferredPubkeyHex = IdentityRouting.normaliseCurrentUser(request.currentUser) ?: boundPubkeyHex
@@ -339,6 +346,19 @@ class SignerActivity : AppCompatActivity() {
         }
 
         binding.decisionGroup.isVisible = true
+        // Keep each decision readable as one word on narrow screens or with larger system text.
+        val stackDecisions = resources.configuration.fontScale >= 1.3f || resources.configuration.screenWidthDp < 360
+        binding.decisionGroup.orientation = if (stackDecisions) LinearLayout.VERTICAL else LinearLayout.HORIZONTAL
+        val gap = (6 * resources.displayMetrics.density).roundToInt()
+        listOf(binding.declineButton, binding.approveButton).forEachIndexed { index, button ->
+            button.updateLayoutParams<LinearLayout.LayoutParams> {
+                width = if (stackDecisions) LinearLayout.LayoutParams.MATCH_PARENT else 0
+                weight = if (stackDecisions) 0f else 1f
+                marginStart = if (!stackDecisions && index == 1) gap else 0
+                marginEnd = if (!stackDecisions && index == 0) gap else 0
+                topMargin = if (stackDecisions && index == 1) gap * 2 else 0
+            }
+        }
         binding.denyAlwaysLink.isVisible = context.nativeCallingPackage != null
         binding.progressGroup.isVisible = false
 

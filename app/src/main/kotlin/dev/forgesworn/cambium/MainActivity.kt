@@ -1,7 +1,6 @@
 package dev.forgesworn.cambium
 
 import android.Manifest
-import android.app.AlertDialog
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
@@ -13,6 +12,7 @@ import androidx.core.view.isVisible
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanIntentResult
 import com.journeyapps.barcodescanner.ScanOptions
@@ -213,7 +213,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun onUnpairRowClicked(pairing: Pairing) {
-        AlertDialog.Builder(this)
+        MaterialAlertDialogBuilder(this)
             .setTitle(getString(R.string.unpair_row_confirm_title, pairing.displayLabel()))
             .setMessage(R.string.unpair_row_confirm_body)
             .setPositiveButton(R.string.unpair_button) { _, _ ->
@@ -233,7 +233,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun onUnpairAllClicked() {
-        AlertDialog.Builder(this)
+        MaterialAlertDialogBuilder(this)
             .setTitle(R.string.unpair_all_confirm_title)
             .setMessage(R.string.unpair_all_confirm_body)
             .setPositiveButton(R.string.unpair_all_button) { _, _ ->
@@ -278,7 +278,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun onForgetBoardClicked(board: UnlockEnrolment) {
-        AlertDialog.Builder(this)
+        MaterialAlertDialogBuilder(this)
             .setTitle(getString(R.string.unlock_forget_confirm_title, board.boardLabel))
             .setMessage(getString(R.string.unlock_forget_confirm_body, board.id))
             .setPositiveButton(R.string.unlock_forget_button) { _, _ ->
@@ -312,6 +312,9 @@ class MainActivity : AppCompatActivity() {
                     AppPermissionState.DENIED -> R.string.connected_apps_state_denied
                 }
             )
+            row.appStateValue.setTextColor(ContextCompat.getColor(this,
+                if (permission.state == AppPermissionState.APPROVED) R.color.accent else R.color.danger,
+            ))
             val boundIdentity = permission.boundIdentityPubkeyHex?.let { hex -> pairings.firstOrNull { it.signerPubkeyHex == hex } }
             row.appIdentityValue.isVisible = boundIdentity != null
             if (boundIdentity != null) {

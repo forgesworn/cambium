@@ -1,0 +1,1 @@
+Clearer pairing, connected-apps, activity-log and phone-unlock screens. Colours follow the system light/dark theme. Approval panels name the identity, explain remembered choices and keep website requests one-shot. Identity labels wrap and decision buttons stack on narrow screens or with larger system text. Signing, pairing, permission and unlock rules are unchanged.
