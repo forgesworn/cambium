@@ -12,14 +12,28 @@ what store metadata points at (F-Droid's `Donate:` field takes one URL).
 
 | Channel | Status | Signature users get |
 |---|---|---|
-| GitHub Releases | **Live** (0.7.1 current; v0.2.0 onward) | Ours (the 0.2.0 trust root) |
-| Obtainium | **Live** via the 0.7.1 GitHub release | Ours |
-| Zapstore | **Live** (0.7.1 current; 0.6.0 and 0.7.0 were skipped; v0.3.2 onward) | Ours |
-| F-Droid | **Live** ([fdroiddata!42875](https://gitlab.com/fdroid/fdroiddata/-/merge_requests/42875) merged 2026-09-13; still lists only 0.4.3: 0.5.0 to 0.7.0 failed the reproducibility check, fixed from 0.7.1); new tags are picked up automatically | Ours, when the reproducibility check passes |
+| GitHub Releases | **Live** (0.8.0 current; v0.2.0 onward) | Ours (the 0.2.0 trust root) |
+| Obtainium | **Live** via the 0.8.0 GitHub release | Ours |
+| Zapstore | **Live** (0.8.0 current; 0.6.0 and 0.7.0 were skipped; v0.3.2 onward) | Ours |
+| F-Droid | **Live** (0.7.1/versionCode 17 verified 2026-10-13; 0.8.0 awaiting automatic rebuild and publication) | Ours, when the reproducibility check passes |
 | IzzyOnDroid (optional extra) | Eligible; their tracker moved to Codeberg (account needed) | Ours |
 | Accrescent | **Blocked externally** — registration is allowlist-only | Ours |
 
 ## GitHub Releases (live)
+
+[0.8.0](https://github.com/forgesworn/cambium/releases/tag/v0.8.0), versionCode 18, was built from
+the clean tagged commit `92afdb1a90a7c527adf610facd7a00ce130b2148`. The public APK and `SHA256SUMS`
+were downloaded and verified on 2026-10-13. Its APK SHA-256 is
+`81685c955f4ee164de761a196533307e5bd360190c2d1ad53c12266c237e5a11` (19,790,284 bytes). It is
+non-debuggable, contains arm64-v8a and x86_64, omits VCS metadata, and uses the same signing
+certificate as the previous public APK and the 0.2.0 trust root below.
+
+The final source passed 271 JVM tests and all 11 Android checks in both
+[PR CI](https://github.com/forgesworn/cambium/actions/runs/38318772846) and
+[main CI](https://github.com/forgesworn/cambium/actions/runs/38319136838). The UI review also passed
+all nine UI flows in dark mode and at 320dp/200% text. An additional local shipping-time repeat
+was inconclusive: the disposable emulator had startup ANRs, then timed out in its first UI flow.
+Cambium signing, enrolment and phone unlock against a physical Heartwood were not re-tested.
 
 0.7.1 was published and read back on 2026-09-26, built from the tagged commit (`d2fc9c3`) in a
 clean tree. Its APK SHA-256 is
@@ -45,6 +59,16 @@ obtainium://add/https://github.com/forgesworn/cambium
 ```
 
 ## Zapstore (live)
+
+Version 0.8.0 was published through the publisher Heartwood bunker connection and read back on
+2026-10-13. Its live kind 3063 file event carries versionCode 18, the 0.8.0 SHA-256 and source
+commit above, and the trust-root certificate. The app, release and file event hashes and
+signatures were verified under the publisher identity below. The CDN APK was downloaded and
+matches GitHub byte for byte.
+
+- App event: `ce5045b48ff6c2c4aad4af4dca68903440956aa3994769f6afcf9a47bf4becdb`
+- Release event: `07c9216490b23cfcdcf246aac766c22dd6b85c587ec9904ce39a0c6e3e75e247`
+- File event: `32285841977d28a069f82ee123a8da9b517b88cb821a027b341a69bd7ba35be7`
 
 Version 0.7.1 was published on 2026-09-26 through the publisher Heartwood bunker connection, with
 the owner approving on the board. Its kind 3063 event carries SHA-256
@@ -97,7 +121,9 @@ latest release), or add it as a release-checklist step.
 
 ## F-Droid (live)
 
-The inclusion merge request was merged on 2026-09-13 and 0.4.3 is listed. From here
+The [inclusion merge request](https://gitlab.com/fdroid/fdroiddata/-/merge_requests/42875) was
+merged on 2026-09-13. The public package API lists 0.7.1/versionCode 17 and 0.4.3/versionCode 13
+(verified 2026-10-13); 0.8.0/versionCode 18 is not listed yet. From here
 `AutoUpdateMode: Version` picks up each `vX.Y.Z` tag, rebuilds it, and publishes our signed APK
 from `Binaries:` (`releases/download/v%v/cambium-%v.apk`) only if the rebuild matches it: build
 the release APK from the exact tagged commit with a clean tree, and name the asset exactly so.
@@ -182,7 +208,7 @@ Everything on our side is already satisfied, so when it opens this is quick:
 2. Tag `vX.Y.Z`, build, publish the GitHub release (APK + SHA256SUMS + AppVerifier block).
 3. `SIGN_WITH=... zsp publish --quiet --skip-preview zapstore.yaml`, with someone at the Heartwood
    to confirm the signing request.
-4. Nothing to do for F-Droid: the merged recipe tracks tags. Check a few days later that the new
-   version appears (`https://f-droid.org/api/v1/packages/dev.forgesworn.cambium`); if it does not,
-   the rebuild did not match our APK and needs investigating.
-5. Obtainium and IzzyOnDroid pick the release up automatically.
+4. Nothing to submit for F-Droid: the merged recipe tracks tags. Check a few days later that the
+   new version appears (`https://f-droid.org/api/v1/packages/dev.forgesworn.cambium`). If it does
+   not, inspect the update/build status and reproducibility result before calling it a mismatch.
+5. Obtainium tracks GitHub directly. IzzyOnDroid can do the same once the optional listing exists.
