@@ -81,3 +81,14 @@ jobs:
           arch: x86_64
           profile: pixel_6
           script: ./gradlew :app:connectedDebugAndroidTest
+
+      - name: Upload instrumentation results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cambium-android-test-results
+          path: |
+            app/build/reports/androidTests/
+            app/build/outputs/androidTest-results/
+          if-no-files-found: ignore
+          retention-days: 14
