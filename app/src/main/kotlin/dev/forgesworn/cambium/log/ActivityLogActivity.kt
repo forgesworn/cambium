@@ -268,11 +268,21 @@ class ActivityLogActivity : AppCompatActivity() {
             }
         }
         dialog.show()
-        // Use the activity's inset-aware content height, leaving room for the dialog background.
-        // With an exact column height, only the weighted report pane gives up space; both
-        // full-width actions retain their complete measured height.
+        // The dialog's own window padding can leave less space than the activity content.
+        // Constrain our column to that measured viewport so only the weighted text pane shrinks.
         val availableHeight = binding.root.height.takeIf { it > 0 } ?: resources.displayMetrics.heightPixels
-        column.layoutParams = column.layoutParams.apply { height = (availableHeight * 0.85f).toInt() }
+        val desiredHeight = (availableHeight * 0.85f).toInt()
+        column.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+            val viewport = column.parent as? View ?: return@addOnLayoutChangeListener
+            val contentHeight = viewport.height - viewport.paddingTop - viewport.paddingBottom
+            if (contentHeight > 0) {
+                val height = minOf(desiredHeight, contentHeight)
+                if (column.layoutParams.height != height) {
+                    column.layoutParams = column.layoutParams.apply { this.height = height }
+                }
+            }
+        }
+        column.layoutParams = column.layoutParams.apply { height = desiredHeight }
     }
 
     private fun failureLabel(category: ActivityLogEntry.FailureCategory): Int = when (category) {
