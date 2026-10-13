@@ -242,4 +242,38 @@ class ConnectionHealthTest {
         assertEquals(1, disconnected.get()) // No leaked connected client remained for shutdown to find.
     }
 
+
+    @Test fun `persisted admitted pairing resumes and migrates without replaying its admission secret`() = runBlocking {
+        val admitted = pairing.copy(secret = "consumed-on-disposable-pairing-client")
+        val connections = mutableListOf<Pair<String, String>>()
+        var persisted = admitted
+        fun registry() = SessionRegistry(clientFactory = { object : Fake() {
+            override suspend fun connect(bunkerUri: String, clientSecretKeyHex: String): HeartwoodResult.Success<String> {
+                connections += bunkerUri to clientSecretKeyHex
+                assertFalse(bunkerUri.contains("secret="))
+                assertEquals(admitted.clientSecretKeyHex, clientSecretKeyHex)
+                return HeartwoodResult.Success("key")
+            }
+            override suspend fun switchRelays() = RelaySwitchResult.Updated(listOf("wss://new.example"))
+        } }, persistRelayUpdate = { expected, relays ->
+            assertEquals(persisted, expected)
+            persisted = expected.copy(relays = relays)
+            true
+        })
+        val first = registry()
+        try {
+            assertIs<HeartwoodResult.Success<String>>(first.testConnection(admitted).result)
+            assertIs<HeartwoodResult.Success<String>>(first.reconnect(persisted).result)
+            assertEquals(3, connections.size) // Initial resume, migration and explicit reconnect.
+            assertTrue(connections.first().first.contains("old.example"))
+            assertTrue(connections.drop(1).all { it.first.contains("new.example") })
+            assertEquals(admitted.secret, persisted.secret) // Conservative: no schema/data mutation.
+        } finally { first.shutdownAll() }
+        val restarted = registry()
+        try {
+            assertIs<HeartwoodResult.Success<String>>(restarted.testConnection(persisted).result)
+            assertEquals(4, connections.size)
+        } finally { restarted.shutdownAll() }
+    }
+
 }

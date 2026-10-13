@@ -91,15 +91,18 @@ jobs:
             adb shell am force-stop dev.forgesworn.cambium.test
             adb shell pm clear dev.forgesworn.cambium
             adb shell am instrument -w -r -e class dev.forgesworn.cambium.ui.UiFlowRegressionTest,dev.forgesworn.cambium.ui.PermissionScopeEditorTest,dev.forgesworn.cambium.ui.DiagnosticsUiTest dev.forgesworn.cambium.test/androidx.test.runner.AndroidJUnitRunner | tee app/build/outputs/androidTest-results/compact-large-text.log
-            python3 - <<'PY'
-            from collections import Counter
-            from pathlib import Path
-            log = Path('app/build/outputs/androidTest-results/compact-large-text.log').read_text()
-            codes = Counter(line.split(': ', 1)[1] for line in log.splitlines()
-                            if line.startswith('INSTRUMENTATION_STATUS_CODE:'))
-            assert codes == {'1': 16, '0': 16}, f'Incomplete or failed compact UI run: {codes}'
-            assert 'OK (16 tests)' in log, 'Missing successful compact UI summary'
-            PY
+
+      - name: Verify compact UI results
+        run: |
+          python3 - <<'PY'
+          from collections import Counter
+          from pathlib import Path
+          log = Path('app/build/outputs/androidTest-results/compact-large-text.log').read_text()
+          codes = Counter(line.split(': ', 1)[1] for line in log.splitlines()
+                          if line.startswith('INSTRUMENTATION_STATUS_CODE:'))
+          assert codes == {'1': 16, '0': 16}, f'Incomplete or failed compact UI run: {codes}'
+          assert 'OK (16 tests)' in log, 'Missing successful compact UI summary'
+          PY
 
       - name: Upload instrumentation results
         if: always()

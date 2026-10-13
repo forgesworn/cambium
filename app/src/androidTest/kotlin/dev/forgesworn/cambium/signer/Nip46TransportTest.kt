@@ -1,6 +1,9 @@
 package dev.forgesworn.cambium.signer
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import dev.forgesworn.cambium.pairing.BunkerUriParser
+import dev.forgesworn.cambium.pairing.BunkerUriResult
+import dev.forgesworn.cambium.pairing.Pairing
 import dev.forgesworn.cambium.pairing.BunkerUri
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.*
@@ -44,12 +47,102 @@ class Nip46TransportTest {
         }
     }
 
-    private class LocalSignerRelay : Closeable {
+    @Test fun admittedClientMigratesAcrossRelaysAndRestartsWithoutReplayingConsumedSecret() = runBlocking {
+        val admission = Admission()
+        LocalSignerRelay(admission).use { first ->
+            LocalSignerRelay(admission).use { second ->
+                first.relayProposal = listOf("wss://second.example")
+                second.relayProposal = null
+                val keys = Keys.generate()
+                val initial = BunkerUri(admission.signer.publicKey().toHex(), listOf(first.url), admission.secret)
+                // Mimic MainActivity: only the disposable initial client receives the admission token.
+                val disposable = RustNostrHeartwoodClient { initial }
+                try {
+                    assertTrue(disposable.connect(initial.toUriString(), keys.secretKey().toHex()) is HeartwoodResult.Success)
+                } finally { disposable.disconnect() }
+                // Prove the fixture rejects the bug, not merely tolerates both connect forms.
+                val replay = RustNostrHeartwoodClient { initial }
+                try {
+                    assertTrue(replay.connect(initial.toUriString(), keys.secretKey().toHex()) is HeartwoodResult.Failure)
+                } finally { replay.disconnect() }
+
+                var persisted = Pairing(initial.signerPubkeyHex, listOf("wss://first.example"), admission.secret,
+                    keys.secretKey().toHex(), keys.publicKey().toHex())
+                fun routedClient(): HeartwoodClient {
+                    var transport: BunkerUri? = null
+                    val native = RustNostrHeartwoodClient { transport }
+                    return object : HeartwoodClient by native {
+                        override suspend fun connect(bunkerUri: String, clientSecretKeyHex: String): HeartwoodResult<String> {
+                            val requested = (BunkerUriParser.parse(bunkerUri) as BunkerUriResult.Valid).uri
+                            // Preserve production wss validation and actual registry routing decisions;
+                            // map only these test names to two real loopback SDK socket endpoints.
+                            transport = requested.copy(relays = requested.relays.map {
+                                when (it) {
+                                    "wss://first.example" -> first.url
+                                    "wss://second.example" -> second.url
+                                    else -> error("Unexpected test relay")
+                                }
+                            })
+                            return native.connect(transport!!.toUriString(), clientSecretKeyHex)
+                        }
+                    }
+                }
+                fun registry() = SessionRegistry(clientFactory = ::routedClient,
+                    persistRelayUpdate = { expected, relays ->
+                        assertEquals(persisted, expected)
+                        persisted = expected.copy(relays = relays)
+                        true
+                    })
+                val active = registry()
+                try {
+                    val signed = active.withClient(persisted) {
+                        it.signEvent("""{"kind":1,"content":"after authenticated relay migration"}""")
+                    }.result
+                    assertTrue(signed is HeartwoodResult.Success)
+                    assertTrue(Event.fromJson((signed as HeartwoodResult.Success).value).verify())
+                    assertEquals(listOf("wss://second.example"), persisted.relays)
+                    assertFalse(first.methods.contains("sign_event"))
+                    assertTrue(second.methods.contains("sign_event"))
+                    assertEquals(HeartwoodResult.Success("pong"), active.reconnect(persisted).result)
+                } finally { active.shutdownAll() }
+                // Persisted entries survive process death, including legacy entries with a token.
+                val restarted = registry()
+                try {
+                    assertEquals(HeartwoodResult.Success("pong"), restarted.testConnection(persisted).result)
+                } finally { restarted.shutdownAll() }
+                assertEquals(listOf(admission.secret, admission.secret, ""), first.connectSecrets.toList())
+                assertTrue(second.connectSecrets.size >= 3)
+                assertTrue(second.connectSecrets.all { it.isEmpty() })
+                assertEquals(admission.secret, persisted.secret)
+            }
+        }
+    }
+
+    private class Admission {
         val signer = Keys.generate()
+        val secret = "single-use-fixture-token"
+        private var consumed = false
+        private val admitted = mutableSetOf<String>()
+
+        @Synchronized fun connect(client: String, supplied: String): String? {
+            if (supplied.isEmpty()) return if (client in admitted) null else "unauthorised client"
+            if (supplied != secret || consumed) return "admission secret already consumed"
+            consumed = true
+            admitted += client
+            return null
+        }
+
+        @Synchronized fun permits(client: String): Boolean = client in admitted
+    }
+
+    private class LocalSignerRelay(private val admission: Admission? = null) : Closeable {
+        val signer = admission?.signer ?: Keys.generate()
         private val outsider = Keys.generate()
         private val server = ServerSocket(0, 16, java.net.InetAddress.getByName("127.0.0.1"))
         val url = "ws://127.0.0.1:${server.localPort}"
         val methods = CopyOnWriteArrayList<String>()
+        val connectSecrets = CopyOnWriteArrayList<String>()
+        @Volatile var relayProposal: List<String>? = listOf("wss://new.example")
         @Volatile var unsupported = false
         @Volatile private var closed = false
         private val peers = CopyOnWriteArrayList<Peer>()
@@ -140,11 +233,18 @@ class Nip46TransportTest {
                         val method = request.getValue("method").jsonPrimitive.content
                         val id = request.getValue("id").jsonPrimitive.content
                         methods += method
+                        val admissionError = if (method == "connect") {
+                            val supplied = request.getValue("params").jsonArray.getOrNull(1)?.jsonPrimitive?.contentOrNull.orEmpty()
+                            connectSecrets += supplied
+                            admission?.connect(event.author().toHex(), supplied)
+                        } else if (admission != null && !admission.permits(event.author().toHex())) {
+                            "unauthorised client"
+                        } else null
                         val result: JsonElement = when (method) {
                             "connect" -> JsonPrimitive("ack")
                             "get_public_key" -> JsonPrimitive(signer.publicKey().toHex())
                             "ping" -> JsonPrimitive("pong")
-                            "switch_relays" -> JsonArray(listOf(JsonPrimitive("wss://new.example")))
+                            "switch_relays" -> relayProposal?.let { JsonArray(it.map(::JsonPrimitive)) } ?: JsonNull
                             "sign_event" -> {
                                 val unsigned = request.getValue("params").jsonArray[0].jsonPrimitive.content
                                 JsonPrimitive(UnsignedEvent.fromJson(unsigned).signWithKeys(signer).asJson())
@@ -154,7 +254,8 @@ class Nip46TransportTest {
                         fun response(author: Keys = signer, replyId: String = id, recipient: PublicKey = event.author(), bad: Boolean = false): Event {
                             val body = buildJsonObject {
                                 put("id", replyId)
-                                if (unsupported && method == "switch_relays") put("error", "unsupported method")
+                                if (admissionError != null) put("error", admissionError)
+                                else if (unsupported && method == "switch_relays") put("error", "unsupported method")
                                 else put("result", if (bad) JsonArray(listOf(JsonPrimitive("wss://attacker.example"))) else result)
                             }
                             return EventBuilder(Kind(24133u), nip44Encrypt(author.secretKey(), event.author(), body.toString(), Nip44Version.V2))

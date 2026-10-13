@@ -1,23 +1,30 @@
 package dev.forgesworn.cambium.log
 
 import android.content.Intent
+import android.content.res.ColorStateList
+import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
 import android.view.View
+import android.view.ViewGroup
 import android.widget.AdapterView
 import android.widget.ArrayAdapter
 import android.widget.Spinner
+import android.widget.LinearLayout
+import android.widget.ScrollView
+import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.core.view.ViewCompat
 import androidx.core.view.isVisible
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import com.google.android.material.button.MaterialButton
 import dev.forgesworn.cambium.R
 import dev.forgesworn.cambium.applock.AppLockPrompt
 import dev.forgesworn.cambium.applock.AppLockStore
 import dev.forgesworn.cambium.databinding.ActivityLogBinding
 import dev.forgesworn.cambium.databinding.ItemActivityLogEntryBinding
 import dev.forgesworn.cambium.displayNameFor
-import dev.forgesworn.cambium.reserveDialogActions
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -203,24 +210,69 @@ class ActivityLogActivity : AppCompatActivity() {
             packageManager.getPackageInfo(packageName, 0).versionName ?: "unknown",
             Build.VERSION.SDK_INT,
         )
-        val dialog = MaterialAlertDialogBuilder(this)
-            .setTitle(R.string.diagnostics_report_title)
-            .setMessage(report)
-            .setPositiveButton(R.string.diagnostics_share) { _, _ ->
-                if (AppLockPrompt.requiresAuthenticationNow(this, appLockStore)) {
-                    showLocked()
-                } else {
-                    startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
-                        type = "text/plain"
-                        putExtra(Intent.EXTRA_SUBJECT, getString(R.string.diagnostics_report_title))
-                        putExtra(Intent.EXTRA_TEXT, report)
-                    }, getString(R.string.diagnostics_share_chooser)))
-                }
+        val builder = MaterialAlertDialogBuilder(this)
+        val dialogContext = builder.context
+        val density = resources.displayMetrics.density
+        val padding = (16 * density).toInt()
+        val column = LinearLayout(dialogContext).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(padding, padding, padding, padding)
+        }
+        val title = TextView(dialogContext).apply {
+            setText(R.string.diagnostics_report_title)
+            setTextAppearance(R.style.TextAppearance_Cambium_Section)
+            ViewCompat.setAccessibilityHeading(this, true)
+        }
+        column.addView(title, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = (8 * density).toInt() })
+        val reportText = TextView(dialogContext).apply {
+            id = android.R.id.message
+            text = report
+            setTextAppearance(R.style.TextAppearance_Cambium_Code)
+            setTextIsSelectable(true)
+        }
+        val reportScroll = ScrollView(dialogContext).apply {
+            addView(reportText, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT))
+        }
+        column.addView(reportScroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+            0, 1f).apply { bottomMargin = (12 * density).toInt() })
+        // The footer belongs to our fixed-height column, outside the report's scroll viewport.
+        // Platform message-dialog buttons are deliberately not used: their scrolling bar can
+        // clip a stacked action at larger text sizes.
+        val footer = LinearLayout(dialogContext).apply { orientation = LinearLayout.VERTICAL }
+        val share = MaterialButton(dialogContext).apply { setText(R.string.diagnostics_share) }
+        val cancel = MaterialButton(dialogContext).apply {
+            setText(android.R.string.cancel)
+            backgroundTintList = ColorStateList.valueOf(Color.TRANSPARENT)
+            setTextColor(ContextCompat.getColor(this@ActivityLogActivity, R.color.accent))
+        }
+        footer.addView(share, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT))
+        footer.addView(cancel, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = (4 * density).toInt() })
+        column.addView(footer, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT))
+        val dialog = builder.setView(column).create()
+        cancel.setOnClickListener { dialog.dismiss() }
+        share.setOnClickListener {
+            dialog.dismiss()
+            if (AppLockPrompt.requiresAuthenticationNow(this, appLockStore)) {
+                showLocked()
+            } else {
+                startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
+                    type = "text/plain"
+                    putExtra(Intent.EXTRA_SUBJECT, getString(R.string.diagnostics_report_title))
+                    putExtra(Intent.EXTRA_TEXT, report)
+                }, getString(R.string.diagnostics_share_chooser)))
             }
-            .setNegativeButton(android.R.string.cancel, null)
-            .create()
+        }
         dialog.show()
-        reserveDialogActions(dialog)
+        // Use the activity's inset-aware content height, leaving room for the dialog background.
+        // With an exact column height, only the weighted report pane gives up space; both
+        // full-width actions retain their complete measured height.
+        val availableHeight = binding.root.height.takeIf { it > 0 } ?: resources.displayMetrics.heightPixels
+        column.layoutParams = column.layoutParams.apply { height = (availableHeight * 0.85f).toInt() }
     }
 
     private fun failureLabel(category: ActivityLogEntry.FailureCategory): Int = when (category) {

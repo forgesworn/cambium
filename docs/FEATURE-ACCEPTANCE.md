@@ -33,14 +33,16 @@ reuse the existing Gradle caches and limit workers/heap to reduce resource use:
   :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest
 ```
 
-The final local build passed all 329 JVM tests across 40 suites, with zero failures, errors or
+The final local build passed all 330 JVM tests across 40 suites, with zero failures, errors or
 skips, and assembled both the debug and instrumentation APKs. A local Android run before the
 final consent/storage fixes passed all 36 then-existing instrumented tests without skips.
 
-CI runs the final 39-test Android suite on a fresh API 35 emulator, followed by 16 UI regressions
+CI runs the final 40-test Android suite on a fresh API 35 emulator, followed by 16 UI regressions
 at 320 dp width and 150% text scaling. The compact run requires all 16 tests to complete without
 skips. The draft pull request records the exact committed head, CI run and verified result counts;
-its checks are the current acceptance receipt. Runner summaries are checked alongside per-test
+its checks are the current acceptance receipt. The native transport regressions include a
+two-relay migration and process restart with a signer that refuses consumed admission secrets.
+Runner summaries are checked alongside per-test
 statuses: assumptions and skipped tests are not counted as proof.
 
 ## Behaviour and limits
@@ -64,6 +66,8 @@ statuses: assumptions and skipped tests are not counted as proof.
   invalid replies preserve the current transport. A durable encrypted-preferences commit must
   succeed before the transport changes; failed or throwing persistence stops that attempt and
   restores the stored relay list. Transport relays are not the user's publishing or read relay list.
+  Pairing admission uses the bunker secret; all saved-session connections resume with the same
+  authorised client key without replaying that secret, covering signers with single-use admission.
 - Reports contain a fixed allowlist. App/identity labels, event data, plaintext/ciphertext,
   pairing links, relay addresses, raw errors, keys and local identity references are excluded.
   Reports are not stored as files. Entries written before local identity references existed remain

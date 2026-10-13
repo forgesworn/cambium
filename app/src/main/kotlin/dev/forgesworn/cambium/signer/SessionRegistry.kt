@@ -656,7 +656,11 @@ class SessionRegistry(
             var target = if (pairing.copy(label = null) == relaySourcePairing?.copy(label = null))
                 relayUpdatedPairing ?: pairing else pairing
             var fresh = clientFactory()
-            fun uri() = BunkerUri(target.signerPubkeyHex, target.relays, target.secret).toUriString()
+            // Persisted pairings (including the 0.2.x migration) exist only after MainActivity's
+            // disposable client completed admission with this exact client key. Resume by that
+            // key, never replay the bunker secret: NIP-46 permits single-use admission tokens.
+            // This also covers the first registry request after pairing or a process restart.
+            fun uri() = BunkerUri(target.signerPubkeyHex, target.relays, secret = null).toUriString()
             val initial = fresh.connect(uri(), target.clientSecretKeyHex)
             if (initial is HeartwoodResult.Failure) {
                 fresh.disconnect()

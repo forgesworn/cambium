@@ -673,6 +673,9 @@ Android apps              Websites
   same identity worker; reconnect never cancels active FFI work. `RelaySwitch.kt` validates bounded
   secure relay updates. SDK envelopes check kind/signature, signer, recipient and random request
   id; optional discovery is attempted at most hourly and unsupported methods preserve signing.
+  Only the disposable pairing check sends the admission secret. Stored pairings, including legacy
+  migrated entries, were saved after that successful check; registry connections resume with the
+  same authorised client key and omit the secret after restart, reconnect and relay migration.
 - Explicit NIP-55 SINGLE_TOP + CLEAR_TOP batches queue up to 32 native requests and return ordered
   `results`. Unattributable reused intents need visible one-shot consent; they cannot borrow the
   initial caller's approval. API 35's current caller must match the result recipient when known.

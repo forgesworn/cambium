@@ -82,6 +82,9 @@ is evidence of contact at that time, not a guarantee the board is still online. 
 support NIP-46 `switch_relays` can supply updated transport relays: Cambium verifies the exact
 signer's response and persists validated `wss://` endpoints before changing transport. Older
 signers remain usable; refresh their pairing from Sapwood when their relay list changes.
+The pairing check uses the bunker admission secret. Saved connections resume with the same
+authorised client key, including after restart or a relay change, so single-use secrets are
+not replayed.
 
 *Rename identity* changes only its local label. A connected app's *Edit* action changes its
 operation scope, approval lifetime or identity binding. Changing identity requires confirmation
