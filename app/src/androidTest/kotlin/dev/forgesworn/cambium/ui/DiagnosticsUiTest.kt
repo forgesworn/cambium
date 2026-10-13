@@ -141,7 +141,6 @@ class DiagnosticsUiTest {
     }
 
     private fun captureGeometry(button: View) {
-        if (InstrumentationRegistry.getArguments().getString("capture_ui") != "true") return
         val geometry = buildString {
             var current: View? = button
             var depth = 0
@@ -155,6 +154,8 @@ class DiagnosticsUiTest {
                 current = current.parent as? View
             }
         }
+        android.util.Log.i("CambiumUiGeometry", geometry)
+        if (InstrumentationRegistry.getArguments().getString("capture_ui") != "true") return
         val folder = File(context.filesDir, "ui-review").apply { mkdirs() }
         File(folder, "diagnostics-report-geometry.txt").writeText(geometry)
     }

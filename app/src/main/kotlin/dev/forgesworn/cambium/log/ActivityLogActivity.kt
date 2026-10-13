@@ -272,8 +272,8 @@ class ActivityLogActivity : AppCompatActivity() {
         // Constrain our column to that measured viewport so only the weighted text pane shrinks.
         val availableHeight = binding.root.height.takeIf { it > 0 } ?: resources.displayMetrics.heightPixels
         val desiredHeight = (availableHeight * 0.85f).toInt()
-        column.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
-            val viewport = column.parent as? View ?: return@addOnLayoutChangeListener
+        fun fitViewport() {
+            val viewport = column.parent as? View ?: return
             val contentHeight = viewport.height - viewport.paddingTop - viewport.paddingBottom
             if (contentHeight > 0) {
                 val height = minOf(desiredHeight, contentHeight)
@@ -282,6 +282,8 @@ class ActivityLogActivity : AppCompatActivity() {
                 }
             }
         }
+        // Request the new measure after the current layout has finished clearing its flags.
+        column.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> column.post { fitViewport() } }
         column.layoutParams = column.layoutParams.apply { height = desiredHeight }
     }
 
