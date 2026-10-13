@@ -1,7 +1,7 @@
 # Connection, consent and diagnostics controls
 
-This records the features requested on 13 October 2026. They are development changes after
-0.8.0; the published release and distribution channels have not been changed.
+This records the features requested on 13 October 2026 and included in 0.9.0.
+Published artefact and channel verification is recorded in `DISTRIBUTION.md`.
 
 | Requested feature | Implementation | Automated evidence |
 | --- | --- | --- |

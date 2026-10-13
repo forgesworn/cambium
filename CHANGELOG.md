@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.9.0 (2026-10-13)
 
 - Native approval can be once, hourly, daily or indefinite, with optional method and event-kind
   restrictions. Existing approvals keep their previous meaning; websites remain one-shot.

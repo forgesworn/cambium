@@ -25,7 +25,10 @@ description: |
   this phone to unlock it. One tap and your screen lock send the board's unlock
   secret, which signs nothing and is useless without the board's own flash.
 
-  Native Android apps can use Cambium silently after approval. Websites can use
+  Native approvals can be once, for an hour or day, or indefinite, with operation
+  and signing-kind limits. Review and edit existing choices, test or reconnect a
+  signer, and review a redacted diagnostic report before sharing it.
+  Native Android apps can use Cambium silently while approved. Websites can use
   NIP-55 nostrsigner: links with an explicit one-shot approval and a validated
   HTTPS callback or clipboard result. Per-identity bounded priority queues keep
   user work available during relay-authentication bursts.

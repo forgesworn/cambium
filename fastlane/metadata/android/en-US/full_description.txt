@@ -17,11 +17,14 @@ Features:
 - Website NIP-55 support through nostrsigner: links, with explicit one-shot approval and a validated HTTPS callback or clipboard result. Browser approval is never remembered.
 - A silent content-provider path answers already-approved apps without any visible popup.
 - Per-identity bounded priority queues reserve room for user work. Exact relay-authentication duplicates coalesce and cache briefly; distinct AUTH bursts are admitted one at a time, never retried internally, and paused for 60 seconds after a transport failure.
-- Persistent per-app approval or denial, with a connected-apps list to review and forget choices.
+- Native approvals can be once, for an hour or day, or indefinite, with operation and signing-kind limits. Review, edit or forget choices in the connected-apps list; denial remains permanent.
+- Clear request summaries and bounded, temporary request details, with private and encrypted content hidden.
+- Rename paired identities, check connection health and last contact, and explicitly test or reconnect. Supported signers can securely update their NIP-46 transport relays.
+- Native NIP-55 signing batches return ordered results and per-request rejections.
 - Optional keep-warm foreground service so silent signing skips the reconnect penalty.
 - Phone unlock: a Heartwood that restarts locked after a power cut asks this phone to unlock it. The notification names the board, why it restarted and on which network, and warns that anyone holding the board can make it ask. One tap and your screen lock unlock it. Nothing on the wire names the phone.
 - Says when a paired signer has gone quiet (a power cut or network problem at the board).
-- A metadata-only activity log (app, method, event kind, identity, outcome — never any content).
+- A metadata-only activity log with safe failure categories, timings and app/identity/outcome filters. Review a redacted diagnostic report before explicitly sharing it; no event content, credentials, relay addresses or identifying labels are exported.
 - Optional biometric or device-credential app lock on the management screen and approval decisions.
 
 No Google Play services, no Firebase, no analytics. Runs on any 64-bit Android 8.1+ device, including GrapheneOS.
