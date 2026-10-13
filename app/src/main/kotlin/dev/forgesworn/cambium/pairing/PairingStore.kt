@@ -30,20 +30,6 @@ data class Pairing(
     val label: String? = null,
 )
 
-/** A calling app's remembered choice, plus -- for an approval -- which paired identity it was
- * approved for. Absence of any [AppPermission] (`null` from [PairingStore.permission]) means
- * "ask": the approval sheet has not been shown yet, or the user has not made a lasting choice.
- * [boundIdentityPubkeyHex] is only meaningful for [AppPermissionState.APPROVED] -- a denial blocks
- * the app outright, regardless of identity, so it carries no binding (see [PairingStore.deny]). */
-@Serializable
-data class AppPermission(
-    val state: AppPermissionState,
-    val boundIdentityPubkeyHex: String?,
-)
-
-@Serializable
-enum class AppPermissionState { APPROVED, DENIED }
-
 /**
  * Persists every paired Heartwood identity and the per-app permission set in Android
  * Keystore-backed EncryptedSharedPreferences. Both are stored as a single encrypted JSON blob per
@@ -59,7 +45,7 @@ enum class AppPermissionState { APPROVED, DENIED }
  * partially-written legacy state (missing any of the required fields) is treated as nothing to
  * migrate rather than guessed at.
  */
-class PairingStore(context: Context) {
+class PairingStore(context: Context, private val nowMillis: () -> Long = System::currentTimeMillis) {
 
     private val appContext = context.applicationContext
     private var migrationChecked = false
@@ -77,7 +63,7 @@ class PairingStore(context: Context) {
         )
     }
 
-    fun pairings(): List<Pairing> = readPairings()
+    fun pairings(): List<Pairing> = synchronized(STORE_LOCK) { readPairings() }
 
     fun isPaired(): Boolean = pairings().isNotEmpty()
 
@@ -87,18 +73,18 @@ class PairingStore(context: Context) {
      * key into [addPairing] afterwards -- otherwise a successfully-tested key could be discarded
      * in favour of a fresh, never-tested one generated inside [addPairing].
      */
-    fun ensureClientKeys(): ClientKeys.Generated {
+    fun ensureClientKeys(): ClientKeys.Generated = synchronized(STORE_LOCK) {
         val existingSecret = prefs.getString(KEY_CLIENT_SECRET, null)
         if (existingSecret != null) {
             val publicHex = prefs.getString(KEY_CLIENT_PUBKEY, null) ?: ClientKeys.publicKeyHexFor(existingSecret)
-            return ClientKeys.Generated(existingSecret, publicHex)
+            return@synchronized ClientKeys.Generated(existingSecret, publicHex)
         }
         val generated = ClientKeys.generate()
         prefs.edit()
             .putString(KEY_CLIENT_SECRET, generated.secretKeyHex)
             .putString(KEY_CLIENT_PUBKEY, generated.publicKeyHex)
             .apply()
-        return generated
+        generated
     }
 
     /**
@@ -108,7 +94,7 @@ class PairingStore(context: Context) {
      * keeps whatever label the entry already had, so refreshing a pairing never silently clears a
      * name the user chose. Call [ensureClientKeys] first is not required -- this calls it itself.
      */
-    fun addPairing(bunkerUri: BunkerUri, label: String? = null): Pairing {
+    fun addPairing(bunkerUri: BunkerUri, label: String? = null): Pairing = synchronized(STORE_LOCK) {
         val clientKeys = ensureClientKeys()
         val existing = readPairings()
         val previousLabel = existing.firstOrNull { it.signerPubkeyHex == bunkerUri.signerPubkeyHex }?.label
@@ -121,29 +107,162 @@ class PairingStore(context: Context) {
             label = label?.takeIf { it.isNotBlank() } ?: previousLabel,
         )
         writePairings(existing.filterNot { it.signerPubkeyHex == bunkerUri.signerPubkeyHex } + updated)
-        return updated
+        updated
     }
 
     /** Removes one pairing. Any app bound to that identity (see [AppPermission.boundIdentityPubkeyHex])
      * has its permission forgotten too, back to "ask" -- a remembered approval bound to an
      * identity that no longer exists must never be reinterpreted as approval for a different one
      * (see [IdentityRouting]). */
-    fun removePairing(signerPubkeyHex: String) {
-        writePairings(readPairings().filterNot { it.signerPubkeyHex == signerPubkeyHex })
-        writePermissions(readPermissions().filterNot { (_, permission) -> permission.boundIdentityPubkeyHex == signerPubkeyHex })
+    fun removePairing(signerPubkeyHex: String) = synchronized(STORE_LOCK) {
+        val pairings = readPairings().filterNot { it.signerPubkeyHex == signerPubkeyHex }
+        val permissions = readPermissions().filterNot { (_, permission) -> permission.boundIdentityPubkeyHex == signerPubkeyHex }
+        prefs.edit()
+            .putString(KEY_PAIRINGS_JSON, Json.encodeToString(pairings))
+            .putString(KEY_APP_PERMISSIONS_JSON, Json.encodeToString(permissions))
+            .apply()
+    }
+
+    /** A blank label restores the public-key display. Never changes identity or credentials. */
+    fun renamePairing(signerPubkeyHex: String, label: String?): Boolean = synchronized(STORE_LOCK) {
+        val existing = readPairings()
+        if (existing.none { it.signerPubkeyHex == signerPubkeyHex }) return@synchronized false
+        writePairings(existing.map {
+            if (it.signerPubkeyHex == signerPubkeyHex) it.copy(label = label?.trim()?.takeIf(String::isNotEmpty)) else it
+        })
+        true
+    }
+
+    /** Persists an authenticated relay change only if the pairing still matches the connection
+     * that returned it. Caller validates relay policy; a newer re-pair wins over a stale reply. */
+    fun updatePairingRelays(
+        expected: Pairing,
+        validatedRelays: List<String>,
+    ): Boolean = synchronized(STORE_LOCK) {
+        if (validatedRelays.isEmpty()) return@synchronized false
+        val existing = readPairings()
+        val pairing = existing.firstOrNull { it.signerPubkeyHex == expected.signerPubkeyHex } ?: return@synchronized false
+        if (pairing.copy(label = null) != expected.copy(label = null)) return@synchronized false
+        val previousJson = prefs.getString(KEY_PAIRINGS_JSON, null)
+        val updated = existing.map { if (it == pairing) it.copy(relays = validatedRelays) else it }
+        // Relay transport must change only after durable storage has accepted the new list.
+        // commit() also changes SharedPreferences' memory before attempting disk I/O, so a
+        // failed write needs its old in-memory value restored before this lock is released.
+        val committed = runCatching {
+            prefs.edit().putString(KEY_PAIRINGS_JSON, Json.encodeToString(updated)).commit()
+        }.getOrDefault(false)
+        if (!committed) {
+            val rollback = prefs.edit()
+            if (previousJson == null) rollback.remove(KEY_PAIRINGS_JSON)
+            else rollback.putString(KEY_PAIRINGS_JSON, previousJson)
+            rollback.apply()
+        }
+        committed
     }
 
     /** Full reset: every pairing, every app permission, the keep-alive toggle, and Cambium's own
      * client keypair. A future re-pair generates a fresh client keypair -- the same "forget
      * everything" behaviour unpairing the single 0.2.x pairing had. */
-    fun clearAll() {
+    fun clearAll() = synchronized(STORE_LOCK) {
         prefs.edit().clear().apply()
+        migrationChecked = false
     }
 
-    /** Remembers that [packageName] may use [identityPubkeyHex] without asking again. Clears any
-     * previous denial -- approved and denied are mutually exclusive. */
-    fun approve(packageName: String, identityPubkeyHex: String) =
-        setPermission(packageName, AppPermission(AppPermissionState.APPROVED, identityPubkeyHex))
+    /** Remembers local consent for an existing pairing. ONCE preserves any earlier remembered
+     * choice and never writes a grant: its caller authorises just the current visible request. */
+    fun approve(
+        packageName: String,
+        identityPubkeyHex: String,
+        lifetime: ApprovalLifetime = ApprovalLifetime.ALWAYS,
+        scope: PermissionScope? = null,
+    ): Boolean = synchronized(STORE_LOCK) {
+        if (readPairings().none { it.signerPubkeyHex == identityPubkeyHex }) return@synchronized false
+        lifetime.permission(identityPubkeyHex, scope, nowMillis())?.let { setPermission(packageName, it) }
+        true
+    }
+
+    /** Consent from an open sheet covers the exact connection the user saw. A re-pair or
+     * removal invalidates that sheet before any remembered choice is written. */
+    fun approveIfPairingCurrent(
+        packageName: String,
+        expectedPairing: Pairing,
+        lifetime: ApprovalLifetime = ApprovalLifetime.ALWAYS,
+        scope: PermissionScope? = null,
+    ): Boolean = synchronized(STORE_LOCK) {
+        val current = readPairings().firstOrNull { it.signerPubkeyHex == expectedPairing.signerPubkeyHex }
+            ?: return@synchronized false
+        if (current.copy(label = null) != expectedPairing.copy(label = null)) return@synchronized false
+        approve(packageName, current.signerPubkeyHex, lifetime, scope)
+    }
+
+    /** Native consent must also match the active remembered choice shown by the sheet. Null
+     * means the sheet showed no active choice, rather than skipping the comparison. A newer
+     * deny, scope change or identity binding wins even over a one-shot biometric callback. */
+    fun approveIfSheetCurrent(
+        packageName: String,
+        expectedPairing: Pairing,
+        expectedPermission: AppPermission?,
+        lifetime: ApprovalLifetime = ApprovalLifetime.ALWAYS,
+        scope: PermissionScope? = null,
+    ): Boolean = synchronized(STORE_LOCK) {
+        val current = readPermissions()[packageName]?.takeIf { it.isActive(nowMillis()) }
+        if (current?.state == AppPermissionState.DENIED) return@synchronized false
+        if (current != expectedPermission) return@synchronized false
+        approveIfPairingCurrent(packageName, expectedPairing, lifetime, scope)
+    }
+
+    /** Call only after explicit user confirmation. An expired or denied entry cannot be revived.
+     * The existing expiry and scope are preserved exactly, rather than granting fresh consent.
+     * Dialog callers pass [expected] so a newer remembered choice cannot be overwritten. */
+    fun rebindApproval(
+        packageName: String,
+        identityPubkeyHex: String,
+        expected: AppPermission? = null,
+    ): Boolean = synchronized(STORE_LOCK) {
+        if (readPairings().none { it.signerPubkeyHex == identityPubkeyHex }) return@synchronized false
+        val permission = readPermissions()[packageName] ?: return@synchronized false
+        if (expected != null && permission != expected) return@synchronized false
+        if (permission.state != AppPermissionState.APPROVED || !permission.isActive(nowMillis())) return@synchronized false
+        setPermission(packageName, permission.copy(boundIdentityPubkeyHex = identityPubkeyHex))
+        true
+    }
+
+    /** Edits an active approval after explicit user confirmation. Null lifetime preserves its
+     * existing end time; a selected lifetime deliberately starts a new period. ONCE is not stored. */
+    fun updateApproval(
+        packageName: String,
+        identityPubkeyHex: String,
+        lifetime: ApprovalLifetime? = null,
+        scope: PermissionScope? = null,
+        expected: AppPermission? = null,
+    ): Boolean = synchronized(STORE_LOCK) {
+        if (lifetime == ApprovalLifetime.ONCE) return@synchronized false
+        if (readPairings().none { it.signerPubkeyHex == identityPubkeyHex }) return@synchronized false
+        val previous = readPermissions()[packageName] ?: return@synchronized false
+        if (expected != null && previous != expected) return@synchronized false
+        if (previous.state != AppPermissionState.APPROVED || !previous.isActive(nowMillis())) return@synchronized false
+        val updated = if (lifetime == null) previous.copy(boundIdentityPubkeyHex = identityPubkeyHex, scope = scope)
+            else lifetime.permission(identityPubkeyHex, scope, nowMillis()) ?: return@synchronized false
+        setPermission(packageName, updated)
+        true
+    }
+
+    /** Explicit duration confirmation edits only the entry the dialog displayed. Its exact
+     * identity and operation scope survive renewal; a newer deny, rebind or scope edit wins.
+     * Expired approvals may be renewed explicitly, while ONCE restores asking on each request. */
+    fun changeApprovalLifetimeIfCurrent(
+        packageName: String,
+        expectedPermission: AppPermission,
+        lifetime: ApprovalLifetime,
+    ): Boolean = synchronized(STORE_LOCK) {
+        if (expectedPermission.state != AppPermissionState.APPROVED) return@synchronized false
+        val previous = readPermissions()[packageName] ?: return@synchronized false
+        if (previous != expectedPermission) return@synchronized false
+        val identity = previous.boundIdentityPubkeyHex ?: return@synchronized false
+        if (readPairings().none { it.signerPubkeyHex == identity }) return@synchronized false
+        setPermission(packageName, lifetime.permission(identity, previous.scope, nowMillis()))
+        true
+    }
 
     /** Remembers that [packageName] must never use the paired signer without asking again.
      * Denial is not identity-specific -- it blocks the app outright -- so it carries no binding.
@@ -154,22 +273,24 @@ class PairingStore(context: Context) {
     /** Forgets any remembered choice for [packageName]: back to "ask" next time. */
     fun forget(packageName: String) = setPermission(packageName, null)
 
-    private fun setPermission(packageName: String, permission: AppPermission?) {
+    private fun setPermission(packageName: String, permission: AppPermission?) = synchronized(STORE_LOCK) {
         val current = readPermissions()
         writePermissions(if (permission == null) current - packageName else current + (packageName to permission))
     }
 
-    fun permission(packageName: String): AppPermission? = readPermissions()[packageName]
+    fun permission(packageName: String): AppPermission? = synchronized(STORE_LOCK) {
+        readPermissions()[packageName]?.takeIf { it.isActive(nowMillis()) }
+    }
 
     /** All remembered choices, for the connected-apps list in `MainActivity`. */
-    fun allPermissions(): Map<String, AppPermission> = readPermissions()
+    fun allPermissions(): Map<String, AppPermission> = synchronized(STORE_LOCK) { readPermissions() }
 
     /** Persisted independent of any one pairing, not tied to any one activity/service instance --
      * read by [dev.forgesworn.cambium.service.HeartwoodKeepAliveService], [dev.forgesworn.cambium.service.BootReceiver]
      * and `MainActivity`'s toggle. Defaults to off: this is an opt-in battery trade-off. */
-    fun isKeepAliveEnabled(): Boolean = prefs.getBoolean(KEY_KEEP_ALIVE_ENABLED, false)
+    fun isKeepAliveEnabled(): Boolean = synchronized(STORE_LOCK) { prefs.getBoolean(KEY_KEEP_ALIVE_ENABLED, false) }
 
-    fun setKeepAliveEnabled(enabled: Boolean) {
+    fun setKeepAliveEnabled(enabled: Boolean) = synchronized(STORE_LOCK) {
         prefs.edit().putBoolean(KEY_KEEP_ALIVE_ENABLED, enabled).apply()
     }
 
@@ -235,6 +356,9 @@ class PairingStore(context: Context) {
     }
 
     private companion object {
+        // Activities and provider instantiate separate stores. One process-wide lock protects
+        // every read-modify-write, including removal, migration, rename and approval changes.
+        val STORE_LOCK = Any()
         const val PREFS_NAME = "cambium_pairing"
         const val KEY_PAIRINGS_JSON = "pairings_json"
         const val KEY_APP_PERMISSIONS_JSON = "app_permissions_json"

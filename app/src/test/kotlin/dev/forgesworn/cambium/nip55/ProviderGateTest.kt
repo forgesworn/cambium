@@ -2,6 +2,7 @@ package dev.forgesworn.cambium.nip55
 
 import dev.forgesworn.cambium.pairing.AppPermission
 import dev.forgesworn.cambium.pairing.AppPermissionState
+import dev.forgesworn.cambium.pairing.PermissionScope
 import dev.forgesworn.cambium.signer.HeartwoodError
 import dev.forgesworn.cambium.signer.HeartwoodOutcome
 import dev.forgesworn.cambium.signer.HeartwoodRequestPriority
@@ -129,4 +130,30 @@ class ProviderGateTest {
         assertEquals(HeartwoodRequestPriority.INTERACTIVE, ProviderGate.priorityForSignEvent(7))
         assertEquals(HeartwoodRequestPriority.INTERACTIVE, ProviderGate.priorityForSignEvent(null))
     }
+    @Test
+    fun `expired permission passed directly to gate defers visibly`() {
+        val expired = AppPermission(AppPermissionState.APPROVED, boundIdentity, expiresAtMillis = 100)
+        assertIs<ProviderGate.Caller.Defer>(ProviderGate.resolveCaller("client", nowMillis = 100) { expired })
+        assertFalse(ProviderGate.allowsRequest(expired, "nip44_decrypt", nowMillis = 100))
+    }
+
+    @Test
+    fun `scope omitted methods and unrelated event kinds defer before native calls or cache hits`() {
+        val scoped = AppPermission(AppPermissionState.APPROVED, boundIdentity,
+            scope = PermissionScope(setOf("sign_event", "nip44_decrypt"), setOf(1)))
+        assertTrue(ProviderGate.allowsRequest(scoped, "sign_event", 1))
+        assertTrue(ProviderGate.allowsRequest(scoped, "nip44_decrypt"))
+        assertFalse(ProviderGate.allowsRequest(scoped, "sign_event", 22242))
+        assertFalse(ProviderGate.allowsRequest(scoped, "sign_event", null))
+        assertFalse(ProviderGate.allowsRequest(scoped, "nip44_encrypt"))
+        assertTrue(ProviderGate.allowsRequest(scoped, "get_public_key"))
+    }
+
+    @Test
+    fun `permanent denial still rejects independently of operation scope`() {
+        val denied = AppPermission(AppPermissionState.DENIED, null, scope = PermissionScope(setOf("sign_event")))
+        assertIs<ProviderGate.Caller.Rejected>(ProviderGate.resolveCaller("client") { denied })
+        assertFalse(ProviderGate.allowsRequest(denied, "sign_event", 1))
+    }
+
 }

@@ -73,6 +73,36 @@
                 android:textSize="14sp"
                 tools:text="sign_event" />
 
+            <TextView
+                android:id="@+id/requestSummary"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:textAppearance="@style/TextAppearance.Cambium.Label" />
+
+            <Button
+                android:id="@+id/requestDetailsButton"
+                style="@style/Widget.Cambium.Button.Text"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/request_details" />
+
+            <TextView
+                android:id="@+id/batchPosition"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:textAppearance="@style/TextAppearance.Cambium.Detail"
+                android:visibility="gone" />
+
+            <TextView
+                android:id="@+id/batchCallerNote"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:textAppearance="@style/TextAppearance.Cambium.Detail"
+                android:textColor="@color/warning"
+                android:visibility="gone" />
+
             <LinearLayout
                 android:id="@+id/kindRow"
                 android:layout_width="match_parent"
@@ -192,6 +222,47 @@
                 android:text="@string/approval_native_remember_note"
                 android:textAppearance="@style/TextAppearance.Cambium.Detail"
                 android:visibility="gone" />
+
+            <LinearLayout
+                android:id="@+id/nativePermissionControls"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:visibility="gone">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:labelFor="@id/approvalLifetimePicker"
+                    android:text="@string/approval_duration_label"
+                    android:textAppearance="@style/TextAppearance.Cambium.Detail" />
+
+                <Spinner
+                    android:id="@+id/approvalLifetimePicker"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:minHeight="48dp" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:labelFor="@id/approvalScopePicker"
+                    android:text="@string/approval_scope_label"
+                    android:textAppearance="@style/TextAppearance.Cambium.Detail" />
+
+                <Spinner
+                    android:id="@+id/approvalScopePicker"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:minHeight="48dp" />
+
+                <TextView
+                    android:id="@+id/approvalScopeSummary"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:textAppearance="@style/TextAppearance.Cambium.Detail" />
+            </LinearLayout>
 
             <LinearLayout
                 android:id="@+id/decisionGroup"

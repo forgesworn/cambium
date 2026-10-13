@@ -22,6 +22,7 @@ import androidx.test.espresso.assertion.ViewAssertions.matches
 import androidx.test.espresso.matcher.RootMatchers.isDialog
 import androidx.test.espresso.matcher.ViewMatchers.hasDescendant
 import androidx.test.espresso.matcher.ViewMatchers.isDisplayed
+import androidx.test.espresso.matcher.ViewMatchers.isCompletelyDisplayed
 import androidx.test.espresso.matcher.ViewMatchers.isEnabled
 import androidx.test.espresso.matcher.ViewMatchers.withId
 import androidx.test.espresso.matcher.ViewMatchers.withParent
@@ -42,6 +43,11 @@ import dev.forgesworn.cambium.log.ActivityLogEntry
 import dev.forgesworn.cambium.log.ActivityLogStore
 import dev.forgesworn.cambium.nip55.SignerActivity
 import dev.forgesworn.cambium.pairing.AppPermissionState
+import dev.forgesworn.cambium.pairing.ApprovalLifetime
+import dev.forgesworn.cambium.pairing.PermissionScope
+import dev.forgesworn.cambium.signer.ConnectionStatus
+import dev.forgesworn.cambium.signer.HeartwoodSession
+import kotlinx.coroutines.runBlocking
 import dev.forgesworn.cambium.pairing.BunkerUri
 import dev.forgesworn.cambium.pairing.PairingStore
 import dev.forgesworn.cambium.unlock.EnrolmentCode
@@ -49,6 +55,7 @@ import java.io.File
 import java.net.URLEncoder
 import org.hamcrest.Matchers.allOf
 import org.hamcrest.Matchers.equalTo
+import org.hamcrest.Matchers.containsString
 import org.hamcrest.Matchers.not
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -283,6 +290,110 @@ class UiFlowRegressionTest {
             onView(withId(R.id.logEmpty)).perform(scrollTo()).check(matches(isDisplayed()))
             assertTrue(log.entries().isEmpty())
             assertEquals(2, pairings.pairings().size)
+        }
+    }
+
+    @Test
+    fun pairedSignerCanBeTestedWithoutPretendingItIsReachable() {
+        pairings.addPairing(BunkerUri(desk, listOf("wss://127.0.0.1:1"), "ui-fixture"), "Desk Heartwood")
+        try {
+            ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+                onView(withId(R.id.pairingHealthValue)).perform(scrollTo())
+                    .check(matches(withText(containsString(context.getString(R.string.connection_unknown)))))
+                onView(withId(R.id.pairingTestButton)).perform(scrollTo(), click())
+                    .check(matches(not(isEnabled())))
+                val deadline = SystemClock.uptimeMillis() + 30_000
+                while (HeartwoodSession.health.value[desk]?.status != ConnectionStatus.UNAVAILABLE &&
+                    SystemClock.uptimeMillis() < deadline) SystemClock.sleep(25)
+                InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+                assertEquals(ConnectionStatus.UNAVAILABLE, HeartwoodSession.health.value[desk]?.status)
+                assertNull(HeartwoodSession.health.value[desk]?.lastSuccessfulContactMillis)
+                // Worker state can change before the lifecycle collector has drawn it. Await the
+                // actual outcome on screen, rather than treating an idle queue as a rendered frame.
+                val reason = context.getString(R.string.connection_error_timeout)
+                val renderDeadline = SystemClock.uptimeMillis() + 5_000
+                var rendered = false
+                while (!rendered && SystemClock.uptimeMillis() < renderDeadline) {
+                    scenario.onActivity { activity ->
+                        rendered = activity.findViewById<TextView>(R.id.pairingHealthValue)?.text?.contains(reason) == true &&
+                            activity.findViewById<View>(R.id.pairingTestButton)?.isEnabled == true
+                    }
+                    if (!rendered) SystemClock.sleep(25)
+                }
+                assertTrue("Connection failure must be rendered with recovery available", rendered)
+                onView(withId(R.id.pairingHealthValue)).perform(scrollTo())
+                    .check(matches(withText(containsString(reason))))
+                onView(withId(R.id.pairingTestButton)).perform(scrollTo()).check(matches(isEnabled()))
+                capture("connection-unavailable")
+            }
+        } finally {
+            runBlocking { HeartwoodSession.shutdown(desk) }
+        }
+    }
+
+    @Test
+    fun onceApprovalAnswersWithoutRememberingNativeApp() {
+        seedSigners()
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            launchNativeRequest(scenario)
+            onView(withId(R.id.approvalLifetimePicker)).perform(scrollTo(), click())
+            onData(equalTo(context.getString(R.string.approval_once))).perform(click())
+            onView(withId(R.id.approveButton)).perform(scrollTo(), click())
+            assertNull(pairings.permission(context.packageName))
+            launchNativeRequest(scenario)
+            onView(withId(R.id.declineButton)).perform(scrollTo(), click())
+        }
+    }
+
+    @Test
+    fun hourlyApprovalCanBeRestrictedToCurrentOperation() {
+        seedSigners()
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            launchNativeRequest(scenario)
+            onView(withId(R.id.approvalLifetimePicker)).perform(scrollTo(), click())
+            onData(equalTo(context.getString(R.string.approval_hour))).perform(click())
+            onView(withId(R.id.approvalScopePicker)).perform(scrollTo(), click())
+            onData(equalTo(context.getString(R.string.approval_scope_current))).perform(click())
+            onView(withId(R.id.approveButton)).perform(scrollTo(), click())
+            val grant = pairings.permission(context.packageName)!!
+            assertTrue(grant.expiresAtMillis!! > System.currentTimeMillis())
+            assertTrue(grant.expiresAtMillis!! <= System.currentTimeMillis() + 3_600_000)
+            assertFalse(grant.allows("sign_event", 1))
+            assertTrue(grant.allows("get_public_key"))
+        }
+    }
+
+    @Test
+    fun renameAndConfirmedRebindKeepCredentialsScopeAndExpiry() {
+        seedSigners()
+        val scope = PermissionScope(setOf("nip44_decrypt"))
+        pairings.approve(approvedApp, desk, ApprovalLifetime.HOUR, scope)
+        val expiry = pairings.permission(approvedApp)!!.expiresAtMillis
+        val before = pairings.pairings().first { it.signerPubkeyHex == desk }
+        ActivityScenario.launch(MainActivity::class.java).use {
+            val rename = allOf(withId(R.id.pairingRenameButton), withParent(hasDescendant(withText("Desk Heartwood"))))
+            onView(rename).perform(scrollTo(), click())
+            onView(androidx.test.espresso.matcher.ViewMatchers.isAssignableFrom(com.google.android.material.textfield.TextInputEditText::class.java))
+                .inRoot(isDialog()).perform(replaceText("Office signer"), closeSoftKeyboard())
+            onView(withText(R.string.save_button)).inRoot(isDialog()).perform(click())
+            val after = pairings.pairings().first { it.signerPubkeyHex == desk }
+            assertEquals(before.copy(label = "Office signer"), after)
+            onView(allOf(withId(R.id.editAppButton), withParent(hasDescendant(withText(approvedApp)))))
+                .perform(scrollTo(), click())
+            onView(withText(R.string.app_edit_identity)).inRoot(isDialog()).perform(click())
+            onView(withText(android.R.string.cancel)).inRoot(isDialog()).check(matches(isCompletelyDisplayed()))
+            onView(withText(R.string.save_button)).inRoot(isDialog()).check(matches(isCompletelyDisplayed()))
+            capture("identity-management")
+            onData(equalTo("Travel Heartwood")).inRoot(isDialog()).perform(click())
+            onView(withText(R.string.save_button)).inRoot(isDialog()).perform(click())
+            assertEquals(desk, pairings.permission(approvedApp)!!.boundIdentityPubkeyHex)
+            onView(withText(android.R.string.cancel)).inRoot(isDialog()).check(matches(isCompletelyDisplayed()))
+            onView(withText(R.string.save_button)).inRoot(isDialog()).check(matches(isCompletelyDisplayed()))
+            capture("identity-management-confirmation")
+            onView(withText(R.string.save_button)).inRoot(isDialog()).perform(click())
+            assertEquals(travel, pairings.permission(approvedApp)!!.boundIdentityPubkeyHex)
+            assertEquals(scope, pairings.permission(approvedApp)!!.scope)
+            assertEquals(expiry, pairings.permission(approvedApp)!!.expiresAtMillis)
         }
     }
 

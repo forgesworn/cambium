@@ -46,6 +46,10 @@ object IntentGate {
          * is safer than guessing an identity the request did not name, or silently signing as an
          * identity the approval never covered. */
         UNRESOLVED_IDENTITY,
+
+        /** Expired, forgotten, or outside the remembered operation scope on a window that can
+         * no longer show consent. No operation is submitted. */
+        PERMISSION_REQUIRES_CONSENT,
     }
 
     /**
@@ -68,11 +72,18 @@ object IntentGate {
         pairings: List<Pairing>,
         parsed: Nip55Request?,
         canAsk: Boolean,
+        nowMillis: Long = System.currentTimeMillis(),
     ): Plan {
         if (parsed == null) return Plan.Reject(RejectReason.MALFORMED_REQUEST)
         if (pairings.isEmpty()) return Plan.Reject(RejectReason.NOTHING_PAIRED)
-        return when (permission?.state) {
-            null -> Plan.AskUser
+        if (permission == null || !permission.isActive(nowMillis)) {
+            return if (canAsk) Plan.AskUser else Plan.Reject(RejectReason.PERMISSION_REQUIRES_CONSENT)
+        }
+        if (permission.state == AppPermissionState.APPROVED &&
+            !permission.allows(parsed.permissionMethod(), parsed.permissionEventKind(), nowMillis)) {
+            return if (canAsk) Plan.AskUser else Plan.Reject(RejectReason.PERMISSION_REQUIRES_CONSENT)
+        }
+        return when (permission.state) {
             AppPermissionState.DENIED -> Plan.Reject(RejectReason.DENIED_CALLER)
             AppPermissionState.APPROVED ->
                 when (val routed = IdentityRouting.resolve(parsed.currentUser, permission.boundIdentityPubkeyHex, pairings)) {
@@ -99,6 +110,6 @@ object IntentGate {
      * request will be rejected: first contact keeps the visible window, so a brand-new user's
      * pairing mistake gets the not-paired toast rather than a silent no-op.
      */
-    fun silentFor(permission: AppPermission?, plan: Plan): Boolean =
-        permission != null && plan !is Plan.AskUser
+    fun silentFor(permission: AppPermission?, plan: Plan, nowMillis: Long = System.currentTimeMillis()): Boolean =
+        permission?.isActive(nowMillis) == true && plan !is Plan.AskUser
 }

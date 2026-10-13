@@ -2,6 +2,9 @@ package dev.forgesworn.cambium.signer
 
 import android.util.Log
 import dev.forgesworn.cambium.nip55.normaliseUnsignedEvent
+import dev.forgesworn.cambium.pairing.BunkerUriParser
+import dev.forgesworn.cambium.pairing.BunkerUriResult
+import dev.forgesworn.cambium.pairing.BunkerUri
 import dev.forgesworn.cambium.pairing.Pairing
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
@@ -9,6 +12,7 @@ import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.withContext
 import rust.nostr.sdk.Keys
 import rust.nostr.sdk.NostrConnect
+import rust.nostr.sdk.NostrSigner
 import rust.nostr.sdk.NostrConnectUri
 import rust.nostr.sdk.NostrSdkException
 import rust.nostr.sdk.PublicKey
@@ -16,6 +20,27 @@ import rust.nostr.sdk.RelayOptions
 import rust.nostr.sdk.SecretKey
 import rust.nostr.sdk.UnsignedEvent
 import java.time.Duration
+import java.util.UUID
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.serialization.json.*
+import rust.nostr.sdk.Client
+import rust.nostr.sdk.ClientMessage
+import rust.nostr.sdk.Event
+import rust.nostr.sdk.EventBuilder
+import rust.nostr.sdk.Filter
+import rust.nostr.sdk.HandleNotification
+import rust.nostr.sdk.Kind
+import rust.nostr.sdk.RelayMessage
+import rust.nostr.sdk.RelayUrl
+import rust.nostr.sdk.Tag
+import rust.nostr.sdk.Timestamp
+import rust.nostr.sdk.Nip44Version
+import rust.nostr.sdk.nip44Encrypt
+import rust.nostr.sdk.nip44Decrypt
 
 /**
  * This is the only file in Cambium that imports `rust.nostr.sdk`. Everything else talks to
@@ -85,6 +110,12 @@ interface HeartwoodClient {
 
     suspend fun getPublicKey(): HeartwoodResult<String>
 
+    /** A fresh authenticated contact; production must not use the SDK's cached public key. */
+    suspend fun ping(): HeartwoodResult<String> = getPublicKey()
+
+    /** Optional NIP-46 method. A refusal never invalidates an otherwise working session. */
+    suspend fun switchRelays(): RelaySwitchResult = RelaySwitchResult.Unchanged
+
     /** [eventJson] is an unsigned event; returns the same event as JSON with `sig` and `id` filled in. */
     suspend fun signEvent(eventJson: String): HeartwoodResult<String>
 
@@ -97,9 +128,14 @@ interface HeartwoodClient {
     fun disconnect()
 }
 
-class RustNostrHeartwoodClient : HeartwoodClient {
+class RustNostrHeartwoodClient internal constructor(
+    private val parseTransport: (String) -> BunkerUri?,
+) : HeartwoodClient {
+    constructor() : this({ (BunkerUriParser.parse(it) as? BunkerUriResult.Valid)?.uri })
 
     private var session: NostrConnect? = null
+    private var transport: BunkerUri? = null
+    private var transportKeys: Keys? = null
     /** The user identity proved by this exact NIP-46 session's connect handshake. */
     private var signerPubkeyHex: String? = null
 
@@ -122,6 +158,8 @@ class RustNostrHeartwoodClient : HeartwoodClient {
                     client.getPublicKey().toHex().also { connectedPubkeyHex ->
                         session = client
                         signerPubkeyHex = connectedPubkeyHex
+                        transport = parseTransport(bunkerUri)
+                        transportKeys = keys
                     }
                 } catch (error: Exception) {
                     client.close()
@@ -132,6 +170,72 @@ class RustNostrHeartwoodClient : HeartwoodClient {
 
     override suspend fun getPublicKey(): HeartwoodResult<String> = withSession { client ->
         client.getPublicKey().toHex()
+    }
+
+    override suspend fun ping(): HeartwoodResult<String> {
+        val response = rawRpc("ping", 8_000L)
+            ?: return HeartwoodResult.Failure(HeartwoodError.Timeout)
+        return if ((response["result"] as? JsonPrimitive)?.content == "pong" &&
+            (response["error"] == null || response["error"] == JsonNull)) {
+            HeartwoodResult.Success("pong")
+        } else HeartwoodResult.Failure(HeartwoodError.Protocol("Signer declined connection check"))
+    }
+
+    override suspend fun switchRelays(): RelaySwitchResult =
+        rawRpc("switch_relays", 3_000L)?.let(RelaySwitch::parse) ?: RelaySwitchResult.Unavailable
+
+    /** SDK 0.44.8 exposes no generic NostrConnect RPC. This narrow channel uses its audited
+     * crypto and relay client, the same connection keys and exact bunker author. The notification
+     * FFI is ended by shutdown, never cancellation. Only the Kotlin deferred wait times out.
+     * sendMsgTo queues the signed event without waiting for an unrelated relay OK acknowledgement. */
+    private suspend fun rawRpc(method: String, waitMillis: Long): JsonObject? {
+        val remote = transport ?: return null
+        val keys = transportKeys ?: return null
+        if (session == null) return null
+        return withContext(NonCancellable + Dispatchers.IO) {
+            runCatching {
+                coroutineScope {
+                    val relayClient = Client(NostrSigner.keys(keys))
+                    var listener: kotlinx.coroutines.Job? = null
+                    try {
+                        // The same ephemeral NIP-46 client identity already used on these relays.
+                        relayClient.automaticAuthentication(true)
+                        val relays = remote.relays.take(RelaySwitch.MAX_RELAYS).map(RelayUrl::parse)
+                        relays.forEach { relayClient.addRelay(it) }
+                        relayClient.connect()
+                        relayClient.waitForConnection(Duration.ofMillis(waitMillis))
+                        val remoteKey = PublicKey.parse(remote.signerPubkeyHex)
+                        val requestId = UUID.randomUUID().toString()
+                        val response = CompletableDeferred<JsonObject>()
+                        listener = launch(start = CoroutineStart.UNDISPATCHED) {
+                            runCatching {
+                                relayClient.handleNotifications(object : HandleNotification {
+                                    override suspend fun handle(relayUrl: RelayUrl, subscriptionId: String, event: Event) {
+                                        if (response.isCompleted) return
+                                        runCatching {
+                                            Nip46Envelope.openResponse(event, keys, remote.signerPubkeyHex, requestId)
+                                                ?.let(response::complete)
+                                        }
+                                    }
+                                    override suspend fun handleMsg(relayUrl: RelayUrl, msg: RelayMessage) = Unit
+                                })
+                            }
+                        }
+                        // A normal subscription survives EOSE, unlike SDK streamEvents().
+                        relayClient.subscribe(Filter().kind(Kind(24133u)).author(remoteKey)
+                            .pubkey(keys.publicKey()).since(Timestamp.fromSecs(
+                                (System.currentTimeMillis() / 1000L - 30L).toULong())), null)
+                        val request = Nip46Envelope.request(keys, remoteKey, requestId, method)
+                        relayClient.sendMsgTo(relays, ClientMessage.event(request))
+                        withTimeoutOrNull(waitMillis) { response.await() }
+                    } finally {
+                        relayClient.shutdown()
+                        listener?.join()
+                        relayClient.close()
+                    }
+                }
+            }.getOrNull()
+        }
     }
 
     override suspend fun signEvent(eventJson: String): HeartwoodResult<String> {
@@ -167,6 +271,8 @@ class RustNostrHeartwoodClient : HeartwoodClient {
         session?.close()
         session = null
         signerPubkeyHex = null
+        transport = null
+        transportKeys = null
     }
 
     private suspend fun withSession(block: suspend (NostrConnect) -> String): HeartwoodResult<String> {
@@ -180,6 +286,26 @@ class RustNostrHeartwoodClient : HeartwoodClient {
     private companion object {
         val CALL_TIMEOUT: Duration = Duration.ofSeconds(20)
     }
+}
+
+/** Shared with Android boundary tests: the native SDK supplies every cryptographic operation. */
+internal object Nip46Envelope {
+    fun request(keys: Keys, remote: PublicKey, id: String, method: String): Event {
+        val content = nip44Encrypt(keys.secretKey(), remote, RelaySwitch.request(id, method), Nip44Version.V2)
+        return EventBuilder(Kind(24133u), content).tags(listOf(Tag.publicKey(remote))).signWithKeys(keys)
+    }
+
+    fun openResponse(event: Event, keys: Keys, signerHex: String, requestId: String): JsonObject? = runCatching {
+        if (event.kind().asU16().toInt() != 24133 || event.author().toHex() != signerHex ||
+            !event.verify() || event.content().length > RelaySwitch.MAX_RESPONSE_CHARS * 2) return null
+        val recipients = event.tags().toVec().mapNotNull { tag ->
+            tag.asVec().takeIf { it.firstOrNull() == "p" }?.getOrNull(1)
+        }
+        val clientHex = keys.publicKey().toHex()
+        if (clientHex !in recipients) return null
+        val plain = nip44Decrypt(keys.secretKey(), PublicKey.parse(signerHex), event.content())
+        RelaySwitch.correlatedResponse(plain, requestId, event.author().toHex(), signerHex, recipients, clientHex)
+    }.getOrNull()
 }
 
 /** Ephemeral NIP-46 client keypair generation, kept next to the rest of the rust-nostr surface. */
@@ -226,10 +352,22 @@ fun Pairing.displayLabel(): String = label?.takeIf { it.isNotBlank() } ?: npubDi
 object HeartwoodSession {
     private const val TAG = "HeartwoodSession"
 
+    @Volatile private var relayUpdateHandler: (Pairing, List<String>) -> Boolean = { _, _ -> false }
+
+    fun configureRelayUpdates(handler: (Pairing, List<String>) -> Boolean) {
+        relayUpdateHandler = handler
+    }
+
     private val registry = SessionRegistry(
         clientFactory = ::RustNostrHeartwoodClient,
+        persistRelayUpdate = { pairing, relays -> relayUpdateHandler(pairing, relays) },
         logWarning = { Log.w(TAG, it) },
     )
+
+    val health get() = registry.health
+    fun recordPairingContact(signerPubkeyHex: String) = registry.recordPairingContact(signerPubkeyHex)
+    suspend fun testConnection(pairing: Pairing) = registry.testConnection(pairing)
+    suspend fun reconnect(pairing: Pairing) = registry.reconnect(pairing)
 
     suspend fun trySilent(
         pairing: Pairing,

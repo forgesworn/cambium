@@ -114,6 +114,60 @@
                     android:textColor="@color/danger" />
             </LinearLayout>
 
+            <LinearLayout
+                style="@style/Widget.Cambium.Card"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="20dp"
+                android:orientation="vertical">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/diagnostics_filter_app"
+                    android:labelFor="@id/appFilter"
+                    android:textAppearance="@style/TextAppearance.Cambium.Label" />
+                <Spinner
+                    android:id="@+id/appFilter"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:minHeight="48dp" />
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/diagnostics_filter_identity"
+                    android:labelFor="@id/identityFilter"
+                    android:textAppearance="@style/TextAppearance.Cambium.Label" />
+                <Spinner
+                    android:id="@+id/identityFilter"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:minHeight="48dp" />
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/diagnostics_filter_outcome"
+                    android:labelFor="@id/outcomeFilter"
+                    android:textAppearance="@style/TextAppearance.Cambium.Label" />
+                <Spinner
+                    android:id="@+id/outcomeFilter"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:minHeight="48dp" />
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:text="@string/diagnostics_share_body"
+                    android:textAppearance="@style/TextAppearance.Cambium.Detail" />
+                <Button
+                    android:id="@+id/shareReportButton"
+                    style="@style/Widget.Cambium.Button.Text"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/diagnostics_review_report" />
+            </LinearLayout>
+
             <TextView
                 android:id="@+id/logEmpty"
                 style="@style/Widget.Cambium.Card"

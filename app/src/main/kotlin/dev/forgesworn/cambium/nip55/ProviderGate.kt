@@ -36,9 +36,13 @@ object ProviderGate {
 
     /** [permissionFor] is only consulted when [callingPackage] is resolvable -- there is no
      * package to look up otherwise. */
-    fun resolveCaller(callingPackage: String?, permissionFor: (String) -> AppPermission?): Caller {
+    fun resolveCaller(
+        callingPackage: String?,
+        nowMillis: Long = System.currentTimeMillis(),
+        permissionFor: (String) -> AppPermission?,
+    ): Caller {
         if (callingPackage == null) return Caller.Defer
-        return when (val permission = permissionFor(callingPackage)) {
+        return when (val permission = permissionFor(callingPackage)?.takeIf { it.isActive(nowMillis) }) {
             null -> Caller.Defer
             else -> when (permission.state) {
                 AppPermissionState.APPROVED -> Caller.Approved(callingPackage, permission.boundIdentityPubkeyHex)
@@ -46,6 +50,15 @@ object ProviderGate {
             }
         }
     }
+
+    /** Rechecked immediately before forwarding, so expiry/scope changes after caller discovery
+     * cannot use a cached decrypt or an existing native session to bypass local consent. */
+    fun allowsRequest(
+        permission: AppPermission?,
+        method: String,
+        eventKind: Int? = null,
+        nowMillis: Long = System.currentTimeMillis(),
+    ): Boolean = permission?.allows(method, eventKind, nowMillis) == true
 
     sealed interface Answer {
         data class Result(val value: String) : Answer

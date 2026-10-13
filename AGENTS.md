@@ -523,10 +523,10 @@ Android apps              Websites
 - `service/HeartwoodKeepAliveService.kt` -- optional, off-by-default foreground service that keeps
   the process (and so `HeartwoodSession`'s warm `NostrConnect`) alive between requests, closing the
   previously-tracked "only warm while the process happens to be running" gap. Pings Heartwood every
-  8 minutes via `HeartwoodSession.withClient(pairing, MAINTENANCE) { it.getPublicKey() }` -- a
-  read-only, always-safe operation Heartwood answers without a physical button; rust-nostr's client
-  bindings have no lower-level "ping" primitive to call instead (checked directly against the AAR
-  with `javap`: neither `NostrConnect` nor `NostrConnectInterface` declare one). MAINTENANCE is
+  8 minutes via `HeartwoodSession.withClient(pairing, MAINTENANCE) { it.ping() }` -- an
+  authenticated NIP-46 round trip. The SDK's `getPublicKey` can be cached, so it is not evidence
+  of current contact. `HeartwoodClient` uses the SDK's lower-level client for `ping` and
+  `switch_relays`, since `NostrConnect` has no direct bindings for these methods. MAINTENANCE is
   admitted only into an empty worker, so a slow or unreachable Heartwood never lets a ping inflate
   queue depth and shed a real Amethyst burst into visible popups; a busy worker answers `Busy` at
   once, which means the session is demonstrably warm anyway. It was `trySilent` until phone unlock
@@ -647,23 +647,42 @@ Android apps              Websites
 - Git commits: `type: description` format (e.g. `feat:`, `fix:`, `refactor:`, `docs:`). No
   `Co-Authored-By` lines.
 
-## Known gaps (tracked, not yet built)
+## Approval, diagnostics and connection controls
 
-- Richer per-app permissions are still kind-agnostic (a whole app is approved or denied, not
-  individual `kind`s or methods); v1's tri-state (`AppPermissionState`) covers the whole-app case.
-  The one-time "Decline" button on the approval sheet still does not remember anything -- only the
-  separate "always deny" link does; a plain Decline shows the sheet again next time.
-- Timed remember-my-choice (an expiry -- 1 hour / 1 day / 1 week / always -- on a remembered
-  approve/deny, Amber's `acceptUntil`/`rejectUntil`) was scoped for 0.3.0 as a stretch goal and
-  deliberately not built. The store side is not the blocker: `AppPermission` could gain an
-  `expiresAtMillis: Long?`, and `PairingStore.permission` treating an expired entry as absent on
-  read (the same "back to ask" outcome `forget` produces, so `SignerProvider` already treats an
-  expired denial as unresolved rather than rejected with no further change) is a small, contained
-  addition. The approval sheet is: it already carries a conditional identity picker for
-  multi-pairing on top of the app/method/kind/permissions rows, and an expiry choice needs to
-  attach to *two* different actions (Approve and "always deny") without either silently changing
-  what a plain tap does or turning the sheet into something that needs its own layout pass to stay
-  legible on a 320dp modal. That interaction design, not the storage, is the real work here.
+- `pairing/AppPermission.kt` supplies method/kind scopes and ONCE/HOUR/DAY/ALWAYS approval
+  lifetimes. Null scope/expiry preserve old stored consent. Timed grants expire at both gates;
+  clock rollback before a timed grant fails closed. ONCE never writes permission state. Public
+  identity discovery remains available for an approved binding; PING stays local. Denial is
+  still permanent and identity-agnostic; Decline only skips the current request.
+- PairingStore mutations use one process-wide lock. Approval sheets use `approveIfSheetCurrent`
+  to compare the displayed permission and connection before writing authority. A newer denial,
+  scope or binding always wins. Management duration edits compare the exact old permission, while
+  confirmed rebind preserves scope and expiry. `updatePairingRelays` compares the entire expected
+  connection (ignoring a label-only rename), so removal or re-pairing wins over an old response.
+  Relay changes await a successful encrypted-preferences commit before changing transport; failed
+  commits restore the prior in-memory value and leave forwarding unavailable for that attempt.
+- `nip55/RequestPresentation.kt` provides readable summaries and bounded, temporary details.
+  Private/encrypted content stays hidden. None of these details enters the activity log.
+- Logs retain bounded metadata and add safe failure categories/duration. `DiagnosticReport.kt`
+  filters and exports an allowlist with report-local app/identity aliases. Sharing requires a
+  review and explicit tap; there are no persistent export files or raw exception messages.
+  Per-install salted opaque identity references keep filters stable across renames and distinguish
+  duplicate labels. Legacy entries use explicitly labelled older groups; reports never export
+  these references or their salt.
+- `ConnectionHealth.kt` tracks last actual contact in memory. Explicit test/reconnect enter the
+  same identity worker; reconnect never cancels active FFI work. `RelaySwitch.kt` validates bounded
+  secure relay updates. SDK envelopes check kind/signature, signer, recipient and random request
+  id; optional discovery is attempted at most hourly and unsupported methods preserve signing.
+  Only the disposable pairing check sends the admission secret. Stored pairings, including legacy
+  migrated entries, were saved after that successful check; registry connections resume with the
+  same authorised client key and omit the secret after restart, reconnect and relay migration.
+- Explicit NIP-55 SINGLE_TOP + CLEAR_TOP batches queue up to 32 native requests and return ordered
+  `results`. Unattributable reused intents need visible one-shot consent; they cannot borrow the
+  initial caller's approval. API 35's current caller must match the result recipient when known.
+  A denied result recipient cannot obtain answers through an unattributed one-shot request.
+  Website requests never join native batches. Non-batch reuse cannot replace pending work.
+
+## Known limits
 - `decrypt_zap_event` only implements the recipient path (decoding a private zap sent *to* the
   paired identity). The sender path -- recognising your own anonymous zaps by regenerating the
   ephemeral key -- needs the raw private key hashed directly, which is permanently impossible over
@@ -679,16 +698,8 @@ Android apps              Websites
   per identity -- a deliberate simplification (Cambium presents one NIP-46 client identity to every
   bunker it talks to), not a limitation flagged as a gap to close, but worth knowing if a future
   design wants per-identity client key isolation.
-- NIP-55 single-intent batch requests (the `results` JSON-array response) -- currently each
-  intent is handled individually, though `SignerActivity` does handle multiple *separate* intents
-  arriving in sequence via `onNewIntent`.
-- NIP-55 `get_relays` is not implemented, and cannot be meaningfully implemented today:
-  rust-nostr 0.44.8's `NostrConnect` exposes no NIP-46 `get_relays` RPC (checked with `javap`
-  against the AAR, same method as the keep-alive ping check -- its full remote surface is
-  `bunkerUri`/`getPublicKey`/`signEvent`/nip04/nip44, plus a local synchronous `relays()`
-  accessor that returns the NIP-46 *transport* relays, which would be the semantically wrong
-  answer to a client asking for the user's relay list). Structural until upstream adds the RPC,
-  like sender-side private zaps.
+- The legacy `get_relays` method is not offered. NIP-46 `switch_relays` changes transport
+  endpoints, not the user's publishing/read relay list, so those lists must never be conflated.
 - The NIP-37 draft-decline (kind 31234) is a hardcoded constant in `ProviderGate`, not a user
   setting. `SessionRegistry`'s total/background/AUTH queue depths (3/2/1), timeouts (15s silent,
   20s intent), stale-session threshold (5 minutes), exact-AUTH cache TTL (60 seconds), AUTH circuit

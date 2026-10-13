@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="diagnostics_filter_app">App</string>
+    <string name="diagnostics_filter_identity">Identity</string>
+    <string name="diagnostics_filter_outcome">Outcome</string>
+    <string name="diagnostics_all_apps">All apps</string>
+    <string name="diagnostics_all_identities">All identities</string>
+    <string name="diagnostics_identity_unnamed">Identity</string>
+    <string name="diagnostics_identity_older">%1$s (older entries)</string>
+    <string name="diagnostics_identity_numbered">%1$s (%2$d)</string>
+    <string name="diagnostics_all_outcomes">All outcomes</string>
+    <string name="diagnostics_filtered_empty">No entries match these filters.</string>
+    <string name="diagnostics_share_body">Review a report of the filtered entries before sharing. It includes timings, methods, outcomes and failure categories. App and identity names are replaced with numbered aliases. Request contents, keys, relay addresses and error messages are excluded. The receiving app can retain what you share.</string>
+    <string name="diagnostics_review_report">Review diagnostic report</string>
+    <string name="diagnostics_report_title">Diagnostic report</string>
+    <string name="diagnostics_share">Share report</string>
+    <string name="diagnostics_share_chooser">Share Cambium diagnostics</string>
+    <string name="diagnostics_duration">%1$d ms</string>
+    <string name="diagnostics_failure_not_connected">Not connected</string>
+    <string name="diagnostics_failure_busy">Request queue full</string>
+    <string name="diagnostics_failure_timeout">Timeout</string>
+    <string name="diagnostics_failure_invalid_input">Invalid input</string>
+    <string name="diagnostics_failure_policy">Signer policy refusal</string>
+    <string name="diagnostics_failure_decrypt">Decryption failed</string>
+    <string name="diagnostics_failure_protocol">Protocol failure</string>
+    <string name="diagnostics_failure_other">Unavailable</string>
+</resources>
