@@ -32,6 +32,7 @@ import dev.forgesworn.cambium.log.ActivityLogEntry
 import dev.forgesworn.cambium.log.ActivityLogStore
 import dev.forgesworn.cambium.pairing.PairingStore
 import org.hamcrest.Matchers.equalTo
+import org.hamcrest.Matchers.allOf
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -106,7 +107,7 @@ class DiagnosticsUiTest {
                 onView(withId(R.id.logDiagnosticsValue)).perform(scrollTo()).check(matches(withText("Timeout · 1234 ms")))
                 capture("diagnostics-filtered-log")
                 onView(withId(R.id.shareReportButton)).perform(scrollTo(), click())
-                onView(withId(android.R.id.message)).inRoot(isDialog()).check { view, failure ->
+                onView(allOf(withId(android.R.id.message), isDisplayed())).inRoot(isDialog()).check { view, failure ->
                     if (failure != null) throw failure
                     val report = (view as TextView).text.toString()
                     assertTrue(report.contains("Entries: 1"))
