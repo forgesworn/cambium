@@ -1,0 +1,186 @@
+{
+  "verified_at": "2026-10-13T12:43:08.332950+00:00",
+  "version": "0.9.0",
+  "version_code": 19,
+  "source_commit": "40927a04bbb5e0efa9bf846d4d5b7f86ee07c6c4",
+  "apk_sha256": "3510781a23ec1e3c626a9c39ee31f968f4d4ca38d85f626b85c0d617c29fc16a",
+  "certificate_sha256": "9ea188efa9015f7e7f90e1888f586f527b2a0e8a6dcdb3991e41fb4f14eeefc6",
+  "device": {
+    "model": "Pixel 10 Pro XL",
+    "android_api": 37,
+    "physical": true,
+    "production_release_apk": true
+  },
+  "upgrade": {
+    "version": "0.9.0",
+    "version_code": 19,
+    "sdk": 37,
+    "device": "M4-connected Pixel 10 Pro XL",
+    "signed_apk_sha256": "3510781a23ec1e3c626a9c39ee31f968f4d4ca38d85f626b85c0d617c29fc16a",
+    "update_in_place": true,
+    "original_install_times_preserved": true,
+    "primary_data_inode_preserved": null,
+    "data_inode_evidence": "not_observable_with_normal_adb",
+    "displayed_pairing_label_and_public_identity_preserved": true
+  },
+  "checks": {
+    "signature": {
+      "method": "sign_event",
+      "signature_verified": true,
+      "requested_event_matched": true,
+      "event_not_published": true,
+      "duration_ms": 12052,
+      "initial_attempt": "timeout_20015_ms",
+      "retry": "passed"
+    },
+    "nip04": {
+      "method": "nip04_encrypt/decrypt",
+      "round_trip_matched": true,
+      "new_random_plaintext": true,
+      "request_only_consent": true,
+      "ciphertext_not_published": true
+    },
+    "nip44": {
+      "method": "nip44_encrypt/decrypt",
+      "round_trip_matched": true,
+      "new_random_plaintext": true,
+      "request_only_consent": true,
+      "ciphertext_not_published": true
+    },
+    "native_batch": {
+      "native_batch": true,
+      "request_count": 2,
+      "ordered_correlated_results": true,
+      "per_request_visible_once_consent": true,
+      "public_keys_match_pairing": true,
+      "android_sdk": 37
+    },
+    "temporary_scope": {
+      "initial_lifetime": "hour",
+      "scope": "nip44_encrypt_only",
+      "later_lifetime": "day",
+      "native_initial_forward_succeeded": true,
+      "provider_in_scope_forward_succeeded": true,
+      "provider_recovered_after_reconnect": true,
+      "provider_out_of_scope_decrypt_deferred": true,
+      "previously_decrypted_payload_not_exposed_outside_scope": true,
+      "outside_scope_native_asks_visibly": true,
+      "outside_scope_default_once": true,
+      "native_once_decrypt_succeeded": true,
+      "ciphertext_hidden_on_approval": true,
+      "once_did_not_broaden_saved_scope": true,
+      "other_users_or_app_grants_edited": false,
+      "initial_provider_attempt": "terminal_unavailable_after_15063_ms"
+    },
+    "grant_duration_edit": {
+      "temporary_test_app_only": true,
+      "hour_to_day_confirmed": true,
+      "expiry_display_updated": true,
+      "method_scope_preserved": true,
+      "identity_binding_unchanged": true
+    },
+    "request_details": {
+      "native_summary_displayed": true,
+      "controlled_event_details_visible_on_request": true,
+      "dialog_dismissed": true,
+      "decline_returns_correlated_rejection": true,
+      "no_signature_requested_after_decline": true,
+      "outside_scope_default_once": true
+    },
+    "diagnostic_review": {
+      "physical_app_filter": true,
+      "report_review_opened": true,
+      "version": "0.9.0",
+      "android_api": 37,
+      "row_count": 13,
+      "eight_allowlisted_columns": true,
+      "aliases_present": true,
+      "private_source_values_absent": true,
+      "cancel_kept_user_in_cambium": true,
+      "no_share_intent_or_external_recipient": true
+    },
+    "reconnect": {
+      "explicit_reconnect": true,
+      "paired_identity_unchanged": true,
+      "status": "Signer answered",
+      "actual_contact_displayed": true,
+      "relay_update_rejected_kept_saved_relays": true,
+      "success": true
+    },
+    "provider_timeout_containment": {
+      "approved_scoped_caller": true,
+      "provider_null": false,
+      "terminal_empty_result_row": true,
+      "duration_ms": 15063,
+      "in_scope_crypto_success": false
+    }
+  },
+  "relay_update": {
+    "cambium_status": "authenticated_update_rejected_saved_relays_retained",
+    "migration_of_real_signer": "not_exercised",
+    "secondary_probe": {
+      "cambium_exact_reply": false,
+      "client": "existing_release_client",
+      "decoded_result_type": "object",
+      "error_present": false,
+      "event_signature_verified": true,
+      "request_correlated": true,
+      "result_length": 2,
+      "result_present": true,
+      "result_type": "string",
+      "same_signer_as_pixel": true,
+      "status": "authenticated_reply"
+    },
+    "interpretation": "The existing release client saw an object result rather than the NIP-46 array or null. This is consistent with the warning, but is not Cambium exact reply evidence."
+  },
+  "fdroid": {
+    "verified_at": "2026-10-13T12:28:20.790666+00:00",
+    "published": {
+      "packageName": "dev.forgesworn.cambium",
+      "suggestedVersionCode": 17,
+      "packages": [
+        {
+          "versionName": "0.7.1",
+          "versionCode": 17
+        },
+        {
+          "versionName": "0.4.3",
+          "versionCode": 13
+        }
+      ]
+    },
+    "recipe_current_version": "0.8.0",
+    "recipe_current_version_code": 18,
+    "recipe_has_0_9_0": false,
+    "last_completed_build": "2026-10-12T00:25:55.016000+00:00",
+    "source_api": "https://f-droid.org/api/v1/packages/dev.forgesworn.cambium",
+    "source_recipe": "https://gitlab.com/fdroid/fdroiddata/-/raw/master/metadata/dev.forgesworn.cambium.yml",
+    "source_build": "https://f-droid.org/repo/status/build.json"
+  },
+  "not_exercised": [
+    "biometric app-lock acceptance",
+    "new phone-unlock enrolment and physical board unlock",
+    "physical multi-identity switching",
+    "real signer-directed relay migration",
+    "physical signing batch signatures",
+    "real clock expiry or rollback"
+  ],
+  "privacy": {
+    "controlled_events_not_published": true,
+    "user_private_keys_not_read": true,
+    "production_pairing_secrets_not_read": true,
+    "report_not_shared": true,
+    "raw_events_payloads_labels_public_keys_and_relay_addresses_not_retained_in_receipt": true
+  },
+  "cleanup": {
+    "temporary_grant_forgotten": true,
+    "temporary_caller_uninstalled": true,
+    "production_cambium_retained": true,
+    "physical_device_left_on_cambium": true,
+    "no_emulator_or_fixture_created": true,
+    "normal_bounded_activity_log_metadata_retained": true,
+    "phone_xml_removed": true,
+    "remote_scratch_removed": true,
+    "local_scratch_removed": true
+  }
+}

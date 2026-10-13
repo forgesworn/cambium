@@ -39,8 +39,9 @@ final consent/storage fixes passed all 36 then-existing instrumented tests witho
 
 CI runs the final 40-test Android suite on a fresh API 35 emulator, followed by 16 UI regressions
 at 320 dp width and 150% text scaling. The compact run requires all 16 tests to complete without
-skips. The draft pull request records the exact committed head, CI run and verified result counts;
-its checks are the current acceptance receipt. The native transport regressions include a
+skips. [Merged PR #32](https://github.com/forgesworn/cambium/pull/32) records the exact committed
+head, CI run and verified result counts; the [delivery receipt](releases/0.9.0.json) records the
+published source and test counts. The native transport regressions include a
 two-relay migration and process restart with a signer that refuses consumed admission secrets.
 Runner summaries are checked alongside per-test
 statuses: assumptions and skipped tests are not counted as proof.
@@ -73,8 +74,46 @@ statuses: assumptions and skipped tests are not counted as proof.
   Reports are not stored as files. Entries written before local identity references existed remain
   in separately labelled older groups; their identities cannot safely be inferred from labels.
 
-0.9.0 publication is verified in [DISTRIBUTION.md](DISTRIBUTION.md) and the
-[delivery receipt](releases/0.9.0.json). Physical Android/Heartwood app acceptance remains
-unverified.
-No physical device, firmware, existing user emulator or external message recipient was changed
-by this work.
+## Physical acceptance, 13 October 2026
+
+The published, signed 0.9.0 APK was installed over 0.8.0 on a physical Pixel 10 Pro XL running
+Android API 37. The displayed pairing label and public identity matched before and after;
+the original install dates remained intact across all four existing profiles. The app was not
+uninstalled or cleared. Its private data inode was not observable through normal ADB, so no
+inode-continuity claim is made.
+
+A disposable native caller exercised the production APK against the existing paired Heartwood.
+The [physical receipt](acceptance/0.9.0-physical-2026-10-13.json) records the exact APK hash and
+these measured checks:
+
+| Check | Physical result |
+| --- | --- |
+| Native signing | A fresh controlled kind-1 event matched every requested field and passed independent hash/signature verification; nothing was published |
+| NIP-04 and NIP-44 | Fresh encryption/decryption round trips returned the original controlled plaintext |
+| Consent and operation scope | Request-only approval; one-hour NIP-44-encryption-only grant; outside-scope native request defaulted to once and did not broaden the grant; silent decrypt remained deferred |
+| Grant editing | Confirmed change from one hour to one day updated expiry while preserving the displayed identity binding and method scope |
+| Native batch | Two public-key requests required separate visible consent and returned ordered, correlated IDs with matching public keys |
+| Request details | Controlled note details opened temporarily; Decline returned a correlated rejection; encrypted payload remained hidden on its approval sheet |
+| Diagnostics | App filter and reviewed report passed; 13 rows used eight allowlisted columns and aliases; source labels, keys, payloads and relay addresses were absent; Cancel stayed in Cambium |
+| Recovery and silent path | Explicit reconnect reached “Signer answered”; subsequent in-scope silent encryption completed in 713 ms |
+
+The first signing attempt timed out after 20,015 ms; a fresh retry passed. A later approved
+silent request reached its 15-second limit and returned a terminal unavailable row. Following
+explicit reconnect it succeeded, while the out-of-scope decrypt still returned no result. These
+transient failures are retained in the receipt, rather than counted as successful attempts.
+
+Cambium displayed a rejected relay update and kept the saved relays. A separate authenticated,
+correlated probe through the existing release client for the same signer returned a stringified
+object, rather than NIP-46's array or null. That is consistent with the warning but does not
+establish Cambium's exact response. Real signer-directed migration was not exercised; its strict
+validation remains in place.
+
+Physical biometric app-lock acceptance, new phone-unlock enrolment/board unlock, multi-identity
+switching, signing signatures inside a batch, and real timed expiry/clock rollback remain
+unexercised. Automated coverage and the physical checks above are separate evidence.
+
+The temporary caller and its grant were removed. The report was not shared, and no firmware,
+existing user emulator, user key or unrelated app grant was changed. Task-owned capture files and
+scratch builds were removed after recording the receipt. Normal bounded activity-log metadata
+remains on the phone. Publication is verified in
+[DISTRIBUTION.md](DISTRIBUTION.md) and the [delivery receipt](releases/0.9.0.json).

@@ -33,8 +33,13 @@ all 16 UI regressions at 320 dp width and 150% text scaling, with no failures, e
 Both [PR CI](https://github.com/forgesworn/cambium/actions/runs/38385862632) and
 [main CI](https://github.com/forgesworn/cambium/actions/runs/38387503564) passed. The PR build needed a retry after dependency
 resolution failed before tests began. The signed release build and release lint passed locally.
-The actual SDK is tested against a two-relay local WebSocket signer fixture; physical
-Android/Heartwood app signing, enrolment and phone unlock were not re-tested.
+The actual SDK is tested against a two-relay local WebSocket signer fixture. The published APK
+also passed physical Pixel/Heartwood signing, NIP-04/NIP-44 round trips, consent/scope controls,
+grant duration editing, a two-request public-key batch, diagnostics review and reconnect checks
+on 2026-10-13. Initial signing and silent-path timeouts recovered on retry/reconnect. Physical
+biometric and new phone-unlock enrolment/board-unlock journeys remain unexercised; see the
+[acceptance scope](FEATURE-ACCEPTANCE.md#physical-acceptance-13-october-2026) and
+[physical receipt](acceptance/0.9.0-physical-2026-10-13.json).
 
 The [public delivery receipt](releases/0.9.0.json) records the source, signatures, hashes, test
 counts, channel readbacks and physical acceptance limit.
@@ -155,6 +160,11 @@ merged on 2026-09-13. The public package API lists 0.7.1/versionCode 17 and 0.4.
 `AutoUpdateMode: Version` picks up each `vX.Y.Z` tag, rebuilds it, and publishes our signed APK
 from `Binaries:` (`releases/download/v%v/cambium-%v.apk`) only if the rebuild matches it: build
 the release APK from the exact tagged commit with a clean tree, and name the asset exactly so.
+The live [build recipe](https://gitlab.com/fdroid/fdroiddata/-/raw/master/metadata/dev.forgesworn.cambium.yml)
+has picked up 0.8.0/versionCode 18, but has no 0.9.0/versionCode 19 entry yet. The latest completed
+[build status](https://f-droid.org/repo/status/build.json), checked at 12:28 UTC on 2026-10-13,
+ended at 00:25 UTC on 2026-10-12, before these releases. No current build failure is established;
+automatic tag discovery, rebuilding and publication remain external gates.
 The history below is kept for reference.
 
 0.5.0 to 0.7.0 were never listed. F-Droid's checkupdates bot opened fdroiddata!50093 for 0.5.0,
