@@ -74,6 +74,11 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
+      - name: Prepare instrumentation APKs
+        run: |
+          ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest
+          ./gradlew --stop
+
       - name: Instrumentation tests
         uses: reactivecircus/android-emulator-runner@v2
         with:
@@ -84,6 +89,7 @@ jobs:
             mkdir -p app/build/outputs/androidTest-results
             adb shell input keyevent KEYCODE_WAKEUP
             adb shell wm dismiss-keyguard
+            adb shell am force-stop com.android.launcher3
             ./gradlew :app:connectedDebugAndroidTest || { adb shell dumpsys window > app/build/outputs/androidTest-results/failed-window-state.txt; exit 1; }
             ./gradlew --stop
             adb install -r app/build/outputs/apk/debug/app-debug.apk
@@ -93,6 +99,7 @@ jobs:
             adb shell settings put system font_scale 1.5
             adb shell input keyevent KEYCODE_WAKEUP
             adb shell wm dismiss-keyguard
+            adb shell am force-stop com.android.launcher3
             adb shell am force-stop dev.forgesworn.cambium.test
             adb shell pm clear dev.forgesworn.cambium
             adb shell am instrument -w -r -e class dev.forgesworn.cambium.ui.UiFlowRegressionTest,dev.forgesworn.cambium.ui.PermissionScopeEditorTest,dev.forgesworn.cambium.ui.DiagnosticsUiTest dev.forgesworn.cambium.test/androidx.test.runner.AndroidJUnitRunner | tee app/build/outputs/androidTest-results/compact-large-text.log
