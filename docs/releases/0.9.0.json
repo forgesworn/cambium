@@ -99,5 +99,6 @@
       }
     ]
   },
-  "physical_android_heartwood_app_flows": "not_retested"
+  "physical_android_heartwood_app_flows": "core_flows_passed_extended_acceptance_partial",
+  "physical_android_heartwood_acceptance_receipt": "../acceptance/0.9.0-physical-2026-10-13.json"
 }
