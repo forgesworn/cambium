@@ -5,7 +5,6 @@ import android.content.ContentValues
 import android.database.Cursor
 import android.database.MatrixCursor
 import android.net.Uri
-import android.os.SystemClock
 import android.util.Log
 import dev.forgesworn.cambium.log.ActivityLog
 import dev.forgesworn.cambium.log.ActivityLogEntry
@@ -185,6 +184,7 @@ class SignerProvider : ContentProvider() {
         val payload = requirePayload(caller, projection) ?: return@withApprovedCaller null
 
         val eventKind = extractEventKind(payload)
+        if (!allowsRequest(caller, Nip55Request.TYPE_SIGN_EVENT, eventKind)) return@withApprovedCaller null
         if (ProviderGate.isDeclinedDraft(eventKind)) {
             Log.i(TAG, "silent sign_event from $caller declined: draft (kind ${ProviderGate.NIP37_DRAFT_KIND})")
             return@withApprovedCaller rejectedCursor()
@@ -219,6 +219,7 @@ class SignerProvider : ContentProvider() {
     private fun queryDecryptZapEvent(projection: Array<out String>?): Cursor? = withApprovedCaller { caller, boundIdentity ->
         val pairing = requirePairing(caller, boundIdentity, projection?.getOrNull(2)) ?: return@withApprovedCaller null
         val eventJson = requirePayload(caller, projection) ?: return@withApprovedCaller null
+        if (!allowsRequest(caller, Nip55Request.TYPE_DECRYPT_ZAP_EVENT)) return@withApprovedCaller null
 
         when (val decoded = PrivateZap.decodeAnonTag(eventJson)) {
             is ZapDecodeResult.Malformed -> {
@@ -266,6 +267,7 @@ class SignerProvider : ContentProvider() {
     ): Cursor? = withApprovedCaller { caller, boundIdentity ->
         val pairing = requirePairing(caller, boundIdentity, projection?.getOrNull(2)) ?: return@withApprovedCaller null
         val payload = requirePayload(caller, projection) ?: return@withApprovedCaller null
+        if (!allowsRequest(caller, method)) return@withApprovedCaller null
 
         val otherPubkey = projection?.getOrNull(1)?.takeIf { it.isNotBlank() }
         if (requiresOtherPubkey && otherPubkey == null) {
@@ -293,7 +295,7 @@ class SignerProvider : ContentProvider() {
      * decision itself is the pure, JVM-tested table in [ProviderGate]. */
     private fun resolveCaller(): ProviderGate.Caller {
         val caller = callingPackage
-        val resolution = ProviderGate.resolveCaller(caller, pairingStore::permission)
+        val resolution = ProviderGate.resolveCaller(caller, permissionFor = pairingStore::permission)
         when (resolution) {
             is ProviderGate.Caller.Approved -> Unit
             ProviderGate.Caller.Rejected ->
@@ -351,6 +353,9 @@ class SignerProvider : ContentProvider() {
         }
     }
 
+    private fun allowsRequest(caller: String, method: String, eventKind: Int? = null): Boolean =
+        ProviderGate.allowsRequest(pairingStore.permission(caller), method, eventKind)
+
     private fun requirePayload(caller: String, projection: Array<out String>?): String? {
         val payload = projection?.getOrNull(0)?.takeIf { it.isNotBlank() }
         if (payload == null) {
@@ -378,13 +383,17 @@ class SignerProvider : ContentProvider() {
         cacheableSign: CacheableSign? = null,
         call: suspend (HeartwoodClient, String, String) -> HeartwoodResult<String>,
     ): Cursor? {
-        val startedAt = SystemClock.elapsedRealtime()
+        // Local consent is checked before even consulting exact-result caches.
+        val latestPermission = pairingStore.permission(caller)
+        if (!ProviderGate.allowsRequest(latestPermission, method, eventKind) ||
+            !IdentityRouting.isBoundIdentity(pairing, latestPermission?.boundIdentityPubkeyHex)) return null
+        val startedAt = System.nanoTime()
         val outcome = runBlocking {
             HeartwoodSession.trySilent(pairing, cacheable, priority, cacheableSign) { client ->
                 call(client, payload, otherPubkey)
             }
         }
-        val elapsed = SystemClock.elapsedRealtime() - startedAt
+        val elapsed = (System.nanoTime() - startedAt).coerceAtLeast(0) / 1_000_000
 
         if (outcome == null) {
             logUnavailable(caller, priority, elapsed, "queue full, circuit open, or timed out")
@@ -397,15 +406,16 @@ class SignerProvider : ContentProvider() {
         return when (val answer = ProviderGate.answerFor(outcome)) {
             is ProviderGate.Answer.Result -> {
                 Log.i(TAG, "silent forward for $caller answered in ${elapsed}ms")
-                logActivityUnlessCached(caller, method, eventKind, pairing, outcome)
+                logActivityUnlessCached(caller, method, eventKind, pairing, outcome, elapsed)
                 buildResultCursor(answer.value, includeEventAndSignature)
             }
             ProviderGate.Answer.Rejected -> {
                 Log.i(TAG, "silent forward for $caller refused after ${elapsed}ms ($failureError); answering rejected")
-                logActivityUnlessCached(caller, method, eventKind, pairing, outcome)
+                logActivityUnlessCached(caller, method, eventKind, pairing, outcome, elapsed)
                 rejectedCursor()
             }
             ProviderGate.Answer.Unavailable -> {
+                logActivityUnlessCached(caller, method, eventKind, pairing, outcome, elapsed)
                 logUnavailable(caller, priority, elapsed, failureError.toString())
                 unavailableCursor()
             }
@@ -441,12 +451,28 @@ class SignerProvider : ContentProvider() {
      * cache exists to keep fast. The intent path (`SignerActivity`) logs cache hits normally: it
      * is a one-off, user-visible flow, not a background burst, so `SIGNED` vs
      * `ANSWERED_FROM_CACHE` stays meaningful signal there. */
-    private fun logActivityUnlessCached(caller: String, method: String, eventKind: Int?, pairing: Pairing, outcome: HeartwoodOutcome<String>) {
+    private fun logActivityUnlessCached(
+        caller: String,
+        method: String,
+        eventKind: Int?,
+        pairing: Pairing,
+        outcome: HeartwoodOutcome<String>,
+        elapsedMillis: Long,
+    ) {
         if (outcome is HeartwoodOutcome.Cached) return
-        logActivity(caller, method, eventKind, pairing, ActivityLog.outcomeFor(outcome))
+        val diagnostics = ActivityLog.diagnosticsFor(outcome, elapsedMillis)
+        logActivity(caller, method, eventKind, pairing, diagnostics.outcome, diagnostics.failureCategory, diagnostics.durationMillis)
     }
 
-    private fun logActivity(caller: String, method: String, eventKind: Int?, pairing: Pairing, outcome: ActivityLogEntry.Outcome) {
+    private fun logActivity(
+        caller: String,
+        method: String,
+        eventKind: Int?,
+        pairing: Pairing,
+        outcome: ActivityLogEntry.Outcome,
+        failureCategory: ActivityLogEntry.FailureCategory?,
+        durationMillis: Long?,
+    ) {
         activityLogStore.append(
             ActivityLogEntry(
                 timestampMillis = System.currentTimeMillis(),
@@ -454,7 +480,10 @@ class SignerProvider : ContentProvider() {
                 method = method,
                 eventKind = eventKind,
                 identityLabel = pairing.displayLabel(),
+                identityReference = activityLogStore.identityReferenceFor(pairing.signerPubkeyHex),
                 outcome = outcome,
+                failureCategory = failureCategory,
+                durationMillis = durationMillis,
             )
         )
     }

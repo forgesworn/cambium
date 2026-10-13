@@ -1,6 +1,8 @@
 package dev.forgesworn.cambium.log
 
 import android.content.Context
+import android.util.Base64
+import java.security.SecureRandom
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
@@ -50,6 +52,15 @@ class ActivityLogStore private constructor(context: Context) {
 
     private val appContext = context.applicationContext
     private val file = File(appContext.filesDir, FILE_NAME)
+    private val identitySalt: ByteArray by lazy {
+        val stored = runCatching {
+            prefs.getString(KEY_IDENTITY_SALT, null)?.let { Base64.decode(it, Base64.NO_WRAP) }
+        }.getOrNull()?.takeIf { it.size == IdentityReferences.SALT_BYTES }
+        stored ?: ByteArray(IdentityReferences.SALT_BYTES).also { salt ->
+            SecureRandom().nextBytes(salt)
+            prefs.edit().putString(KEY_IDENTITY_SALT, Base64.encodeToString(salt, Base64.NO_WRAP)).apply()
+        }
+    }
     private val prefs = appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
     private sealed interface Message {
@@ -68,10 +79,10 @@ class ActivityLogStore private constructor(context: Context) {
         CoroutineScope(SupervisorJob() + dispatcher).launch {
             for (message in inbox) {
                 when (message) {
-                    is Message.Append -> writeEntries(ActivityLog.append(readEntries(), message.entry))
+                    is Message.Append -> runCatching { writeEntries(ActivityLog.append(readEntries(), message.entry)) }
                     is Message.Read -> message.deferred.complete(readEntries())
                     is Message.Clear -> {
-                        file.delete()
+                        runCatching { file.delete() }
                         message.deferred.complete(Unit)
                     }
                 }
@@ -83,6 +94,13 @@ class ActivityLogStore private constructor(context: Context) {
 
     fun setEnabled(enabled: Boolean) {
         prefs.edit().putBoolean(KEY_ENABLED, enabled).apply()
+    }
+
+    /** Per-install opaque grouping only. Neither the source public key nor a pairing is stored here.
+     * The lazy salt and non-blocking preferences apply are independent of the append writer. */
+    fun identityReferenceFor(pubkeyHex: String): String? {
+        if (!isEnabled() || !IdentityReferences.isPublicKey(pubkeyHex)) return null
+        return runCatching { IdentityReferences.create(identitySalt, pubkeyHex) }.getOrNull()
     }
 
     /** No-ops entirely -- does not even touch the writer queue -- when logging is disabled. */
@@ -106,17 +124,19 @@ class ActivityLogStore private constructor(context: Context) {
 
     private fun readEntries(): List<ActivityLogEntry> {
         if (!file.exists()) return emptyList()
-        return runCatching { Json.decodeFromString<List<ActivityLogEntry>>(file.readText()) }.getOrDefault(emptyList())
+        return runCatching { LOG_JSON.decodeFromString<List<ActivityLogEntry>>(file.readText()) }.getOrDefault(emptyList())
     }
 
     private fun writeEntries(entries: List<ActivityLogEntry>) {
-        file.writeText(Json.encodeToString(entries))
+        file.writeText(LOG_JSON.encodeToString(entries))
     }
 
     companion object {
+        private val LOG_JSON = Json { ignoreUnknownKeys = true }
         private const val FILE_NAME = "activity_log.json"
         private const val PREFS_NAME = "cambium_activity_log"
         private const val KEY_ENABLED = "enabled"
+        private const val KEY_IDENTITY_SALT = "identity_reference_salt"
 
         @Volatile
         private var instance: ActivityLogStore? = null

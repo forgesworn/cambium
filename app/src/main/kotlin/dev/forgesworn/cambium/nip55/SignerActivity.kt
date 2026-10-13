@@ -6,6 +6,9 @@ import android.content.ClipboardManager
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
+import android.os.Build
+import android.widget.ScrollView
+import android.widget.TextView
 import android.widget.AdapterView
 import android.widget.ArrayAdapter
 import android.widget.LinearLayout
@@ -26,6 +29,10 @@ import dev.forgesworn.cambium.log.ActivityLogStore
 import dev.forgesworn.cambium.nip57.PrivateZap
 import dev.forgesworn.cambium.nip57.ZapDecodeResult
 import dev.forgesworn.cambium.pairing.AppPermission
+import dev.forgesworn.cambium.pairing.AppPermissionState
+import dev.forgesworn.cambium.pairing.ApprovalLifetime
+import dev.forgesworn.cambium.pairing.PermissionScope
+import dev.forgesworn.cambium.pairing.PermissionScopeEditor
 import dev.forgesworn.cambium.pairing.IdentityRouting
 import dev.forgesworn.cambium.pairing.Pairing
 import dev.forgesworn.cambium.pairing.PairingStore
@@ -37,6 +44,9 @@ import dev.forgesworn.cambium.signer.HeartwoodSession
 import dev.forgesworn.cambium.signer.displayLabel
 import dev.forgesworn.cambium.signer.npubWire
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import kotlin.math.roundToInt
 
 private const val EXTRA_TYPE = "type"
@@ -82,8 +92,9 @@ private const val EXTRA_REJECTED = "rejected"
  *
  * `singleTop`: a client can fire a second request (e.g. `sign_event` right after
  * `get_public_key`) before the user has dismissed this activity, which arrives via
- * [onNewIntent] rather than a new instance. Each intent is handled sequentially in full; true
- * single-intent batch requests (NIP-55's `results` JSON-array response) are not implemented yet.
+ * [onNewIntent] rather than a new instance. Explicit SINGLE_TOP + CLEAR_TOP batches queue
+ * requests and return a bounded `results` array. Reused intents need authenticated caller
+ * attribution or visible one-shot consent; they never borrow the first request's permission.
  *
  * App lock (see `applock/AppLockPrompt.kt`) gates exactly two actions here -- Approve and "always
  * deny" on the visible sheet, via [requireUnlockedThen] -- never the silent forwarding path in
@@ -107,6 +118,27 @@ class SignerActivity : AppCompatActivity() {
      * lifetime.
      */
     private var silent = false
+    private var batchEnabled = false
+    private var resultRecipient: String? = null
+    private var requestInProgress = false
+    private var receivedRequests = 0
+    private var inputBytes = 0
+    private val pendingNativeIntents = ArrayDeque<Pair<Intent, String?>>()
+    private val batchResults = NativeBatchResults()
+    private var finishBatchJob: Job? = null
+    private var activeBatchRequest: Pair<Nip55Request, RequestContext>? = null
+    private var waitingForApproval = false
+    private var requestSequence = 0L
+
+    private val batchBackPress = object : OnBackPressedCallback(false) {
+        override fun handleOnBackPressed() {
+            // Once native work is handed off, retain this activity until its result arrives.
+            if (!waitingForApproval) return
+            val (request, context) = activeBatchRequest ?: return
+            logActivity(request, context, null, ActivityLogEntry.Outcome.REJECTED_USER)
+            rejectAndFinish(context)
+        }
+    }
 
     /** See the class doc comment. Disabled outside the two silent forwarding windows. */
     private val silentBackPressBlock = object : OnBackPressedCallback(false) {
@@ -116,18 +148,26 @@ class SignerActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         onBackPressedDispatcher.addCallback(this, silentBackPressBlock)
+        onBackPressedDispatcher.addCallback(this, batchBackPress)
         pairingStore = PairingStore(this)
         activityLogStore = ActivityLogStore.getInstance(this)
         appLockStore = AppLockStore(this)
 
         val requestContext = requestContextFor(intent)
+        resultRecipient = requestContext.nativeCallingPackage
+        batchEnabled = resultRecipient != null && hasBatchFlags(intent)
+        batchBackPress.isEnabled = batchEnabled
+        receivedRequests = 1
+        inputBytes = nativeInputBytes(intent)
         val plan = IntentGate.plan(
             requestContext.permission,
             pairingStore.pairings(),
             requestContext.incoming.parsed,
             canAsk = true,
         )
-        silent = IntentGate.silentFor(requestContext.permission, plan)
+        // A batch must be able to ask for an unattributable later intent on older Android.
+        silent = requestContext.permission?.state == AppPermissionState.DENIED ||
+            (!batchEnabled && IntentGate.silentFor(requestContext.permission, plan))
         if (silent) {
             // Must happen before setContentView (and there is no content view to set here) for
             // the transparent/non-dimmed theme to actually take effect on the window.
@@ -139,7 +179,11 @@ class SignerActivity : AppCompatActivity() {
             setContentView(binding.root)
         }
 
-        handleIncomingIntent(intent, FirstIntent(requestContext, plan))
+        if (batchEnabled && (inputBytes > NativeBatchResults.MAX_INPUT_BYTES ||
+                requestContext.incoming.raw.id.orEmpty().length > NativeBatchResults.MAX_ID_CHARS)) {
+            Toast.makeText(this, R.string.batch_overflow, Toast.LENGTH_LONG).show()
+            rejectAndFinish(requestContext)
+        } else handleIncomingIntent(intent, FirstIntent(requestContext, plan))
     }
 
     /** The first intent's parse and [IntentGate.plan], computed in `onCreate` (where the plan
@@ -156,6 +200,7 @@ class SignerActivity : AppCompatActivity() {
         val incoming: IncomingNip55Request,
         val permission: AppPermission?,
         val nativeCallingPackage: String?,
+        val userApproved: Boolean = false,
     ) {
         val web: Nip55Transport.Web? get() = incoming.transport as? Nip55Transport.Web
         val logCaller: String
@@ -169,9 +214,9 @@ class SignerActivity : AppCompatActivity() {
             }
     }
 
-    private fun requestContextFor(intent: Intent): RequestContext {
+    private fun requestContextFor(intent: Intent, caller: String? = callingPackage): RequestContext {
         val incoming = IncomingNip55RequestParser.parse(intent.dataString, intent.toRawSignerIntent())
-        val nativeCallingPackage = callingPackage.takeIf { incoming.transport.canUsePackagePermission }
+        val nativeCallingPackage = caller.takeIf { incoming.transport.canUsePackagePermission }
         return RequestContext(
             incoming = incoming,
             permission = nativeCallingPackage?.let(pairingStore::permission),
@@ -181,11 +226,53 @@ class SignerActivity : AppCompatActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        setIntent(intent)
-        handleIncomingIntent(intent, precomputed = null)
+        // callingPackage identifies the original result recipient, not a reused intent's sender.
+        val sender = if (Build.VERSION.SDK_INT >= 35) {
+            runCatching { currentCaller.getPackage() }.getOrNull()
+        } else null
+        if (!batchEnabled || !hasBatchFlags(intent)) return
+        val incoming = IncomingNip55RequestParser.parse(intent.dataString, intent.toRawSignerIntent())
+        if (!incoming.transport.canUsePackagePermission) return
+        if (BatchCallerGate.decide(resultRecipient, sender) == BatchCallerGate.Decision.REJECT) return
+        val bytes = nativeInputBytes(intent)
+        if (receivedRequests >= NativeBatchResults.MAX_REQUESTS || inputBytes + bytes > NativeBatchResults.MAX_INPUT_BYTES) {
+            Toast.makeText(this, R.string.batch_overflow, Toast.LENGTH_LONG).show()
+            return
+        }
+        if (incoming.raw.id.orEmpty().length > NativeBatchResults.MAX_ID_CHARS) return
+        receivedRequests++
+        inputBytes += bytes
+        if (!silent) binding.batchPosition.text = getString(R.string.batch_request_position,
+            batchResults.size + 1, receivedRequests)
+        finishBatchJob?.cancel()
+        pendingNativeIntents.addLast(intent to sender)
+        if (!requestInProgress) processNextNativeIntent()
+    }
+
+    private fun hasBatchFlags(intent: Intent): Boolean =
+        intent.flags and (Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP) ==
+            (Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+
+    private fun batchRecipientIsDenied(): Boolean = batchEnabled &&
+        resultRecipient?.let(pairingStore::permission)?.state == AppPermissionState.DENIED
+
+    private fun nativeInputBytes(intent: Intent): Int = listOfNotNull(intent.dataString,
+        intent.getStringExtra(EXTRA_ID), intent.getStringExtra(EXTRA_TYPE), intent.getStringExtra(EXTRA_CURRENT_USER),
+        intent.getStringExtra(EXTRA_PUBKEY), intent.getStringExtra(EXTRA_PUBKEY_ALT), intent.getStringExtra(EXTRA_PERMISSIONS))
+        .sumOf { it.toByteArray(Charsets.UTF_8).size }
+
+    private fun processNextNativeIntent() {
+        val (next, sender) = pendingNativeIntents.removeFirstOrNull() ?: return
+        val context = requestContextFor(next, sender)
+        handleIncomingIntent(next, FirstIntent(context, IntentGate.plan(
+            context.permission, pairingStore.pairings(), context.incoming.parsed, canAsk = !silent,
+        )))
     }
 
     private fun handleIncomingIntent(intent: Intent, precomputed: FirstIntent?) {
+        requestSequence++
+        waitingForApproval = false
+        requestInProgress = true
         // A stray back-press must only ever be blocked while a forwarding call is actually in
         // flight, never across a whole activity lifetime -- reset before working out what this
         // intent even is.
@@ -197,7 +284,8 @@ class SignerActivity : AppCompatActivity() {
             binding.progressGroup.isVisible = false
         }
 
-        val context = precomputed?.context ?: requestContextFor(intent)
+        val initialContext = precomputed?.context ?: requestContextFor(intent)
+        val context = initialContext.copy(permission = initialContext.nativeCallingPackage?.let(pairingStore::permission))
         // Not an elvis on precomputed parsed data: a precomputed null parse means the first intent was
         // unparsable, not that it needs parsing again.
         val parsed = context.incoming.parsed
@@ -205,6 +293,14 @@ class SignerActivity : AppCompatActivity() {
             if (context.web != null && !silent) {
                 Toast.makeText(this, R.string.error_invalid_web_request, Toast.LENGTH_LONG).show()
             }
+            rejectAndFinish(context)
+            return
+        }
+        if (batchEnabled) activeBatchRequest = parsed to context
+        // Attribution can be absent for a reused intent; its result recipient is still known.
+        // A blocked recipient cannot obtain signing or identity data through that one-shot path.
+        if (batchRecipientIsDenied()) {
+            logActivity(parsed, context, null, ActivityLogEntry.Outcome.REJECTED_USER)
             rejectAndFinish(context)
             return
         }
@@ -218,8 +314,7 @@ class SignerActivity : AppCompatActivity() {
         }
 
         val pairings = pairingStore.pairings()
-        val plan = precomputed?.plan
-            ?: IntentGate.plan(context.permission, pairings, parsed, canAsk = !silent)
+        val plan = IntentGate.plan(context.permission, pairings, parsed, canAsk = !silent)
         when (plan) {
             is IntentGate.Plan.Forward -> handle(plan.pairing, parsed, context)
             IntentGate.Plan.AskUser -> showApprovalSheet(pairings, parsed, context)
@@ -235,7 +330,8 @@ class SignerActivity : AppCompatActivity() {
                     logActivity(parsed, context, identityLabel = null, outcome = ActivityLogEntry.Outcome.REJECTED_USER)
                     rejectAndFinish(context)
                 }
-                IntentGate.RejectReason.UNRESOLVED_IDENTITY -> {
+                IntentGate.RejectReason.UNRESOLVED_IDENTITY,
+                IntentGate.RejectReason.PERMISSION_REQUIRES_CONSENT -> {
                     // A later onNewIntent-delivered request from an approved caller whose
                     // current_user cannot be resolved -- or resolved to an identity other than
                     // its bound one (see IdentityRouting.isBoundIdentity): the window is already
@@ -261,6 +357,9 @@ class SignerActivity : AppCompatActivity() {
         context: RequestContext,
         identityLabel: String?,
         outcome: ActivityLogEntry.Outcome,
+        failureCategory: ActivityLogEntry.FailureCategory? = null,
+        durationMillis: Long? = null,
+        identityReference: String? = null,
     ) {
         activityLogStore.append(
             ActivityLogEntry(
@@ -270,11 +369,14 @@ class SignerActivity : AppCompatActivity() {
                 eventKind = (request as? Nip55Request.SignEvent)?.let { extractEventKind(it.eventJson) },
                 identityLabel = identityLabel,
                 outcome = outcome,
+                failureCategory = failureCategory,
+                durationMillis = durationMillis,
+                identityReference = identityReference,
             )
         )
     }
 
-    private fun showApprovalSheet(pairings: List<Pairing>, request: Nip55Request, context: RequestContext) {
+    private fun showRequestInformation(request: Nip55Request, context: RequestContext) {
         binding.callerLabel.setText(
             if (context.web != null) R.string.approval_web_return_label else R.string.approval_app_label
         )
@@ -283,13 +385,80 @@ class SignerActivity : AppCompatActivity() {
             ?: if (context.web != null) getString(R.string.approval_web_clipboard_caller)
             else getString(R.string.approval_unknown_caller)
         binding.methodValue.text = methodLabel(request)
-        binding.webOneShotNote.isVisible = context.web != null
-        binding.nativeRememberNote.isVisible = context.nativeCallingPackage != null
-
+        val presentation = RequestPresenter.describe(request)
+        binding.requestSummary.text = presentation.summary
+        binding.requestDetailsButton.isVisible = presentation.details != null
+        binding.requestDetailsButton.setOnClickListener {
+            val details = TextView(this).apply {
+                text = getString(R.string.request_details_note) + "\n\n" + presentation.details.orEmpty()
+                setTextIsSelectable(true)
+                setPadding(24, 16, 24, 16)
+            }
+            MaterialAlertDialogBuilder(this).setTitle(R.string.request_details_title)
+                .setView(ScrollView(this).apply { addView(details) })
+                .setPositiveButton(android.R.string.ok, null).show()
+        }
+        binding.batchPosition.isVisible = batchEnabled
+        binding.batchPosition.text = getString(R.string.batch_request_position, batchResults.size + 1, receivedRequests)
+        binding.batchCallerNote.isVisible = batchEnabled && context.nativeCallingPackage == null && context.web == null
+        binding.batchCallerNote.text = getString(R.string.batch_unattributed_note,
+            resultRecipient?.let(packageManager::displayNameFor) ?: getString(R.string.approval_unknown_caller))
         val kind = (request as? Nip55Request.SignEvent)?.let { extractEventKind(it.eventJson) }
         binding.kindRow.isVisible = kind != null
-        if (kind != null) {
-            binding.kindValue.text = kind.toString()
+        if (kind != null) binding.kindValue.text = kind.toString()
+    }
+
+    private fun showApprovalSheet(pairings: List<Pairing>, request: Nip55Request, context: RequestContext) {
+        if (batchRecipientIsDenied()) {
+            rejectAndFinish(context)
+            return
+        }
+        if (pairings.isEmpty()) {
+            Toast.makeText(this, R.string.error_not_paired, Toast.LENGTH_LONG).show()
+            rejectAndFinish(context)
+            return
+        }
+        waitingForApproval = true
+        val sheetSequence = requestSequence
+        showRequestInformation(request, context)
+        binding.webOneShotNote.isVisible = context.web != null
+        binding.nativeRememberNote.isVisible = context.nativeCallingPackage != null
+        binding.nativePermissionControls.isVisible = context.nativeCallingPackage != null
+        val lifetimes = listOf(ApprovalLifetime.ONCE, ApprovalLifetime.HOUR, ApprovalLifetime.DAY, ApprovalLifetime.ALWAYS)
+        binding.approvalLifetimePicker.adapter = ArrayAdapter(this, R.layout.item_identity_choice,
+            listOf(R.string.approval_once, R.string.approval_hour, R.string.approval_day, R.string.approval_always).map(::getString))
+        // Asking for an operation outside an existing grant must not silently broaden that grant.
+        binding.approvalLifetimePicker.setSelection(if (context.permission != null) 0 else 3)
+        binding.approvalLifetimePicker.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: AdapterView<*>?, view: android.view.View?, position: Int, id: Long) {
+                binding.nativeRememberNote.setText(if (position == 0) R.string.approval_once_note else R.string.approval_timed_note)
+                binding.approvalScopePicker.isEnabled = position != 0
+            }
+            override fun onNothingSelected(parent: AdapterView<*>?) = Unit
+        }
+        var selectedScope: PermissionScope? = null
+        var lastScopeChoice = 0
+        binding.approvalScopePicker.adapter = ArrayAdapter(this, R.layout.item_identity_choice,
+            listOf(R.string.approval_scope_all, R.string.approval_scope_current, R.string.approval_scope_custom).map(::getString))
+        binding.approvalScopePicker.setSelection(0)
+        binding.approvalScopeSummary.isVisible = false
+        binding.approvalScopePicker.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: AdapterView<*>?, view: android.view.View?, position: Int, id: Long) {
+                when (position) {
+                    0 -> { selectedScope = null; lastScopeChoice = 0 }
+                    1 -> { selectedScope = request.permissionScope(); lastScopeChoice = 1 }
+                    2 -> PermissionScopeEditor.show(this@SignerActivity, selectedScope ?: request.permissionScope(),
+                        onCancel = { binding.approvalScopePicker.setSelection(lastScopeChoice) }) { scope ->
+                        selectedScope = scope
+                        lastScopeChoice = 2
+                        binding.approvalScopeSummary.isVisible = true
+                        binding.approvalScopeSummary.text = PermissionScopeEditor.summary(this@SignerActivity, scope)
+                    }
+                }
+                binding.approvalScopeSummary.text = PermissionScopeEditor.summary(this@SignerActivity, selectedScope)
+                binding.approvalScopeSummary.isVisible = selectedScope != null
+            }
+            override fun onNothingSelected(parent: AdapterView<*>?) = Unit
         }
 
         // Name the sole identity too, without introducing a choice where there is none.
@@ -364,9 +533,21 @@ class SignerActivity : AppCompatActivity() {
 
         binding.approveButton.setOnClickListener {
             requireUnlockedThen {
+                if (sheetSequence != requestSequence || !waitingForApproval || isFinishing) return@requireUnlockedThen
+                if (batchRecipientIsDenied()) {
+                    rejectAndFinish(context)
+                    return@requireUnlockedThen
+                }
                 val chosen = pairings.getOrNull(binding.identityPicker.selectedItemPosition) ?: pairings.first()
-                context.nativeCallingPackage?.let { pairingStore.approve(it, chosen.signerPubkeyHex) }
-                handle(chosen, request, context)
+                val lifetime = if (context.nativeCallingPackage == null) ApprovalLifetime.ONCE
+                    else lifetimes[binding.approvalLifetimePicker.selectedItemPosition.coerceIn(lifetimes.indices)]
+                val saved = context.nativeCallingPackage?.let {
+                    pairingStore.approveIfSheetCurrent(it, chosen, context.permission, lifetime, selectedScope)
+                } ?: pairingStore.pairings().any { it == chosen }
+                if (!saved) {
+                    Toast.makeText(this, R.string.approval_changed, Toast.LENGTH_LONG).show()
+                    rejectAndFinish(context)
+                } else handle(chosen, request, context.copy(userApproved = true))
             }
         }
         binding.declineButton.setOnClickListener {
@@ -375,6 +556,7 @@ class SignerActivity : AppCompatActivity() {
         }
         binding.denyAlwaysLink.setOnClickListener {
             requireUnlockedThen {
+                if (sheetSequence != requestSequence || !waitingForApproval || isFinishing) return@requireUnlockedThen
                 context.nativeCallingPackage?.let { pairingStore.deny(it) }
                 logActivity(request, context, identityLabel = null, outcome = ActivityLogEntry.Outcome.REJECTED_USER)
                 rejectAndFinish(context)
@@ -408,9 +590,37 @@ class SignerActivity : AppCompatActivity() {
      * approved right now (visible, the user just tapped Approve on the sheet).
      */
     private fun handle(pairing: Pairing, request: Nip55Request, context: RequestContext) {
+        if (batchRecipientIsDenied()) {
+            rejectAndFinish(context)
+            return
+        }
+        val currentPairing = pairingStore.pairings().firstOrNull { it.signerPubkeyHex == pairing.signerPubkeyHex }
+        val pairingUnchanged = currentPairing?.copy(label = null) == pairing.copy(label = null)
+        val grant = context.nativeCallingPackage?.let(pairingStore::permission)
+        val authorised = context.userApproved || (grant?.allows(request.permissionMethod(), request.permissionEventKind()) == true &&
+            IdentityRouting.isBoundIdentity(pairing, grant.boundIdentityPubkeyHex))
+        if (!pairingUnchanged || !authorised) {
+            if (context.userApproved) {
+                if (!silent) Toast.makeText(this, R.string.approval_changed, Toast.LENGTH_LONG).show()
+                rejectAndFinish(context)
+            } else if (!silent) showApprovalSheet(pairingStore.pairings(), request, context.copy(permission = grant))
+            else rejectAndFinish(context)
+            return
+        }
+        waitingForApproval = false
         if (!silent) {
+            showRequestInformation(request, context)
+            binding.identityRow.isVisible = true
+            binding.identityPicker.isVisible = false
+            binding.singleIdentityValue.isVisible = true
+            binding.singleIdentityValue.text = pairing.displayLabel()
+            binding.identityRebindHint.isVisible = false
+            binding.permissionsRow.isVisible = false
+            binding.webOneShotNote.isVisible = false
+            binding.nativeRememberNote.isVisible = false
             binding.decisionGroup.isVisible = false
             binding.denyAlwaysLink.isVisible = false
+            binding.nativePermissionControls.isVisible = false
         }
 
         if (request is Nip55Request.GetPublicKey) {
@@ -418,7 +628,8 @@ class SignerActivity : AppCompatActivity() {
             // Native Amber-compatible clients expect npub (see npubWire's doc for the Primal
             // failure a hex answer causes). NIP-55's web transport specifies hex instead.
             val value = if (context.web != null) pairing.signerPubkeyHex else npubWire(pairing.signerPubkeyHex)
-            logActivity(request, context, pairing.displayLabel(), ActivityLogEntry.Outcome.SIGNED)
+            logActivity(request, context, pairing.displayLabel(), ActivityLogEntry.Outcome.SIGNED,
+                identityReference = activityLogStore.identityReferenceFor(pairing.signerPubkeyHex))
             respondSuccess(request, value, isPublicKeyRequest = true, context = context)
             return
         }
@@ -492,8 +703,11 @@ class SignerActivity : AppCompatActivity() {
             silentBackPressBlock.isEnabled = true
         }
         lifecycleScope.launch {
+            val started = System.nanoTime()
             val outcome = HeartwoodSession.withClient(pairing, cacheable, operation = operation)
-            logActivity(request, context, pairing.displayLabel(), ActivityLog.outcomeFor(outcome))
+            logActivity(request, context, pairing.displayLabel(), ActivityLog.outcomeFor(outcome),
+                ActivityLog.failureCategoryFor(outcome), (System.nanoTime() - started) / 1_000_000,
+                activityLogStore.identityReferenceFor(pairing.signerPubkeyHex))
             when (val result = outcome.result) {
                 is HeartwoodResult.Success -> respondSuccess(
                     request,
@@ -537,8 +751,13 @@ class SignerActivity : AppCompatActivity() {
                 putExtra(EXTRA_PACKAGE, packageName)
             }
         }
-        setResult(RESULT_OK, data)
-        finish()
+        val batchValue = NativeBatchResultBuilder.success(request, value, packageName)
+        if (batchEnabled && batchValue == null) {
+            Toast.makeText(this, R.string.error_invalid_signer_response, Toast.LENGTH_LONG).show()
+            rejectAndFinish(context)
+            return
+        }
+        completeNativeRequest(context, data, batchValue ?: NativeSignerResult(packageName, request.id, value))
     }
 
     private fun deliverWebResult(action: WebResultAction) {
@@ -591,8 +810,36 @@ class SignerActivity : AppCompatActivity() {
             putExtra(EXTRA_REJECTED, true)
             putExtra(EXTRA_ID, context.incoming.raw.id)
         }
-        setResult(RESULT_OK, data)
-        finish()
+        completeNativeRequest(context, data, NativeSignerResult(packageName, context.incoming.raw.id, rejected = true))
+    }
+
+    private fun completeNativeRequest(context: RequestContext, singleData: Intent, result: NativeSignerResult) {
+        if (!batchEnabled || context.web != null) {
+            setResult(RESULT_OK, singleData)
+            finish()
+            return
+        }
+        if (!batchResults.append(result)) {
+            batchResults.append(NativeSignerResult(packageName, result.id, rejected = true, unavailable = true))
+            Toast.makeText(this, R.string.batch_overflow, Toast.LENGTH_LONG).show()
+        }
+        requestInProgress = false
+        waitingForApproval = false
+        activeBatchRequest = null
+        silentBackPressBlock.isEnabled = false
+        if (pendingNativeIntents.isNotEmpty()) {
+            processNextNativeIntent()
+        } else {
+            // Allow already-posted SINGLE_TOP intents to join a just-completed fast local reply.
+            finishBatchJob = lifecycleScope.launch {
+                delay(200)
+                if (!requestInProgress && pendingNativeIntents.isEmpty()) {
+                    singleData.putExtra("results", batchResults.toJson())
+                    setResult(RESULT_OK, singleData)
+                    finish()
+                }
+            }
+        }
     }
 
     private fun methodLabel(request: Nip55Request): String = getString(

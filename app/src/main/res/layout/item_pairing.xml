@@ -40,6 +40,36 @@
         tools:text="wss://relay.example" />
 
     <Button
+        android:id="@+id/pairingTestButton"
+        style="@style/Widget.Cambium.Button.Outlined"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        android:text="@string/test_connection" />
+
+    <TextView
+        android:id="@+id/pairingHealthValue"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:accessibilityLiveRegion="polite"
+        android:textAppearance="@style/TextAppearance.Cambium.Detail" />
+
+    <Button
+        android:id="@+id/pairingReconnectButton"
+        style="@style/Widget.Cambium.Button.Text"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="@string/reconnect_signer" />
+
+    <Button
+        android:id="@+id/pairingRenameButton"
+        style="@style/Widget.Cambium.Button.Text"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="@string/rename_identity" />
+
+    <Button
         android:id="@+id/pairingUnlockButton"
         style="@style/Widget.Cambium.Button.Outlined"
         android:layout_width="match_parent"

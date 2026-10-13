@@ -52,10 +52,9 @@ import kotlinx.coroutines.launch
  * explicitly to [ServiceCompat.startForeground] on API 34+ (`UPSIDE_DOWN_CAKE`), where the
  * `foregroundServiceType` argument became mandatory.
  *
- * The periodic keepalive calls `getPublicKey()` through the shared [HeartwoodSession] -- a
- * read-only, always-safe operation Heartwood answers without a physical button. rust-nostr's
- * client bindings do not expose a lower-level "ping" primitive to call instead (checked via
- * `javap` against the actual AAR: `NostrConnect`/`NostrConnectInterface` have no `ping` method).
+ * The periodic keepalive calls authenticated NIP-46 `ping` through the shared [HeartwoodSession].
+ * The SDK caches getPublicKey(), so it cannot prove fresh contact. The narrow low-level RPC
+ * adapter supplies ping while keeping cryptography and relay transport inside rust-nostr.
  *
  * The ping goes through [HeartwoodSession.withClient] at [HeartwoodRequestPriority.MAINTENANCE]:
  * that priority is admitted only into an empty worker (the same admission check the silent path
@@ -153,7 +152,7 @@ class HeartwoodKeepAliveService : Service() {
             val result = HeartwoodSession.withClient(
                 pairing,
                 priority = HeartwoodRequestPriority.MAINTENANCE,
-            ) { it.getPublicKey() }.result
+            ) { it.ping() }.result
             val busy = result is HeartwoodResult.Failure && result.error == HeartwoodError.Busy
             when {
                 result is HeartwoodResult.Success -> Log.d(TAG, "keepalive ping ok ($tag)")

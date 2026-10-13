@@ -2,6 +2,12 @@ package dev.forgesworn.cambium.signer
 
 import dev.forgesworn.cambium.pairing.BunkerUri
 import dev.forgesworn.cambium.pairing.Pairing
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -52,9 +58,41 @@ class SessionRegistry(
     private val sessionMaxIdleMillis: Long = SESSION_MAX_IDLE_MILLIS,
     private val signCacheTtlMillis: Long = SIGN_CACHE_TTL_MILLIS,
     private val authCircuitBreakMillis: Long = AUTH_CIRCUIT_BREAK_MILLIS,
+    private val wallClockMillis: () -> Long = System::currentTimeMillis,
+    private val persistRelayUpdate: (Pairing, List<String>) -> Boolean = { _, _ -> false },
     private val elapsedRealtimeMillis: () -> Long = { System.nanoTime() / 1_000_000L },
 ) {
     private val sessions = ConcurrentHashMap<String, Session>()
+    private val healthLifecycle = Any()
+    private val mutableHealth = MutableStateFlow<Map<String, ConnectionHealth>>(emptyMap())
+    val health: StateFlow<Map<String, ConnectionHealth>> = mutableHealth.asStateFlow()
+
+    /** Records the disposable pairing client's authenticated handshake after saving and shutdown.
+     * This is an observation only: it creates no session, worker, connection or cache entry. */
+    fun recordPairingContact(signerPubkeyHex: String) = synchronized(healthLifecycle) {
+        val now = wallClockMillis()
+        updateHealth(signerPubkeyHex) {
+            it.copy(status = ConnectionStatus.CONNECTED, lastSuccessfulContactMillis = now, errorCategory = null)
+        }
+    }
+
+    /** Caller holds healthLifecycle, shared with session ownership changes. */
+    private fun updateHealth(signerPubkeyHex: String, change: (ConnectionHealth) -> ConnectionHealth) {
+        mutableHealth.update { previous ->
+            val bounded = if (signerPubkeyHex !in previous && previous.size >= 64)
+                previous - previous.keys.first() else previous
+            bounded + (signerPubkeyHex to change(previous[signerPubkeyHex] ?: ConnectionHealth()))
+        }
+    }
+
+    /** Both controls enter the existing worker. Reconnecting never cancels an active FFI call. */
+    suspend fun testConnection(pairing: Pairing): HeartwoodOutcome<String> = sessionFor(pairing).withClient(
+        pairing, null, HeartwoodRequestPriority.MAINTENANCE, { it.ping() }, ConnectionStatus.CHECKING,
+    )
+
+    suspend fun reconnect(pairing: Pairing): HeartwoodOutcome<String> = sessionFor(pairing).withClient(
+        pairing, null, HeartwoodRequestPriority.INTERACTIVE, { it.ping() }, ConnectionStatus.RECONNECTING,
+    )
 
     suspend fun trySilent(
         pairing: Pairing,
@@ -75,13 +113,24 @@ class SessionRegistry(
      * after refreshing an existing pairing's connection details (relays/secret), so the next call
      * reconnects against what was just persisted rather than reusing a stale client. */
     suspend fun shutdown(signerPubkeyHex: String) {
-        sessions.remove(signerPubkeyHex)?.shutdown()
+        val removed = synchronized(healthLifecycle) {
+            mutableHealth.update { it - signerPubkeyHex }
+            sessions.remove(signerPubkeyHex)
+        }
+        removed?.shutdown()
     }
 
     /** Drops every identity's session and decrypt cache. Call on a full reset (`PairingStore.clearAll`). */
     suspend fun shutdownAll() {
-        val all = sessions.keys.mapNotNull { sessions.remove(it) }
-        all.forEach { it.shutdown() }
+        val all = synchronized(healthLifecycle) {
+            val removed = sessions.values.toList()
+            sessions.clear()
+            mutableHealth.value = emptyMap()
+            removed
+        }
+        // Once removed, nobody else retains these workers to finish their cleanup. A cancelled
+        // reset caller must still drain every identity, not only the first one in the snapshot.
+        withContext(NonCancellable) { all.forEach { it.shutdown() } }
     }
 
     // ConcurrentHashMap, but computeIfAbsent specifically -- not Kotlin's getOrPut extension,
@@ -91,8 +140,9 @@ class SessionRegistry(
     // its thread -- would then be silently overwritten in the map and leaked, since nothing ever
     // held a reference to shut it down again. computeIfAbsent is atomic per key: the second
     // caller blocks until the first's factory has already returned and been stored.
-    private fun sessionFor(pairing: Pairing): Session =
+    private fun sessionFor(pairing: Pairing): Session = synchronized(healthLifecycle) {
         sessions.computeIfAbsent(pairing.signerPubkeyHex) { signerPubkeyHex -> Session(signerPubkeyHex) }
+    }
 
     /**
      * One dedicated worker + decrypt cache for exactly one Heartwood identity. Two problems
@@ -145,7 +195,7 @@ class SessionRegistry(
      * and reuse [signCache] briefly. That cache is also per [Session], and callers must explicitly
      * opt an event into it; the NIP-55 provider does so only for kind 22242.
      */
-    private inner class Session(signerPubkeyHex: String) {
+    private inner class Session(private val signerPubkeyHex: String) {
         // Short, log-friendly tag identifying which identity this Session belongs to -- the
         // registry's map key lives in the sessions map, not here, so without this a Session has
         // no way to name itself in its own log lines (see recordShed).
@@ -159,6 +209,23 @@ class SessionRegistry(
         private val workerScope = CoroutineScope(SupervisorJob() + workerDispatcher)
 
         private var client: HeartwoodClient? = null
+        private var nextRelayCheckAtMillis = Long.MIN_VALUE
+        private var relaySourcePairing: Pairing? = null
+        private var relayUpdatedPairing: Pairing? = null
+
+        private fun updateHealth(change: (ConnectionHealth) -> ConnectionHealth) = synchronized(healthLifecycle) {
+            // A removed worker may finish a non-cancellable call after a new pairing/session
+            // has reported contact. Its old observation must neither replace nor resurrect it.
+            if (sessions[signerPubkeyHex] === this) this@SessionRegistry.updateHealth(signerPubkeyHex, change)
+        }
+
+        private fun recordFailure(error: HeartwoodError) = updateHealth {
+            // A policy refusal or deterministic decrypt error is still an authenticated answer.
+            // Keep the last successful-operation timestamp, but do not describe the signer as offline.
+            val answered = isPolicyRefusal(error) || isDeterministicDecryptFailure(error)
+            it.copy(status = if (answered) ConnectionStatus.CONNECTED else ConnectionStatus.UNAVAILABLE,
+                errorCategory = error.safeCategory())
+        }
         private var lastHealthyAtMillis: Long? = null
         private val queueDepth = AtomicInteger(0)
         private val decryptCache = DecryptCache()
@@ -193,12 +260,15 @@ class SessionRegistry(
                                     CompletedCall(cached, fromCache = true)
                                 } else {
                                     val result = runCatching {
-                                        deliver(message.pairing, message.priority, message.operation) {
+                                        deliver(message.pairing, message.priority, message.operation, message.requestedStatus) {
                                             message.waiterActive.get()
                                         }
                                     }.getOrElse { e ->
                                         HeartwoodResult.Failure(HeartwoodError.Protocol(e.message ?: "worker error"))
-                                    }.also { recordCacheOutcome(message.cacheable, message.cacheableSign, it) }
+                                    }.also {
+                                        if (it is HeartwoodResult.Failure) recordFailure(it.error)
+                                        recordCacheOutcome(message.cacheable, message.cacheableSign, it)
+                                    }
                                     CompletedCall(result, fromCache = false)
                                 }
                             } else {
@@ -282,6 +352,7 @@ class SessionRegistry(
             cacheable: CacheableDecrypt?,
             priority: HeartwoodRequestPriority,
             operation: suspend (HeartwoodClient) -> HeartwoodResult<String>,
+            requestedStatus: ConnectionStatus? = null,
         ): HeartwoodOutcome<String> {
             cachedResult(cacheable, cacheableSign = null)?.let { return HeartwoodOutcome.Cached(it) }
 
@@ -296,6 +367,7 @@ class SessionRegistry(
                 priority,
                 intentTimeoutMillis,
                 operation,
+                requestedStatus,
             )
                 ?: return HeartwoodOutcome.Fresh(HeartwoodResult.Failure(HeartwoodError.Timeout))
             return if (completed.fromCache) {
@@ -317,12 +389,14 @@ class SessionRegistry(
                     false
                 }
             }
-            if (queued) deferred.await()
-            // Release the dedicated thread. The registry removes this Session from its map before
-            // calling here, so no new caller can reach it; a caller that grabbed the reference
-            // just before removal fails its send harmlessly (see submitAndAwait).
-            workerScope.cancel()
-            workerDispatcher.close()
+            withContext(NonCancellable) {
+                if (queued) deferred.await()
+                // Release the dedicated thread. The registry removes this Session from its map before
+                // calling here, so no new caller can reach it; a caller that grabbed the reference
+                // just before removal fails its send harmlessly (see submitAndAwait).
+                workerScope.cancel()
+                workerDispatcher.close()
+            }
         }
 
         private fun cachedResult(
@@ -406,6 +480,7 @@ class SessionRegistry(
             priority: HeartwoodRequestPriority,
             timeoutMillis: Long,
             operation: suspend (HeartwoodClient) -> HeartwoodResult<String>,
+            requestedStatus: ConnectionStatus? = null,
         ): CompletedCall? {
             val deferred = CompletableDeferred<CompletedCall>()
             val message = Message.Call(
@@ -416,6 +491,7 @@ class SessionRegistry(
                 sequence = nextSequence.getAndIncrement(),
                 operation = operation,
                 deferred = deferred,
+                requestedStatus = requestedStatus,
             )
             // Enqueueing fails only when this Session was shut down between the caller resolving it
             // and reaching here -- answer like a timeout: the
@@ -465,8 +541,16 @@ class SessionRegistry(
             pairing: Pairing,
             priority: HeartwoodRequestPriority,
             operation: suspend (HeartwoodClient) -> HeartwoodResult<String>,
+            requestedStatus: ConnectionStatus?,
             callerIsWaiting: () -> Boolean,
         ): HeartwoodResult<String> {
+            if (requestedStatus != null) updateHealth { it.copy(status = requestedStatus, errorCategory = null) }
+            if (requestedStatus == ConnectionStatus.RECONNECTING) {
+                discardClient()
+                decryptCache.clear()
+                signCache.clear()
+                authCircuitOpenUntilMillis.set(0L)
+            }
             val connected = healthyClient()?.let { HeartwoodResult.Success(it) } ?: reconnect(pairing)
 
             val active = when (connected) {
@@ -546,6 +630,8 @@ class SessionRegistry(
 
         private fun markHealthy() {
             lastHealthyAtMillis = elapsedRealtimeMillis()
+            updateHealth { it.copy(status = ConnectionStatus.CONNECTED,
+                lastSuccessfulContactMillis = wallClockMillis(), errorCategory = null) }
         }
 
         /** Runs on the worker thread only. */
@@ -566,20 +652,60 @@ class SessionRegistry(
         /** Runs on the worker thread only. */
         private suspend fun reconnect(pairing: Pairing): HeartwoodResult<HeartwoodClient> {
             discardClient()
-
-            val fresh = clientFactory()
-            val bunkerUri = BunkerUri(pairing.signerPubkeyHex, pairing.relays, pairing.secret).toUriString()
-            return when (val connected = fresh.connect(bunkerUri, pairing.clientSecretKeyHex)) {
-                is HeartwoodResult.Success -> {
-                    client = fresh
-                    markHealthy()
-                    HeartwoodResult.Success(fresh)
-                }
-                is HeartwoodResult.Failure -> {
-                    fresh.disconnect()
-                    connected
-                }
+            updateHealth { it.copy(status = ConnectionStatus.RECONNECTING, errorCategory = null) }
+            var target = if (pairing.copy(label = null) == relaySourcePairing?.copy(label = null))
+                relayUpdatedPairing ?: pairing else pairing
+            var fresh = clientFactory()
+            fun uri() = BunkerUri(target.signerPubkeyHex, target.relays, target.secret).toUriString()
+            val initial = fresh.connect(uri(), target.clientSecretKeyHex)
+            if (initial is HeartwoodResult.Failure) {
+                fresh.disconnect()
+                recordFailure(initial.error)
+                return initial
             }
+            // Optional discovery is attempted at most hourly for this session, including after
+            // transport failures. An old signer refusing the method remains fully usable.
+            if (elapsedRealtimeMillis() >= nextRelayCheckAtMillis) {
+                nextRelayCheckAtMillis = elapsedRealtimeMillis() + 60 * 60_000L
+                val switched = runCatching { fresh.switchRelays() }.getOrDefault(RelaySwitchResult.Unavailable)
+                val status = when (switched) {
+                    is RelaySwitchResult.Updated -> {
+                        val validated = RelaySwitch.validated(switched.relays)
+                        when {
+                            validated == null -> RelayUpdateStatus.INVALID_RESPONSE
+                            validated == target.relays -> RelayUpdateStatus.UNCHANGED
+                            !runCatching { persistRelayUpdate(target, validated) }.getOrDefault(false) -> {
+                                // A re-pair/removal race or persistence failure must not move transport.
+                                // This fresh client is not held by the Session yet, so release it here.
+                                fresh.disconnect()
+                                return HeartwoodResult.Failure(HeartwoodError.NotConnected)
+                            }
+                            else -> {
+                                relaySourcePairing = target
+                                target = target.copy(relays = validated)
+                                relayUpdatedPairing = target
+                                fresh.disconnect()
+                                fresh = clientFactory()
+                                val replacement = fresh.connect(uri(), target.clientSecretKeyHex)
+                                if (replacement is HeartwoodResult.Failure) {
+                                    fresh.disconnect()
+                                    recordFailure(replacement.error)
+                                    return replacement
+                                }
+                                RelayUpdateStatus.UPDATED
+                            }
+                        }
+                    }
+                    RelaySwitchResult.Unchanged -> RelayUpdateStatus.UNCHANGED
+                    RelaySwitchResult.Unsupported -> RelayUpdateStatus.UNSUPPORTED
+                    RelaySwitchResult.Unavailable -> RelayUpdateStatus.UNAVAILABLE
+                    RelaySwitchResult.Invalid -> RelayUpdateStatus.INVALID_RESPONSE
+                }
+                updateHealth { it.copy(relayUpdate = status) }
+            }
+            client = fresh
+            markHealthy()
+            return HeartwoodResult.Success(fresh)
         }
     }
 
@@ -595,6 +721,7 @@ class SessionRegistry(
             override val sequence: Long,
             val operation: suspend (HeartwoodClient) -> HeartwoodResult<String>,
             val deferred: CompletableDeferred<CompletedCall>,
+            val requestedStatus: ConnectionStatus? = null,
         ) : Message {
             override val priorityRank: Int = priority.rank
             private val state = AtomicInteger(CALL_PENDING)

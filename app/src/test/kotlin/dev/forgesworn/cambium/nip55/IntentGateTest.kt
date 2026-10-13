@@ -2,6 +2,7 @@ package dev.forgesworn.cambium.nip55
 
 import dev.forgesworn.cambium.pairing.AppPermission
 import dev.forgesworn.cambium.pairing.AppPermissionState
+import dev.forgesworn.cambium.pairing.PermissionScope
 import dev.forgesworn.cambium.pairing.Pairing
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -148,4 +149,34 @@ class IntentGateTest {
         assertIs<IntentGate.Plan.Reject>(plan)
         assertTrue(IntentGate.silentFor(approvedForA, plan))
     }
+    @Test
+    fun `expired approval asks visibly and rejects on an invisible window`() {
+        val expired = approvedForA.copy(expiresAtMillis = 100L)
+        val visible = IntentGate.plan(expired, listOf(pairingA), request(), canAsk = true, nowMillis = 100L)
+        assertIs<IntentGate.Plan.AskUser>(visible)
+        assertFalse(IntentGate.silentFor(expired, visible, nowMillis = 100L))
+        val invisible = IntentGate.plan(expired, listOf(pairingA), request(), canAsk = false, nowMillis = 100L)
+        assertEquals(IntentGate.RejectReason.PERMISSION_REQUIRES_CONSENT, assertIs<IntentGate.Plan.Reject>(invisible).reason)
+    }
+
+    @Test
+    fun `forgotten approval on an already invisible window rejects instead of asking`() {
+        val plan = IntentGate.plan(null, listOf(pairingA), request(), canAsk = false)
+        assertEquals(IntentGate.RejectReason.PERMISSION_REQUIRES_CONSENT, assertIs<IntentGate.Plan.Reject>(plan).reason)
+    }
+
+    @Test
+    fun `method and signing kind need scope before forwarding`() {
+        val scoped = approvedForA.copy(scope = PermissionScope(setOf("sign_event"), setOf(1)))
+        val signing = Nip55Request.SignEvent(null, null, """{"kind":1}""")
+        assertIs<IntentGate.Plan.Forward>(IntentGate.plan(scoped, listOf(pairingA), signing, canAsk = true))
+        val otherKind = signing.copy(eventJson = """{"kind":22242}""")
+        assertIs<IntentGate.Plan.AskUser>(IntentGate.plan(scoped, listOf(pairingA), otherKind, canAsk = true))
+        assertEquals(IntentGate.RejectReason.PERMISSION_REQUIRES_CONSENT,
+            assertIs<IntentGate.Plan.Reject>(IntentGate.plan(scoped, listOf(pairingA), otherKind, canAsk = false)).reason)
+        val decrypt = Nip55Request.Nip44Decrypt(null, null, pubkeyHexB, "cipher")
+        assertIs<IntentGate.Plan.AskUser>(IntentGate.plan(scoped, listOf(pairingA), decrypt, canAsk = true))
+        assertIs<IntentGate.Plan.Forward>(IntentGate.plan(scoped, listOf(pairingA), request(), canAsk = true))
+    }
+
 }

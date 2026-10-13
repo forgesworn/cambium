@@ -66,7 +66,7 @@
     <string name="activity_log_button">Activity log</string>
     <string name="activity_log_title">Activity log</string>
     <string name="back_button_description">Back</string>
-    <string name="activity_log_body">What Cambium has done on your behalf. Timestamp, app, request and identity only: never a payload, a plaintext or a ciphertext.</string>
+    <string name="activity_log_body">What Cambium has done on your behalf: request metadata, safe failure reasons and elapsed time. Never a payload, a plaintext or a ciphertext.</string>
     <string name="activity_log_toggle_title">Log signer activity</string>
     <string name="activity_log_empty">No activity yet.</string>
     <string name="activity_log_clear_button">Clear</string>

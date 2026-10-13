@@ -5,6 +5,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
@@ -24,6 +25,9 @@ import dev.forgesworn.cambium.databinding.ItemPairingBinding
 import dev.forgesworn.cambium.databinding.ItemUnlockBoardBinding
 import dev.forgesworn.cambium.log.ActivityLogActivity
 import dev.forgesworn.cambium.pairing.AppPermissionState
+import dev.forgesworn.cambium.pairing.AppPermission
+import dev.forgesworn.cambium.pairing.ApprovalLifetime
+import dev.forgesworn.cambium.pairing.PermissionScopeEditor
 import dev.forgesworn.cambium.pairing.BunkerUri
 import dev.forgesworn.cambium.pairing.BunkerUriParser
 import dev.forgesworn.cambium.pairing.BunkerUriResult
@@ -37,6 +41,10 @@ import dev.forgesworn.cambium.signer.HeartwoodError
 import dev.forgesworn.cambium.signer.HeartwoodResult
 import dev.forgesworn.cambium.signer.HeartwoodSession
 import dev.forgesworn.cambium.signer.RustNostrHeartwoodClient
+import dev.forgesworn.cambium.signer.ConnectionHealth
+import dev.forgesworn.cambium.signer.ConnectionStatus
+import dev.forgesworn.cambium.signer.ConnectionFailure
+import dev.forgesworn.cambium.signer.RelayUpdateStatus
 import dev.forgesworn.cambium.signer.displayLabel
 import dev.forgesworn.cambium.signer.npubDisplay
 import dev.forgesworn.cambium.unlock.UnlockActivity
@@ -46,6 +54,12 @@ import dev.forgesworn.cambium.unlock.UnlockEnrolment
 import dev.forgesworn.cambium.unlock.UnlockNotifications
 import dev.forgesworn.cambium.unlock.UnlockStore
 import kotlinx.coroutines.launch
+import com.google.android.material.textfield.TextInputEditText
+import com.google.android.material.textfield.TextInputLayout
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.time.format.FormatStyle
 
 /**
  * Status screen: paired or not, scan-or-paste-a-bunker-URI pairing flow for one or more signers,
@@ -57,6 +71,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var pairingStore: PairingStore
     private lateinit var appLockStore: AppLockStore
     private lateinit var unlockStore: UnlockStore
+    private val manualConnections = mutableSetOf<String>()
 
     // Registered as fields (not inside onCreate) per the ActivityResult contract: this must
     // happen before the activity reaches STARTED, and works even though `binding` -- referenced
@@ -98,6 +113,13 @@ class MainActivity : AppCompatActivity() {
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.RESUMED) {
                 UnlockCoordinator.requests.collect { if (binding.contentSection.isVisible) renderUnlockBoards() }
+            }
+        }
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.RESUMED) {
+                HeartwoodSession.health.collect {
+                    if (binding.contentSection.isVisible) renderPairingsList(pairingStore.pairings())
+                }
             }
         }
 
@@ -202,6 +224,15 @@ class MainActivity : AppCompatActivity() {
             row.pairingLabelValue.text = pairing.displayLabel()
             row.pairingNpubValue.text = npubDisplay(pairing.signerPubkeyHex)
             row.pairingRelaysValue.text = pairing.relays.joinToString("\n")
+            val health = HeartwoodSession.health.value[pairing.signerPubkeyHex] ?: ConnectionHealth()
+            row.pairingHealthValue.text = healthDescription(health)
+            val busy = pairing.signerPubkeyHex in manualConnections ||
+                health.status == ConnectionStatus.CHECKING || health.status == ConnectionStatus.RECONNECTING
+            row.pairingTestButton.isEnabled = !busy
+            row.pairingReconnectButton.isEnabled = !busy
+            row.pairingTestButton.setOnClickListener { checkConnection(pairing, reconnect = false) }
+            row.pairingReconnectButton.setOnClickListener { checkConnection(pairing, reconnect = true) }
+            row.pairingRenameButton.setOnClickListener { renameIdentity(pairing) }
             row.pairingUnpairButton.setOnClickListener { onUnpairRowClicked(pairing) }
             val unlockSetUp = unlockStore.enrolments().any { it.signerPubkeyHex == pairing.signerPubkeyHex }
             row.pairingUnlockButton.setText(if (unlockSetUp) R.string.unlock_setup_again_button else R.string.unlock_setup_button)
@@ -210,6 +241,64 @@ class MainActivity : AppCompatActivity() {
             }
             binding.pairingsListContainer.addView(row.root)
         }
+    }
+
+    private fun healthDescription(health: ConnectionHealth): String = buildList {
+        add(getString(when (health.status) {
+            ConnectionStatus.UNKNOWN -> R.string.connection_unknown
+            ConnectionStatus.CHECKING -> R.string.connection_checking
+            ConnectionStatus.RECONNECTING -> R.string.connection_reconnecting
+            ConnectionStatus.CONNECTED -> R.string.connection_answered
+            ConnectionStatus.UNAVAILABLE -> R.string.connection_unavailable
+        }))
+        add(health.lastSuccessfulContactMillis?.let { getString(R.string.connection_last_contact, dateTime(it)) }
+            ?: getString(R.string.connection_never_contacted))
+        health.errorCategory?.let {
+            add(getString(when (it) {
+                ConnectionFailure.TIMEOUT -> R.string.connection_error_timeout
+                ConnectionFailure.NOT_CONNECTED -> R.string.connection_error_disconnected
+                ConnectionFailure.REFUSED -> R.string.connection_error_refused
+                ConnectionFailure.INVALID_INPUT -> R.string.connection_error_input
+                ConnectionFailure.PROTOCOL -> R.string.connection_error_protocol
+                ConnectionFailure.BUSY -> R.string.connection_error_busy
+            }))
+        }
+        when (health.relayUpdate) {
+            RelayUpdateStatus.UPDATED -> add(getString(R.string.relay_update_applied))
+            RelayUpdateStatus.UNSUPPORTED -> add(getString(R.string.relay_update_unsupported))
+            RelayUpdateStatus.UNAVAILABLE -> add(getString(R.string.relay_update_failed))
+            RelayUpdateStatus.INVALID_RESPONSE -> add(getString(R.string.relay_update_invalid))
+            else -> Unit
+        }
+    }.joinToString("\n")
+
+    private fun checkConnection(pairing: Pairing, reconnect: Boolean) {
+        if (!manualConnections.add(pairing.signerPubkeyHex)) return
+        renderPairingsList(pairingStore.pairings())
+        lifecycleScope.launch {
+            try {
+                val current = pairingStore.pairings().firstOrNull { it.signerPubkeyHex == pairing.signerPubkeyHex }
+                    ?: return@launch
+                if (reconnect) HeartwoodSession.reconnect(current) else HeartwoodSession.testConnection(current)
+            } finally {
+                manualConnections.remove(pairing.signerPubkeyHex)
+                if (binding.contentSection.isVisible) renderPairingsList(pairingStore.pairings())
+            }
+        }
+    }
+
+    private fun renameIdentity(pairing: Pairing) {
+        val inputLayout = TextInputLayout(this).apply { hint = getString(R.string.rename_identity_hint) }
+        val input = TextInputEditText(inputLayout.context).apply { setText(pairing.label); maxLines = 2 }
+        inputLayout.addView(input)
+        val pad = (20 * resources.displayMetrics.density).toInt()
+        inputLayout.setPadding(pad, 0, pad, 0)
+        MaterialAlertDialogBuilder(this).setTitle(R.string.rename_identity).setView(inputLayout)
+            .setNegativeButton(android.R.string.cancel, null)
+            .setPositiveButton(R.string.save_button) { _, _ ->
+                if (!pairingStore.renamePairing(pairing.signerPubkeyHex, input.text?.toString())) changedToast()
+                render()
+            }.show().also(::reserveDialogActions)
     }
 
     private fun onUnpairRowClicked(pairing: Pairing) {
@@ -320,6 +409,15 @@ class MainActivity : AppCompatActivity() {
             if (boundIdentity != null) {
                 row.appIdentityValue.text = boundIdentity.displayLabel()
             }
+            if (!permission.isActive()) row.appStateValue.setText(R.string.approval_expired)
+            row.appPermissionDetail.isVisible = permission.state == AppPermissionState.APPROVED
+            row.appPermissionDetail.text = listOf(
+                permission.expiresAtMillis?.let { getString(R.string.approval_until, dateTime(it)) }
+                    ?: getString(R.string.approval_no_expiry),
+                PermissionScopeEditor.summary(this, permission.scope),
+            ).joinToString("\n")
+            row.editAppButton.isVisible = permission.state == AppPermissionState.APPROVED
+            row.editAppButton.setOnClickListener { editAppPermission(packageName, permission) }
             row.forgetButton.setOnClickListener {
                 pairingStore.forget(packageName)
                 renderConnectedApps(pairings)
@@ -327,6 +425,69 @@ class MainActivity : AppCompatActivity() {
             binding.connectedAppsContainer.addView(row.root)
         }
     }
+
+    private fun editAppPermission(packageName: String, permission: AppPermission) {
+        val actions = listOf(R.string.app_edit_identity, R.string.app_edit_scope, R.string.app_edit_duration)
+        MaterialAlertDialogBuilder(this).setTitle(packageManager.displayNameFor(packageName))
+            .setItems(actions.map(::getString).toTypedArray()) { _, index ->
+                when (index) {
+                    0 -> changeAppIdentity(packageName)
+                    1 -> PermissionScopeEditor.show(this, permission.scope) { scope ->
+                        val current = pairingStore.permission(packageName)
+                        val identity = current?.boundIdentityPubkeyHex
+                        if (identity == null || !pairingStore.updateApproval(packageName, identity, scope = scope, expected = permission)) changedToast()
+                        render()
+                    }
+                    2 -> changeAppLifetime(packageName, permission)
+                }
+            }.show()
+    }
+
+    private fun changeAppIdentity(packageName: String) {
+        val permission = pairingStore.permission(packageName)
+        if (permission?.state != AppPermissionState.APPROVED) { changedToast(); return }
+        val identities = pairingStore.pairings().sortedBy { it.displayLabel() }
+        var selection = identities.indexOfFirst { it.signerPubkeyHex == permission.boundIdentityPubkeyHex }.coerceAtLeast(0)
+        if (identities.isEmpty()) { changedToast(); return }
+        MaterialAlertDialogBuilder(this).setTitle(R.string.app_edit_identity)
+            .setSingleChoiceItems(identities.map { it.displayLabel() }.toTypedArray(), selection) { _, which -> selection = which }
+            .setNegativeButton(android.R.string.cancel, null)
+            .setPositiveButton(R.string.save_button) { _, _ ->
+                val chosen = identities[selection]
+                MaterialAlertDialogBuilder(this).setTitle(R.string.app_edit_identity)
+                    .setMessage(getString(R.string.app_rebind_confirm, packageManager.displayNameFor(packageName), chosen.displayLabel()))
+                    .setNegativeButton(android.R.string.cancel, null)
+                    .setPositiveButton(R.string.save_button) { _, _ ->
+                        if (!pairingStore.rebindApproval(packageName, chosen.signerPubkeyHex, expected = permission)) changedToast()
+                        render()
+                    }.show().also(::reserveDialogActions)
+            }.show().also(::reserveDialogActions)
+    }
+
+    private fun changeAppLifetime(packageName: String, permission: AppPermission) {
+        val durations = listOf(ApprovalLifetime.ONCE, ApprovalLifetime.HOUR, ApprovalLifetime.DAY, ApprovalLifetime.ALWAYS)
+        val labels = listOf(R.string.approval_every_request, R.string.approval_hour, R.string.approval_day, R.string.approval_always).map(::getString)
+        MaterialAlertDialogBuilder(this).setTitle(R.string.app_edit_duration)
+            .setItems(labels.toTypedArray()) { _, which ->
+                val lifetime = durations[which]
+                val identity = pairingStore.pairings().firstOrNull { it.signerPubkeyHex == permission.boundIdentityPubkeyHex }
+                if (identity == null) { changedToast(); return@setItems }
+                MaterialAlertDialogBuilder(this).setTitle(R.string.app_edit_duration)
+                    .setMessage(if (lifetime == ApprovalLifetime.ONCE)
+                        getString(R.string.app_ask_again_confirm, packageManager.displayNameFor(packageName))
+                    else getString(R.string.app_update_duration_confirm, labels[which], identity.displayLabel()))
+                    .setNegativeButton(android.R.string.cancel, null)
+                    .setPositiveButton(R.string.save_button) { _, _ ->
+                        if (!pairingStore.changeApprovalLifetimeIfCurrent(packageName, permission, lifetime)) changedToast()
+                        render()
+                    }.show().also(::reserveDialogActions)
+            }.show()
+    }
+
+    private fun changedToast() = Toast.makeText(this, R.string.approval_changed, Toast.LENGTH_LONG).show()
+
+    private fun dateTime(millis: Long): String = DateTimeFormatter.ofLocalizedDateTime(FormatStyle.SHORT)
+        .withZone(ZoneId.systemDefault()).format(Instant.ofEpochMilli(millis))
 
     /** Sets the switch's checked state without re-triggering [onKeepAliveToggled]. */
     private fun setKeepAliveToggleChecked(checked: Boolean) {
@@ -433,6 +594,7 @@ class MainActivity : AppCompatActivity() {
                     // reconnects fresh against what was just saved (relevant on a re-pair; a
                     // brand new identity has no session to discard yet).
                     HeartwoodSession.shutdown(bunkerUri.signerPubkeyHex)
+                    HeartwoodSession.recordPairingContact(bunkerUri.signerPubkeyHex)
                     binding.bunkerInput.text?.clear()
                     binding.labelInput.text?.clear()
                     render()

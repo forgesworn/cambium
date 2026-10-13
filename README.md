@@ -24,9 +24,10 @@ back.
   the phone exposes the ability to *request* signatures -- which Heartwood's policy engine and
   physical confirmation button still gate -- never the identity key itself.
 - All of the above is stored in Android Keystore-backed `EncryptedSharedPreferences`.
-- Per-calling-app approval is tracked locally (a simple allow-set, mirroring Amber's UX) *in
-  addition to* whatever Heartwood's own slot policy enforces. Cambium's local layer is a
-  convenience filter; Heartwood remains the authority on what actually gets signed.
+- Per-calling-app approval is tracked locally, bound to an identity and optionally restricted
+  by method, event kind and expiry, *in addition to* whatever Heartwood's own slot policy
+  enforces. Cambium's local layer is a convenience filter; Heartwood remains the authority on
+  what actually gets signed. Existing approvals retain their previous indefinite, whole-app meaning.
 - All NIP-46 payloads are NIP-44-encrypted, matching Heartwood's firmware.
 - **Phone unlock is the one exception, and it is opt-in.** A board set up to be unlocked from this
   phone gives it an *unlock secret* for that board (see below). It is not an identity key and signs
@@ -58,6 +59,54 @@ Websites that support NIP-55 can open Cambium with a `nostrsigner:` link. Websit
 show a one-shot approval and are never remembered for the whole browser. Cambium returns the result
 to a validated HTTPS callback (or localhost during development), or copies it to the clipboard when
 the website did not provide a callback.
+
+## Approval and connection controls
+
+Native requests can be approved once, for an hour, for a day, or until the app is forgotten.
+An approval can cover all operations, just the requested method (and its exact event kind for
+signing), or a chosen set of operations and signing kinds. An operation outside that remembered
+scope asks again; a timed approval stops working when it expires. Approving that extra request
+once leaves the earlier grant as it was. Public-key discovery remains available for a remembered
+identity even when signing or encryption is restricted. Decline only skips the current request;
+Always deny blocks the app across identities.
+
+The sheet explains familiar operations in plain language and offers bounded request details for
+inspection. Encrypted message content stays hidden. These details are only displayed on that
+screen and are never written to the activity log. Website requests have no lifetime or remembered
+operation controls and never grant approval to the whole browser.
+
+Each paired identity shows its last successful contact in this process and safe connection
+failure reasons. *Test connection* makes an authenticated NIP-46 ping; *Reconnect* rebuilds the
+transport on the identity's existing worker, after any in-flight request completes. A past answer
+is evidence of contact at that time, not a guarantee the board is still online. Signers that
+support NIP-46 `switch_relays` can supply updated transport relays: Cambium verifies the exact
+signer's response and persists validated `wss://` endpoints before changing transport. Older
+signers remain usable; refresh their pairing from Sapwood when their relay list changes.
+
+*Rename identity* changes only its local label. A connected app's *Edit* action changes its
+operation scope, approval lifetime or identity binding. Changing identity requires confirmation
+and preserves the existing scope and expiry. Stale edits cannot overwrite a newer choice.
+
+The activity log records a safe failure category and elapsed time alongside its existing metadata.
+Filter it by app, identity or outcome. Local identity references keep renamed identities together
+and separate identities that share a label; older entries retain their recorded-label grouping.
+*Review diagnostic report* prepares an allowlisted
+text report using aliases for apps and identities; it includes no payloads, raw exception messages,
+pairing links or keys. Nothing is shared until the owner taps Share and chooses a destination.
+
+### Native batches
+
+Clients can use NIP-55's `FLAG_ACTIVITY_SINGLE_TOP | FLAG_ACTIVITY_CLEAR_TOP` flow to queue requests
+and receive a `results` JSON array in arrival order, with each request's `id`, result and rejection.
+Signing entries contain the signature in `result` and `signature`. Normal single-request extras
+remain compatible with existing Amber clients. Batches are bounded to 32 requests, 128 KiB of
+incoming request data and 384 KiB of results, with request IDs up to 256 characters.
+
+Android versions before 15 cannot reliably identify the sender of a reused intent. Android 15
+also needs the sender to share its identity for attribution. Additional unattributable requests
+therefore require visible one-shot approval and cannot borrow the first app's remembered grant.
+An attributable sender must match the original result recipient. A non-batch reused intent
+cannot replace an existing request. See [Android caller identity](https://developer.android.com/reference/android/app/ComponentCaller).
 
 On a healthy kept-warm session, a fresh signing request takes one relay round trip and commonly
 completes in roughly half a second to a couple of seconds. A cold reconnect, contention, or an
@@ -170,7 +219,9 @@ persistent per-app approval or denial, an optional keep-warm foreground service,
 activity log, an optional biometric app lock, and phone unlock for a Heartwood that restarted
 locked (unlock secret behind the Keystore and the phone's screen lock, unfiltered lock
 listener, throwaway-key delivery). Kind-level permissions live on the signer itself
-(Heartwood's policy engine, managed via Sapwood), not on the phone.
+(Heartwood's policy engine, managed via Sapwood); Cambium's optional method/kind filter can only
+restrict local approval further. Current implementation evidence is recorded in
+[docs/FEATURE-ACCEPTANCE.md](docs/FEATURE-ACCEPTANCE.md).
 
 ### Private zaps
 

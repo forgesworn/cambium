@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+- Native approval can be once, hourly, daily or indefinite, with optional method and event-kind
+  restrictions. Existing approvals keep their previous meaning; websites remain one-shot.
+- Approval sheets explain common requests and offer bounded, temporary request details.
+- Paired identities show connection health and last contact, with authenticated connection tests
+  and a reconnect action. Supported signers can update NIP-46 transport relays securely.
+- Rename an existing identity and edit an app's scope, expiry or confirmed identity binding.
+  Atomic checks prevent stale approval and management dialogs overwriting a newer choice.
+- Activity logs include safe failure categories and timings, filters and explicitly reviewed
+  diagnostic reports that exclude payloads, secrets and identifying app/identity names.
+- Native NIP-55 batches return ordered results. Additional requests without reliable Android
+  caller attribution require visible one-shot consent rather than borrowing a remembered grant.
+
 ## 0.8.0 (2026-10-12)
 
 - Refresh the pairing, connected-apps, activity-log and phone-unlock screens with clearer

@@ -80,7 +80,26 @@ jobs:
           api-level: 35
           arch: x86_64
           profile: pixel_6
-          script: ./gradlew :app:connectedDebugAndroidTest
+          script: |
+            ./gradlew :app:connectedDebugAndroidTest
+            ./gradlew --stop
+            adb install -r app/build/outputs/apk/debug/app-debug.apk
+            adb install -r app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+            adb shell wm size 720x1440
+            adb shell wm density 360
+            adb shell settings put system font_scale 1.5
+            adb shell am force-stop dev.forgesworn.cambium.test
+            adb shell pm clear dev.forgesworn.cambium
+            adb shell am instrument -w -r -e class dev.forgesworn.cambium.ui.UiFlowRegressionTest,dev.forgesworn.cambium.ui.PermissionScopeEditorTest,dev.forgesworn.cambium.ui.DiagnosticsUiTest dev.forgesworn.cambium.test/androidx.test.runner.AndroidJUnitRunner | tee app/build/outputs/androidTest-results/compact-large-text.log
+            python3 - <<'PY'
+            from collections import Counter
+            from pathlib import Path
+            log = Path('app/build/outputs/androidTest-results/compact-large-text.log').read_text()
+            codes = Counter(line.split(': ', 1)[1] for line in log.splitlines()
+                            if line.startswith('INSTRUMENTATION_STATUS_CODE:'))
+            assert codes == {'1': 16, '0': 16}, f'Incomplete or failed compact UI run: {codes}'
+            assert 'OK (16 tests)' in log, 'Missing successful compact UI summary'
+            PY
 
       - name: Upload instrumentation results
         if: always()
