@@ -1,0 +1,103 @@
+{
+  "verified_at": "2026-10-13T11:16:30.763641+00:00",
+  "version": "0.9.0",
+  "version_code": 19,
+  "source_commit": "40927a04bbb5e0efa9bf846d4d5b7f86ee07c6c4",
+  "tag": "v0.9.0",
+  "release": "https://github.com/forgesworn/cambium/releases/tag/v0.9.0",
+  "apk": {
+    "version": "0.9.0",
+    "version_code": 19,
+    "sha256": "3510781a23ec1e3c626a9c39ee31f968f4d4ca38d85f626b85c0d617c29fc16a",
+    "size": 19880268,
+    "certificate_sha256": "9ea188efa9015f7e7f90e1888f586f527b2a0e8a6dcdb3991e41fb4f14eeefc6",
+    "signed": true,
+    "non_debuggable": true,
+    "abis": [
+      "arm64-v8a",
+      "x86_64"
+    ],
+    "vcs_metadata_absent": true,
+    "built_tree": "aef97d09edf43e8c6a3da7194ff0b6846b0aa4a0",
+    "verified_at": "2026-10-13T10:53:23.262233+00:00",
+    "source_commit": "40927a04bbb5e0efa9bf846d4d5b7f86ee07c6c4",
+    "tag": "v0.9.0"
+  },
+  "github": {
+    "release": "https://github.com/forgesworn/cambium/releases/tag/v0.9.0",
+    "tag": "v0.9.0",
+    "source_commit": "40927a04bbb5e0efa9bf846d4d5b7f86ee07c6c4",
+    "apk_url": "https://github.com/forgesworn/cambium/releases/download/v0.9.0/cambium-0.9.0.apk",
+    "size": 19880268,
+    "sha256": "3510781a23ec1e3c626a9c39ee31f968f4d4ca38d85f626b85c0d617c29fc16a",
+    "checksum_url": "https://github.com/forgesworn/cambium/releases/download/v0.9.0/SHA256SUMS",
+    "public_bytes_match": true,
+    "is_latest": true,
+    "verified_at": "2026-10-13T11:11:04.277621+00:00"
+  },
+  "zapstore": {
+    "version": "0.9.0",
+    "version_code": 19,
+    "publisher": "da19f1cd34beca44be74da4b306d9d1dd86b6343cef94ce22c49c6f59816e5bd",
+    "app_event_id": "c19a52b85395f6ac7044be479c12fff1e2a1a61ce1969bead5538be4aed5fc3a",
+    "release_event_id": "abc598f2ee8c95fb55245de00e0f5f78e927bf80a1ab67786dacd4fd4a690257",
+    "asset_event_id": "2920b14db864fec4b1b99d8b8e5b0c2bc2944f578d185c159ceaf39032eb9ec5",
+    "sha256": "3510781a23ec1e3c626a9c39ee31f968f4d4ca38d85f626b85c0d617c29fc16a",
+    "size": 19880268,
+    "cdn": "https://cdn.zapstore.dev/3510781a23ec1e3c626a9c39ee31f968f4d4ca38d85f626b85c0d617c29fc16a",
+    "byte_identical_to_github": true,
+    "certificate_matches": true,
+    "source_commit": "40927a04bbb5e0efa9bf846d4d5b7f86ee07c6c4",
+    "event_hashes_and_signatures_verified": true,
+    "verified_at": "2026-10-13T11:15:03.379531+00:00"
+  },
+  "ci": {
+    "run": "https://github.com/forgesworn/cambium/actions/runs/38387503564",
+    "source_commit": "40927a04bbb5e0efa9bf846d4d5b7f86ee07c6c4",
+    "standard": {
+      "tests": 40,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "compact_passed": 16,
+    "compact_statuses": {
+      "1": 16,
+      "0": 16
+    }
+  },
+  "jvm_tests": {
+    "source_commit": "40927a04bbb5e0efa9bf846d4d5b7f86ee07c6c4",
+    "suites": 40,
+    "tests": 330,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "release_lint": "passed",
+  "site": {
+    "url": "https://cambium.forgesworn.dev",
+    "final_url": "https://cambium.forgesworn.dev",
+    "status": 200,
+    "bytes": 16123,
+    "sha256": "5438b77e4d1877a753e4023031a75249f5e3694139e1a170e8c30a0977e1b2d8",
+    "signed_apk_link_present": true,
+    "verified_at": "2026-10-13T11:04:12.449788+00:00"
+  },
+  "fdroid": {
+    "verified_at": "2026-10-13T11:12:28.146831+00:00",
+    "packageName": "dev.forgesworn.cambium",
+    "suggestedVersionCode": 17,
+    "packages": [
+      {
+        "versionName": "0.7.1",
+        "versionCode": 17
+      },
+      {
+        "versionName": "0.4.3",
+        "versionCode": 13
+      }
+    ]
+  },
+  "physical_android_heartwood_app_flows": "not_retested"
+}

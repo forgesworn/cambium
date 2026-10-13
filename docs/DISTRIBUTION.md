@@ -12,14 +12,32 @@ what store metadata points at (F-Droid's `Donate:` field takes one URL).
 
 | Channel | Status | Signature users get |
 |---|---|---|
-| GitHub Releases | **Live** (0.8.0 current; v0.2.0 onward) | Ours (the 0.2.0 trust root) |
-| Obtainium | **Live** via the 0.8.0 GitHub release | Ours |
-| Zapstore | **Live** (0.8.0 current; 0.6.0 and 0.7.0 were skipped; v0.3.2 onward) | Ours |
-| F-Droid | **Live** (0.7.1/versionCode 17 verified 2026-10-13; 0.8.0 awaiting automatic rebuild and publication) | Ours, when the reproducibility check passes |
+| GitHub Releases | **Live** (0.9.0 current; v0.2.0 onward) | Ours (the 0.2.0 trust root) |
+| Obtainium | **Live** via the 0.9.0 GitHub release | Ours |
+| Zapstore | **Live** (0.9.0 current; 0.6.0 and 0.7.0 were skipped; v0.3.2 onward) | Ours |
+| F-Droid | **Live** (0.7.1/versionCode 17 verified 2026-10-13; 0.8.0 and 0.9.0 awaiting automatic rebuild and publication) | Ours, when the reproducibility check passes |
 | IzzyOnDroid (optional extra) | Eligible; their tracker moved to Codeberg (account needed) | Ours |
 | Accrescent | **Blocked externally** — registration is allowlist-only | Ours |
 
 ## GitHub Releases (live)
+
+[0.9.0](https://github.com/forgesworn/cambium/releases/tag/v0.9.0), versionCode 19, was built from the clean tagged commit
+`40927a04bbb5e0efa9bf846d4d5b7f86ee07c6c4`. The public APK and `SHA256SUMS` were downloaded and
+verified on 2026-10-13. Its APK SHA-256 is
+`3510781a23ec1e3c626a9c39ee31f968f4d4ca38d85f626b85c0d617c29fc16a` (19,880,268 bytes). It is signed,
+non-debuggable, contains arm64-v8a and x86_64, omits VCS metadata, and retains the signing
+certificate used by previous releases and the 0.2.0 trust root below.
+
+The release source passed 330 JVM tests and all 40 Android instrumentation tests, followed by
+all 16 UI regressions at 320 dp width and 150% text scaling, with no failures, errors or skips.
+Both [PR CI](https://github.com/forgesworn/cambium/actions/runs/38385862632) and
+[main CI](https://github.com/forgesworn/cambium/actions/runs/38387503564) passed. The PR build needed a retry after dependency
+resolution failed before tests began. The signed release build and release lint passed locally.
+The actual SDK is tested against a two-relay local WebSocket signer fixture; physical
+Android/Heartwood app signing, enrolment and phone unlock were not re-tested.
+
+The [public delivery receipt](releases/0.9.0.json) records the source, signatures, hashes, test
+counts, channel readbacks and physical acceptance limit.
 
 [0.8.0](https://github.com/forgesworn/cambium/releases/tag/v0.8.0), versionCode 18, was built from
 the clean tagged commit `92afdb1a90a7c527adf610facd7a00ce130b2148`. The public APK and `SHA256SUMS`
@@ -28,7 +46,7 @@ were downloaded and verified on 2026-10-13. Its APK SHA-256 is
 non-debuggable, contains arm64-v8a and x86_64, omits VCS metadata, and uses the same signing
 certificate as the previous public APK and the 0.2.0 trust root below.
 
-The final source passed 271 JVM tests and all 11 Android checks in both
+The 0.8.0 source passed 271 JVM tests and all 11 Android checks in both
 [PR CI](https://github.com/forgesworn/cambium/actions/runs/38318772846) and
 [main CI](https://github.com/forgesworn/cambium/actions/runs/38319136838). The UI review also passed
 all nine UI flows in dark mode and at 320dp/200% text. An additional local shipping-time repeat
@@ -59,6 +77,16 @@ obtainium://add/https://github.com/forgesworn/cambium
 ```
 
 ## Zapstore (live)
+
+Version 0.9.0 was published through the existing publisher Heartwood connection and read back
+on 2026-10-13. The admitted client key resumed without replaying a pairing secret. The app,
+release and file event hashes and signatures verify under the publisher identity below. Its
+file event carries versionCode 19, the 0.9.0 SHA-256, source commit and trust-root certificate;
+the CDN APK matches GitHub byte for byte.
+
+- App event: `c19a52b85395f6ac7044be479c12fff1e2a1a61ce1969bead5538be4aed5fc3a`
+- Release event: `abc598f2ee8c95fb55245de00e0f5f78e927bf80a1ab67786dacd4fd4a690257`
+- File event: `2920b14db864fec4b1b99d8b8e5b0c2bc2944f578d185c159ceaf39032eb9ec5`
 
 Version 0.8.0 was published through the publisher Heartwood bunker connection and read back on
 2026-10-13. Its live kind 3063 file event carries versionCode 18, the 0.8.0 SHA-256 and source
@@ -123,7 +151,7 @@ latest release), or add it as a release-checklist step.
 
 The [inclusion merge request](https://gitlab.com/fdroid/fdroiddata/-/merge_requests/42875) was
 merged on 2026-09-13. The public package API lists 0.7.1/versionCode 17 and 0.4.3/versionCode 13
-(verified 2026-10-13); 0.8.0/versionCode 18 is not listed yet. From here
+(verified 2026-10-13); 0.8.0/versionCode 18 and 0.9.0/versionCode 19 are not listed yet. From here
 `AutoUpdateMode: Version` picks up each `vX.Y.Z` tag, rebuilds it, and publishes our signed APK
 from `Binaries:` (`releases/download/v%v/cambium-%v.apk`) only if the rebuild matches it: build
 the release APK from the exact tagged commit with a clean tree, and name the asset exactly so.

@@ -73,6 +73,8 @@ statuses: assumptions and skipped tests are not counted as proof.
   Reports are not stored as files. Entries written before local identity references existed remain
   in separately labelled older groups; their identities cannot safely be inferred from labels.
 
-Physical Android/Heartwood acceptance and publication of a release remain separate checks.
+0.9.0 publication is verified in [DISTRIBUTION.md](DISTRIBUTION.md) and the
+[delivery receipt](releases/0.9.0.json). Physical Android/Heartwood app acceptance remains
+unverified.
 No physical device, firmware, existing user emulator or external message recipient was changed
 by this work.
