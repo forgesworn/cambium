@@ -260,9 +260,11 @@ The enrolment hand-off is not signed by anything the phone already trusts, so an
 enrolment code could try to answer it first. Cambium shows a six-character check code, large: check
 Sapwood shows the same one. If two different answers arrive, Cambium keeps neither.
 
-**Gone quiet.** When the keep-warm service is on, Cambium also says when a paired signer stops
+**Gone quiet.** When the keep-warm toggle is on, Cambium also says when a paired signer stops
 answering its scheduled checks (two in a row, eight minutes apart), so you hear about a power cut
-before the board is even back.
+before the board is even back. The same foreground service also runs, whatever the toggle says,
+while any board is set up for phone unlock, so that the phone can hear lock messages. With the
+toggle off it sends no scheduled checks, so it raises no gone-quiet alert.
 
 **Losing the phone.** Revoke its record on the board from Sapwood or over USB. Nothing else on the
 board changes. *Forget* in Cambium removes the phone's side; the screen reminds you to do both.
@@ -316,7 +318,8 @@ amplifying into foreground popups. Per-identity bounded priority queues reserve 
 work. Exact NIP-42 AUTH duplicates coalesce and cache briefly; at most one distinct AUTH challenge
 is admitted per identity, it is never retried internally, and a transport failure opens a 60-second
 AUTH circuit while ordinary signing, reactions, and encryption remain available. Cambium also has
-persistent per-app approval or denial, an optional keep-warm foreground service, a metadata-only
+persistent per-app approval or denial, an optional keep-warm foreground service (which also runs
+while a board is set up for phone unlock), a metadata-only
 activity log, an optional biometric app lock, and phone unlock for a Heartwood that restarted
 locked (unlock secret behind the Keystore and the phone's screen lock, unfiltered lock
 listener, throwaway-key delivery). Kind-level permissions live on the signer itself

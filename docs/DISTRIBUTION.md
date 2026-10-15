@@ -236,7 +236,8 @@ Everything on our side is already satisfied, so when it opens this is quick:
 - App-ID domain verification: `dev.forgesworn.cambium` requires proving control of
   `forgesworn.dev` — we control it (cambium.forgesworn.dev is ours).
 - No sensitive permissions beyond CAMERA (QR pairing, runtime-requested) and
-  POST_NOTIFICATIONS/foreground service for the opt-in keep-warm toggle — none of the
+  POST_NOTIFICATIONS/foreground service for the opt-in keep-warm toggle (also started while a
+  board is set up for phone unlock) — none of the
   heavily-restricted categories (VPN, accessibility).
 
 ## Release checklist (all channels, once live)

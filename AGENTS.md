@@ -527,7 +527,10 @@ Android apps              Websites
   locked, since that is precisely the point of Cambium existing as a background NIP-46 proxy.
 - `service/HeartwoodKeepAliveService.kt` -- optional, off-by-default foreground service that keeps
   the process (and so `HeartwoodSession`'s warm `NostrConnect`) alive between requests, closing the
-  previously-tracked "only warm while the process happens to be running" gap. Pings Heartwood every
+  previously-tracked "only warm while the process happens to be running" gap. The service also runs
+  whenever any board is set up for phone unlock, whatever the toggle says, to keep the lock listener
+  alive; the pings below, and so the gone-quiet alert, happen only with the toggle on and at least
+  one pairing (`startPingLoop`'s `pinging`). Pings Heartwood every
   8 minutes via `HeartwoodSession.withClient(pairing, MAINTENANCE) { it.ping() }` -- an
   authenticated NIP-46 round trip. The SDK's `getPublicKey` can be cached, so it is not evidence
   of current contact. `HeartwoodClient` uses the SDK's lower-level client for `ping` and
