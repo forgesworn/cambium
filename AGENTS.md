@@ -289,8 +289,8 @@ Android apps              Websites
   showed Amethyst queries this provider for *every* operation once an app is approved, not just
   get_public_key, and can burst around ten concurrent queries while the user is typing (drafts
   plus decrypts). `SIGN_EVENT`, `NIP04_ENCRYPT`/`DECRYPT`, and `NIP44_ENCRYPT`/`DECRYPT` forward to
-  `HeartwoodSession.trySilent` (admission-controlled, capped at 15s -- see `HeartwoodSession`'s
-  class doc) for already-approved callers -- acceptable because these clients call `query()` from
+  `HeartwoodSession.trySilent` (admission-controlled, capped at 15s -- see
+  `signer/SessionRegistry.kt`) for already-approved callers -- acceptable because these clients call `query()` from
   a background thread. `get_public_key` is still declared for discovery but answers `null` for anyone
   the user has not denied (a denied caller gets the terminal `rejected` even here): both Amber
   and Primal force login through the visible intent rather than the silent path.
@@ -315,7 +315,7 @@ Android apps              Websites
   unapproved caller, unresolved identity, or missing argument -- return `null` so the client can
   use the visible intent flow. `NIP04_DECRYPT`/`NIP44_DECRYPT` results, and
   `DECRYPT_ZAP_EVENT`'s under its own `CacheableDecrypt.Method.ZAP` namespace, are cached by
-  `HeartwoodSession` before admission control -- see its class doc. Exact kind-22242 AUTH events
+  `HeartwoodSession` before admission control -- see `signer/SessionRegistry.kt`. Exact kind-22242 AUTH events
   coalesce and cache briefly; distinct challenges use the AUTH admission limit, no-retry policy and
   60-second transport circuit documented there. Repetitive AUTH-unavailable logs are aggregated per
   calling app rather than emitted for every challenge. The caller is always taken from
@@ -478,10 +478,15 @@ Android apps              Websites
   possible termination point. Deliberately unlogged: a malformed/unparsable intent, "nothing paired
   at all", `decrypt_zap_event`'s local "not a decryptable private zap" outcomes (an ordinary public
   zap is the routine case there, not an error), `SignerProvider`'s NIP-37 draft decline, and any
-  `forward()` outcome that defers to the intent (`null`) rather than answering definitively -- a
-  transient provider-path failure is retried via the intent path, which logs its own outcome once
+  provider request that defers to the intent (`null`) before forwarding -- an unapproved caller,
+  an unresolved identity or a missing argument -- since the intent path logs its own outcome once
   the request actually concludes, so logging both would double-count what the user experienced as
-  one request. `SignerProvider.forward` additionally skips logging a `HeartwoodOutcome.Cached` hit
+  one request. A technical failure of an approved caller's silent request is not retried via the
+  intent path: it answers the terminal unavailable row (see `ProviderGate.answerFor`). `forward()`
+  logs a `FAILED` entry for a Heartwood failure that is neither a policy refusal nor a
+  deterministic decrypt failure, but not for queue pressure, an open AUTH circuit or a timeout
+  (`trySilent` returning `null`), which return the unavailable row before any log call.
+  `SignerProvider.forward` additionally skips logging a `HeartwoodOutcome.Cached` hit
   specifically (`logActivityUnlessCached`): a cache hit on the silent path can repeat many times a
   second during a burst (Amethyst re-requesting the same decrypt while the user types), which would
   be pure noise against the cap and needless work on the exact hot path the cache exists to keep
@@ -522,7 +527,10 @@ Android apps              Websites
   locked, since that is precisely the point of Cambium existing as a background NIP-46 proxy.
 - `service/HeartwoodKeepAliveService.kt` -- optional, off-by-default foreground service that keeps
   the process (and so `HeartwoodSession`'s warm `NostrConnect`) alive between requests, closing the
-  previously-tracked "only warm while the process happens to be running" gap. Pings Heartwood every
+  previously-tracked "only warm while the process happens to be running" gap. The service also runs
+  whenever any board is set up for phone unlock, whatever the toggle says, to keep the lock listener
+  alive; the pings below, and so the gone-quiet alert, happen only with the toggle on and at least
+  one pairing (`startPingLoop`'s `pinging`). Pings Heartwood every
   8 minutes via `HeartwoodSession.withClient(pairing, MAINTENANCE) { it.ping() }` -- an
   authenticated NIP-46 round trip. The SDK's `getPublicKey` can be cached, so it is not evidence
   of current contact. `HeartwoodClient` uses the SDK's lower-level client for `ping` and

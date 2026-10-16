@@ -1,0 +1,30 @@
+# Cambium
+
+> Android NIP-55 signer proxy that holds no user keys. It answers NIP-55 intents, content-provider queries and `nostrsigner:` web links by forwarding signing and encryption to a paired Heartwood hardware signer over NIP-46 (Nostr relays). Kotlin, Gradle, package `dev.forgesworn.cambium`, MIT licence.
+
+## Docs
+
+- [README](https://github.com/forgesworn/cambium/blob/main/README.md): what Cambium is, the security model, pairing from Sapwood, approval controls, phone unlock, install and build.
+- [AGENTS.md](https://github.com/forgesworn/cambium/blob/main/AGENTS.md): architecture and per-file invariants, build and test commands, conventions, known limits.
+- [Distribution](https://github.com/forgesworn/cambium/blob/main/docs/DISTRIBUTION.md): GitHub Releases, Obtainium, Zapstore and F-Droid channels and their status.
+- [Feature acceptance](https://github.com/forgesworn/cambium/blob/main/docs/FEATURE-ACCEPTANCE.md): recorded implementation evidence.
+- [Changelog](https://github.com/forgesworn/cambium/blob/main/CHANGELOG.md)
+
+## NIP-55 integration contract
+
+See [For client developers](https://github.com/forgesworn/cambium/blob/main/README.md#for-client-developers) in the README. In short:
+
+- Visible path: `Intent.ACTION_VIEW` on `nostrsigner:<payload>` with `setPackage("dev.forgesworn.cambium")` and extras `type`, `id`, `current_user`, `pubkey`, `permissions`. Result extras: `result`, `id`, `event`, `signature`, `package`, `rejected`.
+- Silent path: `content://dev.forgesworn.cambium.<METHOD>` for `SIGN_EVENT`, `NIP04_ENCRYPT`, `NIP04_DECRYPT`, `NIP44_ENCRYPT`, `NIP44_DECRYPT`, `DECRYPT_ZAP_EVENT` and `PING`. Arguments go in `projection` as `[payload, otherPubkey, currentUser]`. A `null` cursor means use the intent; a `rejected` column is a terminal refusal; a row with empty `result` and `error` = `signer unavailable` is terminal and must not fall back to the intent.
+- Websites: `nostrsigner:<percent-encoded payload>?type=...&callbackUrl=...&returnType=signature|event&compressionType=none|gzip`. Always a one-shot approval; the callback must be HTTPS (or loopback HTTP).
+- Batches: `FLAG_ACTIVITY_SINGLE_TOP | FLAG_ACTIVITY_CLEAR_TOP` queues up to 32 requests and returns a `results` JSON array.
+
+## Build
+
+- Dependency versions: [gradle/libs.versions.toml](https://github.com/forgesworn/cambium/blob/main/gradle/libs.versions.toml) is the source of truth.
+- Unit tests (JVM only): `./gradlew :app:testDebugUnitTest`. Debug APK: `./gradlew :app:assembleDebug`. Requires JDK 21 and `sdk.dir` in `local.properties`.
+
+## Optional
+
+- [Sapwood](https://github.com/forgesworn/sapwood): manages Heartwood and issues the `bunker://` pairings Cambium consumes.
+- [Heartwood](https://github.com/forgesworn/heartwood-esp32): the hardware signer Cambium pairs with.

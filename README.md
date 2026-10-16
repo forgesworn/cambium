@@ -20,7 +20,8 @@ back.
 
 - **No user secrets ever touch the phone.** Cambium stores only the bunker pairing (the paired
   Heartwood's public key, its relay list, and the per-pairing connection secret from the bunker
-  URI) and Cambium's own ephemeral NIP-46 client keypair, generated on first pairing. Compromising
+  URI) and one persistent NIP-46 client keypair, generated on first pairing and shared by all
+  pairings (it is cleared only by "Unpair all"). Compromising
   the phone exposes the ability to *request* signatures -- which Heartwood's policy engine and
   physical confirmation button still gate -- never the identity key itself.
 - All of the above is stored in Android Keystore-backed `EncryptedSharedPreferences`.
@@ -45,7 +46,7 @@ Android apps              Websites
 ## Pairing from Sapwood
 
 1. Install Cambium.
-2. In [Sapwood](../sapwood) (desktop or phone handoff): Apps -> Connect an app -> name it (e.g.
+2. In [Sapwood](https://github.com/forgesworn/sapwood) (desktop or phone handoff): Apps -> Connect an app -> name it (e.g.
    "Cambium on my phone") -> it shows a `bunker://` URI as a QR code (and as text).
 3. In Cambium: tap Scan QR and point the camera at it, or paste the URI text and press Pair.
    A successful scan pairs immediately, no separate Pair tap needed. Either way, Cambium connects
@@ -116,6 +117,100 @@ completes in roughly half a second to a couple of seconds. A cold reconnect, con
 unhealthy relay can take longer. Repeat deterministic decrypts and exact duplicate NIP-42 AUTH
 requests can be answered from bounded per-identity caches without another hardware round trip.
 
+## For client developers
+
+Cambium's package is `dev.forgesworn.cambium`. It speaks the Amber-compatible NIP-55 surface, in
+three forms. A caller must go through the visible intent once so the owner can approve it; only
+then does the content provider answer silently.
+
+### Intent (visible path)
+
+Send `Intent.ACTION_VIEW` with a `nostrsigner:` data URI, `setPackage("dev.forgesworn.cambium")`
+and start it for a result. The data URI carries the payload (the event JSON, the text or
+ciphertext, or nothing for `get_public_key`).
+
+```kotlin
+val intent = Intent(Intent.ACTION_VIEW, Uri.parse("nostrsigner:$eventJson")).apply {
+    setPackage("dev.forgesworn.cambium")
+    putExtra("type", "sign_event")
+    putExtra("id", "req-1")
+    putExtra("current_user", signerNpubOrHex) // optional
+}
+```
+
+- `type`: `get_public_key`, `sign_event`, `nip04_encrypt`, `nip04_decrypt`, `nip44_encrypt`,
+  `nip44_decrypt` or `decrypt_zap_event` (a kind 9734 zap request; recipient side only).
+- `id`: optional, echoed back in the result.
+- `current_user`: optional signer identity, an `npub` or 64-character hex pubkey. One that names a
+  signer Cambium has not paired is never silently swapped for another identity.
+- `pubkey` (`pubKey` is also read): the counterparty, required for the four encrypt and decrypt
+  types.
+- `permissions`: `get_public_key` only, a JSON array of `{ "type": ..., "kind": ... }`. It is shown
+  to the owner and pre-authorises nothing.
+
+A successful result carries `result` and echoes `id`. `sign_event` also returns `event` (the signed
+event JSON) and `signature` (the bare hex signature). `get_public_key` returns an `npub` in
+`result` plus `package`, which is `dev.forgesworn.cambium`. A refusal returns `rejected` set to
+`true` and the `id`. Cambium sets `RESULT_OK` for both a success and a refusal, so check for the
+extras rather than the result code.
+For batching with `FLAG_ACTIVITY_SINGLE_TOP | FLAG_ACTIVITY_CLEAR_TOP`, see Native batches above.
+
+### Content provider (silent path)
+
+Once the owner has approved your app, query the provider by authority. The caller is taken from
+`getCallingPackage`, so it must be a real `ContentResolver` query from your own package. Arguments
+travel in the `projection` array, not in `selectionArgs`:
+`[payload, otherPubkey, currentUser]`, with `currentUser` at index 2.
+
+```kotlin
+val cursor = contentResolver.query(
+    Uri.parse("content://dev.forgesworn.cambium.NIP44_DECRYPT"),
+    arrayOf(ciphertext, counterpartyPubkey, currentUser), // currentUser may be ""
+    null, null, null,
+)
+```
+
+| Authority (`content://dev.forgesworn.cambium.` +) | `projection[0]` | `projection[1]` | Answer columns |
+| --- | --- | --- | --- |
+| `SIGN_EVENT` | event JSON | empty | `result`, `event`, `signature` |
+| `NIP04_ENCRYPT`, `NIP44_ENCRYPT` | plaintext | counterparty pubkey | `result` |
+| `NIP04_DECRYPT`, `NIP44_DECRYPT` | ciphertext | counterparty pubkey | `result` |
+| `DECRYPT_ZAP_EVENT` | kind 9734 zap request JSON | unused | `result` |
+| `PING` | unused | unused | `result` (`pong`) |
+| `GET_PUBLIC_KEY` | unused | unused | never answers; use the intent |
+
+Read the cursor, not just its first column:
+
+- A `null` cursor means Cambium cannot answer silently: the app is not approved, the request is
+  outside its approved methods or kinds, `current_user` is not the identity it is bound to, or an
+  argument is missing. Fall back to the intent.
+- A row with a `rejected` column (`"true"`) is a terminal refusal: the app is denied, Heartwood's
+  policy refused the request, a decrypt can never succeed, a kind 31234 draft was declined, or a
+  zap request is not a private zap. Do not retry or fall back.
+- A row with `result` empty and `error` set to `signer unavailable` is terminal too: the signer
+  was busy, unreachable or took longer than 15 seconds. Do not launch the same request as an
+  intent.
+
+### Website (`nostrsigner:` link)
+
+A web page opens a `nostrsigner:` link whose payload is percent-encoded and whose query string
+carries `type`. Every website request shows a one-shot approval and is never remembered.
+
+```
+nostrsigner:%7B%22kind%22%3A1%2C%22content%22%3A%22hello%22%7D?type=sign_event&callbackUrl=https%3A%2F%2Fexample.com%2Fsigned%3Fevent%3D&returnType=signature&compressionType=none&appName=Example
+```
+
+- `callbackUrl`: optional, `https` only (plain `http` is accepted for `localhost`, `127.0.0.1` and
+  `::1`), no user info or fragment, at most 4096 characters. Cambium appends the percent-encoded
+  result to it and opens it. Without one, the result is copied to the clipboard.
+- `returnType`: `signature` (the default, a bare hex signature) or `event` (the signed event
+  JSON). `compressionType`: `none` (the default) or `gzip`, which returns `Signer1` followed by
+  the base64 of the gzipped event for `sign_event`.
+- `appName` (shown to the owner, trimmed to 80 characters), `id`, `current_user`, `pubkey`
+  (`pubKey` also read) and `permissions` behave as for the intent. `get_public_key` returns the
+  hex pubkey here rather than an `npub`.
+- A refused request returns nothing, since NIP-55 defines no rejection callback for websites.
+
 ## Phone unlock (Heartwood 0.18.0-beta.17 or later)
 
 A Heartwood that keeps its keys encrypted comes back locked after a power cut. With phone unlock set
@@ -123,12 +218,15 @@ up, it asks this phone instead of waiting for Sapwood: a notification says which
 why (power-on, brownout, watchdog), on which network and how many times, and one tap plus your
 phone's screen lock unlocks it. There is no server, no Google push and no third-party app involved.
 
-**Setting it up.** On a paired signer, tap *Set up phone unlock*. Cambium shows a code. In
-Sapwood, add the phone under *Phones that can unlock* by scanning it, then press the button on the
-board. (Until Sapwood's panel ships, heartwood-esp32's `scripts/phone-unlock.mjs enrol-for --code
-'<code>'` does the same over USB.) The board hands this phone its unlock secret, sealed to a key that exists only on that
-screen, and Cambium asks for your screen lock to keep it. Set up at least two devices, so a phone lost
-abroad does not strand the board.
+**Setting it up.** In Sapwood, open *Phones that can unlock* and choose *Add a phone*: it shows a
+one-off invite as a QR code. On the paired signer in Cambium, tap *Set up phone unlock*, then
+*Scan Sapwood's code* and point the camera at the invite. Cambium answers over the invite's relays,
+shows five words to compare with the board's, and you hold the button on the board only if they
+match. The board hands this phone its unlock secret, sealed to a key that exists only on that
+screen, and Cambium asks for your screen lock to keep it. If the camera is unavailable or Sapwood
+cannot scan, tap *Show a code instead*: Cambium shows its own code, which you add in Sapwood under
+*Phones that can unlock* before pressing the button on the board. Set up at least two devices, so a
+phone lost abroad does not strand the board.
 
 **What the phone holds, per board.**
 
@@ -162,9 +260,11 @@ The enrolment hand-off is not signed by anything the phone already trusts, so an
 enrolment code could try to answer it first. Cambium shows a six-character check code, large: check
 Sapwood shows the same one. If two different answers arrive, Cambium keeps neither.
 
-**Gone quiet.** When the keep-warm service is on, Cambium also says when a paired signer stops
+**Gone quiet.** When the keep-warm toggle is on, Cambium also says when a paired signer stops
 answering its scheduled checks (two in a row, eight minutes apart), so you hear about a power cut
-before the board is even back.
+before the board is even back. The same foreground service also runs, whatever the toggle says,
+while any board is set up for phone unlock, so that the phone can hear lock messages. With the
+toggle off it sends no scheduled checks, so it raises no gone-quiet alert.
 
 **Losing the phone.** Revoke its record on the board from Sapwood or over USB. Nothing else on the
 board changes. *Forget* in Cambium removes the phone's side; the screen reminds you to do both.
@@ -218,7 +318,8 @@ amplifying into foreground popups. Per-identity bounded priority queues reserve 
 work. Exact NIP-42 AUTH duplicates coalesce and cache briefly; at most one distinct AUTH challenge
 is admitted per identity, it is never retried internally, and a transport failure opens a 60-second
 AUTH circuit while ordinary signing, reactions, and encryption remain available. Cambium also has
-persistent per-app approval or denial, an optional keep-warm foreground service, a metadata-only
+persistent per-app approval or denial, an optional keep-warm foreground service (which also runs
+while a board is set up for phone unlock), a metadata-only
 activity log, an optional biometric app lock, and phone unlock for a Heartwood that restarted
 locked (unlock secret behind the Keystore and the phone's screen lock, unfiltered lock
 listener, throwaway-key delivery). Kind-level permissions live on the signer itself
