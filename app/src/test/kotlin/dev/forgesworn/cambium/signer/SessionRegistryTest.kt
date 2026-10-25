@@ -76,6 +76,23 @@ class SessionRegistryTest {
 
     private fun signKey(payload: String) = CacheableSign(payload)
 
+    @Test fun `one shot ceremony transport failure is never retried or cached`() = runBlocking {
+        val calls = AtomicInteger()
+        val registry = registry(client = { object : FakeClient() {
+            override suspend fun provisionRendezvous(request: dev.forgesworn.cambium.nip55.RendezvousProvisionRequest, current: () -> Boolean): HeartwoodResult<String> {
+                calls.incrementAndGet()
+                return HeartwoodResult.Failure(HeartwoodError.Timeout)
+            }
+        } })
+        try {
+            val request = dev.forgesworn.cambium.nip55.RendezvousProvisionRequest(pairingA.signerPubkeyHex, "b2".repeat(32), 1, "AAAAAAAAAAAAAAAAAAAAAA", System.currentTimeMillis() / 1000 + 300)
+            val answer = registry.withClient(pairingA, null, HeartwoodRequestPriority.CEREMONY) { it.provisionRendezvous(request) }
+            assertEquals(HeartwoodError.Timeout, errorOf(answer))
+            assertEquals(1, calls.get())
+            assertTrue(answer is HeartwoodOutcome.Fresh)
+        } finally { registry.shutdownAll() }
+    }
+
     // -- admission control --
 
     @Test

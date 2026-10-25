@@ -350,3 +350,9 @@ or zap sats over Lightning: `profusemeat89@walletofsatoshi.com`
 ## Licence
 
 MIT. See [LICENSE](LICENSE).
+
+## Typed rendezvous handoff
+
+Native apps can request `type=heartwood_provision_rendezvous` through the visible NIP-55 Activity. The compact JSON payload is exactly `{v:1,expectedPersona,targetDevice,index,nonce,expiresAt}`: lowercase 64-hex public keys, numeric uint32 index, canonical unpadded 16-byte base64url nonce, and numeric safe expiry after now and within ten minutes. `current_user` must match `expectedPersona`; the request needs an attributable native caller and its own bounded ID. This operation has no silent provider authority, browser callback, native batch, remembered approval, cache or automatic transport retry.
+
+Cambium shows all public bindings for one approval and requires the same caller, Activity request, selected connection and live job before dispatch and result release. Heartwood separately requires its fresh physical approval. The only result is Heartwood's bounded encrypted envelope, correlated by NIP-55 ID and returned to the original caller. The target public key belongs to the requesting app; Cambium never supplies its client secret or decrypts/exports the child.

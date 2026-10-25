@@ -186,4 +186,5 @@
         <item quantity="one">%1$d signer paired</item>
         <item quantity="other">%1$d signers paired</item>
     </plurals>
+    <string name="method_provision_rendezvous">Provision one rendezvous child</string>
 </resources>

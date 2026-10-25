@@ -22,6 +22,10 @@ object RequestPresenter {
     private val OPAQUE_KINDS = setOf(4, 13, 14, 1059, 30078, 31234)
 
     fun describe(request: Nip55Request): RequestPresentation = when (request) {
+        is Nip55Request.ProvisionRendezvous -> request.provision.let { p -> RequestPresentation(
+            "Provision one rendezvous child\nIdentity: ${p.expectedPersona}\nTarget device: ${p.targetDevice}\nIndex: ${p.index}\nNonce: ${p.nonce}\nExpires: ${p.expiresAt}\nOne approval only. Heartwood must also approve this exact request. Only its encrypted envelope is returned.",
+            null,
+        ) }
         is Nip55Request.GetPublicKey -> RequestPresentation("Share your public identity", null)
         is Nip55Request.SignEvent -> event(request.eventJson)
         is Nip55Request.Nip04Encrypt -> crypto("Encrypt a message using NIP-04", request.pubkeyHex)
