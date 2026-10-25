@@ -76,6 +76,12 @@ object IntentGate {
     ): Plan {
         if (parsed == null) return Plan.Reject(RejectReason.MALFORMED_REQUEST)
         if (pairings.isEmpty()) return Plan.Reject(RejectReason.NOTHING_PAIRED)
+        if (parsed is Nip55Request.ProvisionRendezvous) {
+            if (permission?.state == AppPermissionState.DENIED) return Plan.Reject(RejectReason.DENIED_CALLER)
+            if (pairings.none { it.signerPubkeyHex == parsed.provision.expectedPersona }) return Plan.Reject(RejectReason.UNRESOLVED_IDENTITY)
+            // Never borrow remembered approval, even an unrestricted one.
+            return if (canAsk) Plan.AskUser else Plan.Reject(RejectReason.PERMISSION_REQUIRES_CONSENT)
+        }
         if (permission == null || !permission.isActive(nowMillis)) {
             return if (canAsk) Plan.AskUser else Plan.Reject(RejectReason.PERMISSION_REQUIRES_CONSENT)
         }

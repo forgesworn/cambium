@@ -3,6 +3,7 @@ package dev.forgesworn.cambium.nip55
 import dev.forgesworn.cambium.pairing.PermissionScope
 
 fun Nip55Request.permissionMethod(): String = when (this) {
+    is Nip55Request.ProvisionRendezvous -> RendezvousProvisionRequest.TYPE
     is Nip55Request.GetPublicKey -> Nip55Request.TYPE_GET_PUBLIC_KEY
     is Nip55Request.SignEvent -> Nip55Request.TYPE_SIGN_EVENT
     is Nip55Request.Nip04Encrypt -> Nip55Request.TYPE_NIP04_ENCRYPT

@@ -2,6 +2,7 @@ package dev.forgesworn.cambium.signer
 
 import android.util.Log
 import dev.forgesworn.cambium.nip55.normaliseUnsignedEvent
+import dev.forgesworn.cambium.nip55.RendezvousProvisionRequest
 import dev.forgesworn.cambium.pairing.BunkerUriParser
 import dev.forgesworn.cambium.pairing.BunkerUriResult
 import dev.forgesworn.cambium.pairing.BunkerUri
@@ -116,6 +117,10 @@ interface HeartwoodClient {
     /** Optional NIP-46 method. A refusal never invalidates an otherwise working session. */
     suspend fun switchRelays(): RelaySwitchResult = RelaySwitchResult.Unchanged
 
+    /** One typed, fresh-approval child handoff; no generic RPC or decrypt surface. */
+    suspend fun provisionRendezvous(request: RendezvousProvisionRequest, current: () -> Boolean = { true }): HeartwoodResult<String> =
+        HeartwoodResult.Failure(HeartwoodError.InvalidInput("Rendezvous provisioning is unsupported"))
+
     /** [eventJson] is an unsigned event; returns the same event as JSON with `sig` and `id` filled in. */
     suspend fun signEvent(eventJson: String): HeartwoodResult<String>
 
@@ -188,7 +193,17 @@ class RustNostrHeartwoodClient internal constructor(
      * crypto and relay client, the same connection keys and exact bunker author. The notification
      * FFI is ended by shutdown, never cancellation. Only the Kotlin deferred wait times out.
      * sendMsgTo queues the signed event without waiting for an unrelated relay OK acknowledgement. */
-    private suspend fun rawRpc(method: String, waitMillis: Long): JsonObject? {
+    override suspend fun provisionRendezvous(request: RendezvousProvisionRequest, current: () -> Boolean): HeartwoodResult<String> {
+        if (!current() || signerPubkeyHex != request.expectedPersona || !request.validAt(System.currentTimeMillis() / 1000)) return HeartwoodResult.Failure(HeartwoodError.InvalidInput("Provision identity or expiry changed"))
+        if (runCatching { PublicKey.parse(request.targetDevice) }.isFailure) return HeartwoodResult.Failure(HeartwoodError.InvalidInput("Invalid target device"))
+        val response = rawRpc(RendezvousProvisionRequest.TYPE, 120_000L, request.params()) { current() && signerPubkeyHex == request.expectedPersona && request.validAt(System.currentTimeMillis() / 1000) } ?: return HeartwoodResult.Failure(HeartwoodError.Timeout)
+        if (response["error"] != null && response["error"] != JsonNull) return HeartwoodResult.Failure(HeartwoodError.Protocol("Heartwood refused rendezvous provisioning"))
+        val result = (response["result"] as? JsonPrimitive)?.takeIf { it.isString }?.content
+        return if (current() && result != null && request.acceptsEnvelope(result, System.currentTimeMillis() / 1000)) HeartwoodResult.Success(result)
+        else HeartwoodResult.Failure(HeartwoodError.Protocol("Heartwood returned mismatched provision bindings"))
+    }
+
+    private suspend fun rawRpc(method: String, waitMillis: Long, params: JsonArray = JsonArray(emptyList()), allowed: () -> Boolean = { true }): JsonObject? {
         val remote = transport ?: return null
         val keys = transportKeys ?: return null
         if (session == null) return null
@@ -225,7 +240,9 @@ class RustNostrHeartwoodClient internal constructor(
                         relayClient.subscribe(Filter().kind(Kind(24133u)).author(remoteKey)
                             .pubkey(keys.publicKey()).since(Timestamp.fromSecs(
                                 (System.currentTimeMillis() / 1000L - 30L).toULong())), null)
-                        val request = Nip46Envelope.request(keys, remoteKey, requestId, method)
+                        if (!allowed()) return@coroutineScope null
+                        val request = Nip46Envelope.request(keys, remoteKey, requestId, method, params)
+                        if (!allowed()) return@coroutineScope null
                         relayClient.sendMsgTo(relays, ClientMessage.event(request))
                         withTimeoutOrNull(waitMillis) { response.await() }
                     } finally {
@@ -290,8 +307,11 @@ class RustNostrHeartwoodClient internal constructor(
 
 /** Shared with Android boundary tests: the native SDK supplies every cryptographic operation. */
 internal object Nip46Envelope {
-    fun request(keys: Keys, remote: PublicKey, id: String, method: String): Event {
-        val content = nip44Encrypt(keys.secretKey(), remote, RelaySwitch.request(id, method), Nip44Version.V2)
+    fun request(keys: Keys, remote: PublicKey, id: String, method: String, params: JsonArray = JsonArray(emptyList())): Event {
+        require(method in setOf("ping", "switch_relays", RendezvousProvisionRequest.TYPE))
+        require(if (method == RendezvousProvisionRequest.TYPE) params.size == 4 else params.isEmpty())
+        val body = buildJsonObject { put("id", id); put("method", method); put("params", params) }.toString()
+        val content = nip44Encrypt(keys.secretKey(), remote, body, Nip44Version.V2)
         return EventBuilder(Kind(24133u), content).tags(listOf(Tag.publicKey(remote))).signWithKeys(keys)
     }
 
