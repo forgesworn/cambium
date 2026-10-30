@@ -150,21 +150,25 @@ class RustNostrHeartwoodClient internal constructor(
             withContext(NonCancellable + Dispatchers.IO) {
                 val uri = NostrConnectUri.parse(bunkerUri)
                 val keys = Keys(SecretKey.parse(clientSecretKeyHex))
-                val client = NostrConnect(uri, keys, CALL_TIMEOUT, RelayOptions())
                 session?.close()
                 session = null
                 signerPubkeyHex = null
-                try {
-                    client.getPublicKey().toHex().also { connectedPubkeyHex ->
-                        session = client
-                        signerPubkeyHex = connectedPubkeyHex
-                        transport = parseTransport(bunkerUri)
-                        transportKeys = keys
-                    }
-                } catch (error: Exception) {
-                    client.close()
-                    throw error
+                // The handshake proves the board is reachable and which identity answers, and
+                // needs no press on the board, so it keeps the short bound: an unplugged board or
+                // a dead relay is reported in HANDSHAKE_TIMEOUT. rust-nostr fixes one timeout per
+                // client, so the session that carries approval-bearing requests is a second
+                // client with the long bound, connecting on its first request.
+                val probe = NostrConnect(uri, keys, HANDSHAKE_TIMEOUT, RelayOptions())
+                val connectedPubkeyHex = try {
+                    probe.getPublicKey().toHex()
+                } finally {
+                    probe.close()
                 }
+                session = NostrConnect(uri, keys, CALL_TIMEOUT, RelayOptions())
+                signerPubkeyHex = connectedPubkeyHex
+                transport = parseTransport(bunkerUri)
+                transportKeys = keys
+                connectedPubkeyHex
             }
         }
 
@@ -284,12 +288,15 @@ class RustNostrHeartwoodClient internal constructor(
     }
 
     private companion object {
-        /** Bounds each NIP-46 round trip inside rust-nostr, approval included. Heartwood holds a
-         * sign request on its screen for 30 seconds before answering "timeout" itself, so this
-         * must outlast that window with room for relay delivery, or a press late in the window
-         * is cut off here and the board's signature arrives to nobody. The caller's own wait is
-         * [SessionRegistry.INTENT_TIMEOUT_MILLIS]; this stays just under it so the board's own
-         * answer, a signature or its "timeout", reaches the caller first. */
+        /** Bounds the connect handshake, which no press on the board can delay: it answers at
+         * once or not at all, so an unreachable board is known within this. */
+        val HANDSHAKE_TIMEOUT: Duration = Duration.ofSeconds(20)
+        /** Bounds each NIP-46 round trip of the session inside rust-nostr, approval included.
+         * Heartwood holds a sign request on its screen for 30 seconds before answering "timeout"
+         * itself, so this must outlast that window with room for relay delivery, or a press late
+         * in the window is cut off here and the board's signature arrives to nobody. The caller's
+         * own wait is [SessionRegistry.INTENT_TIMEOUT_MILLIS]; this stays just under it so the
+         * board's own answer, a signature or its "timeout", reaches the caller first. */
         val CALL_TIMEOUT: Duration = Duration.ofSeconds(40)
     }
 }
