@@ -14,7 +14,7 @@ what store metadata points at (F-Droid's `Donate:` field takes one URL).
 |---|---|---|
 | GitHub Releases | **Live** (0.9.1 current; v0.2.0 onward) | Ours (the 0.2.0 trust root) |
 | Obtainium | **Live** via the 0.9.1 GitHub release | Ours |
-| Zapstore | **Live** (0.9.0 current, 0.9.1 awaiting the owner at the Heartwood; 0.6.0 and 0.7.0 were skipped; v0.3.2 onward) | Ours |
+| Zapstore | **Live** (0.9.1 current; 0.6.0 and 0.7.0 were skipped; v0.3.2 onward) | Ours |
 | F-Droid | **Live** (0.7.1/versionCode 17 verified 2026-10-13; 0.8.0, 0.9.0 and 0.9.1 awaiting automatic rebuild and publication) | Ours, when the reproducibility check passes |
 | IzzyOnDroid (optional extra) | Eligible; their tracker moved to Codeberg (account needed) | Ours |
 | Accrescent | **Blocked externally** — registration is allowlist-only | Ours |
@@ -37,7 +37,7 @@ as did the [code change itself](https://github.com/forgesworn/cambium/actions/ru
 The signed release build and release lint passed on the build machine. Physical Pixel/Heartwood
 signing with this build has not yet been exercised; the 0.9.0 acceptance below covers what it leaves
 unchanged. The [public delivery receipt](releases/0.9.1.json) records the source, hashes, test counts
-and channel readbacks.
+and the GitHub and Zapstore readbacks.
 
 [0.9.0](https://github.com/forgesworn/cambium/releases/tag/v0.9.0), versionCode 19, was built from the clean tagged commit
 `40927a04bbb5e0efa9bf846d4d5b7f86ee07c6c4`. The public APK and `SHA256SUMS` were downloaded and
@@ -100,6 +100,19 @@ obtainium://add/https://github.com/forgesworn/cambium
 ```
 
 ## Zapstore (live)
+
+Version 0.9.1 was published through the existing publisher Heartwood connection and read back on
+2026-10-30. The first attempt was refused as unauthorised: the bunker URI kept in the keychain
+still carried the pairing secret from 2026-09-24, while the board had been re-paired since and zsp
+had saved the newer pairing under its own application-support directory. Publishing with that
+saved pairing went through at once, and the keychain copy now holds it. The app, release and file
+event hashes and signatures verify under the publisher identity below. The file event carries
+versionCode 20, the 0.9.1 SHA-256, both download URLs and the trust-root certificate hash; the CDN
+APK matches GitHub byte for byte.
+
+- App event: `d8c470fae7546f0b5341cdadaccbaf3b4b6b01834081d2911d493380d1b65e7f`
+- Release event: `195c3221639bb01a413dfea7d2c45bcab3d37ea3532a77948f9228f1c4aaf420`
+- File event: `3ccf7260bf49434a911fc6de782b8f47f95c34a9a626c332328a4a89f2160210`
 
 Version 0.9.0 was published through the existing publisher Heartwood connection and read back
 on 2026-10-13. The admitted client key resumed without replaying a pairing secret. The app,
