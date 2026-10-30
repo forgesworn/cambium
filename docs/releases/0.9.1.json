@@ -1,0 +1,67 @@
+{
+  "verified_at": "2026-10-30T06:27:56Z",
+  "version": "0.9.1",
+  "version_code": 20,
+  "source_commit": "393be1e4d4cf657e77486b30da6146010beaa93c",
+  "tag": "v0.9.1",
+  "release": "https://github.com/forgesworn/cambium/releases/tag/v0.9.1",
+  "apk": {
+    "version": "0.9.1",
+    "version_code": 20,
+    "sha256": "b9f11de0969098a8a640dc425ea29760d8c9147082c8c7b9f4d21d004b8b3693",
+    "size": 19880268,
+    "certificate_sha256": "9ea188efa9015f7e7f90e1888f586f527b2a0e8a6dcdb3991e41fb4f14eeefc6",
+    "signed": true,
+    "non_debuggable": true,
+    "abis": [
+      "arm64-v8a",
+      "x86_64"
+    ],
+    "vcs_metadata_absent": true,
+    "built_tree": "187d9c96c0aa4c9ae9128d42f9c4b81d40e14329",
+    "built_from_clean_worktree": true,
+    "source_commit": "393be1e4d4cf657e77486b30da6146010beaa93c",
+    "tag": "v0.9.1"
+  },
+  "github": {
+    "release": "https://github.com/forgesworn/cambium/releases/tag/v0.9.1",
+    "tag": "v0.9.1",
+    "source_commit": "393be1e4d4cf657e77486b30da6146010beaa93c",
+    "apk_url": "https://github.com/forgesworn/cambium/releases/download/v0.9.1/cambium-0.9.1.apk",
+    "size": 19880268,
+    "sha256": "b9f11de0969098a8a640dc425ea29760d8c9147082c8c7b9f4d21d004b8b3693",
+    "checksum_url": "https://github.com/forgesworn/cambium/releases/download/v0.9.1/SHA256SUMS",
+    "public_bytes_match": true,
+    "is_latest": true,
+    "verified_at": "2026-10-30T06:27:56Z"
+  },
+  "zapstore": {
+    "status": "pending",
+    "note": "publish needs the owner at the Heartwood; run `SIGN_WITH=<bunker> zsp publish --quiet --skip-preview zapstore.yaml`"
+  },
+  "ci": {
+    "run": "https://github.com/forgesworn/cambium/actions/runs/41013221332",
+    "source_commit": "393be1e4d4cf657e77486b30da6146010beaa93c",
+    "code_change_run": "https://github.com/forgesworn/cambium/actions/runs/41010783530",
+    "standard": {
+      "tests": 40,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "compact_passed": 16
+  },
+  "jvm_tests": {
+    "source_commit": "393be1e4d4cf657e77486b30da6146010beaa93c",
+    "tests": 331,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "release_lint": "passed",
+  "changes_since_0.9.0": [
+    "#36 wait past Heartwood's approval window for a visible request (45 s intent, 40 s session call bound, 20 s connect probe; silent path 15 s)"
+  ],
+  "physical_android_heartwood_app_flows": "not_exercised_for_this_build",
+  "physical_android_heartwood_acceptance_receipt": "../acceptance/0.9.0-physical-2026-10-13.json"
+}

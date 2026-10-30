@@ -12,14 +12,32 @@ what store metadata points at (F-Droid's `Donate:` field takes one URL).
 
 | Channel | Status | Signature users get |
 |---|---|---|
-| GitHub Releases | **Live** (0.9.0 current; v0.2.0 onward) | Ours (the 0.2.0 trust root) |
-| Obtainium | **Live** via the 0.9.0 GitHub release | Ours |
-| Zapstore | **Live** (0.9.0 current; 0.6.0 and 0.7.0 were skipped; v0.3.2 onward) | Ours |
-| F-Droid | **Live** (0.7.1/versionCode 17 verified 2026-10-13; 0.8.0 and 0.9.0 awaiting automatic rebuild and publication) | Ours, when the reproducibility check passes |
+| GitHub Releases | **Live** (0.9.1 current; v0.2.0 onward) | Ours (the 0.2.0 trust root) |
+| Obtainium | **Live** via the 0.9.1 GitHub release | Ours |
+| Zapstore | **Live** (0.9.0 current, 0.9.1 awaiting the owner at the Heartwood; 0.6.0 and 0.7.0 were skipped; v0.3.2 onward) | Ours |
+| F-Droid | **Live** (0.7.1/versionCode 17 verified 2026-10-13; 0.8.0, 0.9.0 and 0.9.1 awaiting automatic rebuild and publication) | Ours, when the reproducibility check passes |
 | IzzyOnDroid (optional extra) | Eligible; their tracker moved to Codeberg (account needed) | Ours |
 | Accrescent | **Blocked externally** — registration is allowlist-only | Ours |
 
 ## GitHub Releases (live)
+
+[0.9.1](https://github.com/forgesworn/cambium/releases/tag/v0.9.1), versionCode 20, was built from the clean tagged commit
+`393be1e4d4cf657e77486b30da6146010beaa93c` (tree `187d9c96c0aa`) in a worktree of its own on the build
+machine. The public APK and `SHA256SUMS` were downloaded and verified on 2026-10-30. Its APK SHA-256 is
+`b9f11de0969098a8a640dc425ea29760d8c9147082c8c7b9f4d21d004b8b3693` (19,880,268 bytes). It is signed,
+non-debuggable, contains arm64-v8a and x86_64, omits VCS metadata, and retains the signing
+certificate used by previous releases and the 0.2.0 trust root below.
+
+The only code change since 0.9.0 is #36: a visible request now waits 45 seconds instead of 20, past
+Heartwood's 30-second on-device approval window, with the session's per-call bound at 40 seconds and
+a 20-second connect probe so an unreachable board is still reported quickly. The release source
+passed 331 JVM tests, all 40 Android instrumentation tests and all 16 UI regressions at 320 dp width
+and 150% text scaling in [main CI](https://github.com/forgesworn/cambium/actions/runs/41013221332),
+as did the [code change itself](https://github.com/forgesworn/cambium/actions/runs/41010783530).
+The signed release build and release lint passed on the build machine. Physical Pixel/Heartwood
+signing with this build has not yet been exercised; the 0.9.0 acceptance below covers what it leaves
+unchanged. The [public delivery receipt](releases/0.9.1.json) records the source, hashes, test counts
+and channel readbacks.
 
 [0.9.0](https://github.com/forgesworn/cambium/releases/tag/v0.9.0), versionCode 19, was built from the clean tagged commit
 `40927a04bbb5e0efa9bf846d4d5b7f86ee07c6c4`. The public APK and `SHA256SUMS` were downloaded and
