@@ -53,6 +53,8 @@
   },
   "jvm_tests": {
     "source_commit": "393be1e4d4cf657e77486b30da6146010beaa93c",
+    "ran_in_ci": true,
+    "count_source": "331 tests counted on the #36 branch run; the release commit changes only version strings and changelog text",
     "tests": 331,
     "failures": 0,
     "errors": 0,

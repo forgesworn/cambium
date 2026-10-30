@@ -31,8 +31,8 @@ certificate used by previous releases and the 0.2.0 trust root below.
 The only code change since 0.9.0 is #36: a visible request now waits 45 seconds instead of 20, past
 Heartwood's 30-second on-device approval window, with the session's per-call bound at 40 seconds and
 a 20-second connect probe so an unreachable board is still reported quickly. The release source
-passed 331 JVM tests, all 40 Android instrumentation tests and all 16 UI regressions at 320 dp width
-and 150% text scaling in [main CI](https://github.com/forgesworn/cambium/actions/runs/41013221332),
+passed the JVM suite (331 tests at #36), all 40 Android instrumentation tests and all 16 UI
+regressions at 320 dp width and 150% text scaling in [main CI](https://github.com/forgesworn/cambium/actions/runs/41013221332),
 as did the [code change itself](https://github.com/forgesworn/cambium/actions/runs/41010783530).
 The signed release build and release lint passed on the build machine. Physical Pixel/Heartwood
 signing with this build has not yet been exercised; the 0.9.0 acceptance below covers what it leaves
