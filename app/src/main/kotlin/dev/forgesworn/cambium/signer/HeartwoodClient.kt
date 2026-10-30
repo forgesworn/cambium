@@ -284,7 +284,13 @@ class RustNostrHeartwoodClient internal constructor(
     }
 
     private companion object {
-        val CALL_TIMEOUT: Duration = Duration.ofSeconds(20)
+        /** Bounds each NIP-46 round trip inside rust-nostr, approval included. Heartwood holds a
+         * sign request on its screen for 30 seconds before answering "timeout" itself, so this
+         * must outlast that window with room for relay delivery, or a press late in the window
+         * is cut off here and the board's signature arrives to nobody. The caller's own wait is
+         * [SessionRegistry.INTENT_TIMEOUT_MILLIS]; this stays just under it so the board's own
+         * answer, a signature or its "timeout", reaches the caller first. */
+        val CALL_TIMEOUT: Duration = Duration.ofSeconds(40)
     }
 }
 
