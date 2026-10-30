@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.9.1 (2026-10-30)
+
+- A request approved late in Heartwood's 30-second on-device window now reaches the app that
+  asked. A visible request waits 45 seconds instead of 20, so the board's own answer, a signature
+  or its own timeout, arrives before the phone gives up while the board is still asking. Silent,
+  already-approved requests keep their 15-second bound, and an unreachable signer is still
+  reported within 20 seconds.
+
 ## 0.9.0 (2026-10-13)
 
 - Native approval can be once, hourly, daily or indefinite, with optional method and event-kind
