@@ -23,6 +23,13 @@ class RequestPresentationTest {
             5 to "Request deletion of Nostr events", 6 to "Repost a Nostr event", 7 to "React to a Nostr event",
             22242 to "Authenticate with a Nostr relay", 27235 to "Authorise an HTTP request",
             30078 to "Sign app-specific data", 31234 to "Save an encrypted draft", 9734 to "Sign a zap request",
+            // ForgeSworn's own kinds
+            21236 to "Sign in to a site with your account", 1311 to "Send a live stage chat message",
+            30003 to "Update a bookmark set", 30315 to "Update your listening status",
+            27201 to "Prove ownership of your V4V library", 27202 to "Read or settle your V4V sales",
+            27117 to "Authorise a V4V release's key deposit or price", 27118 to "Release a V4V gated key to a public source",
+            30808 to "Publish a V4V gated release", 20460 to "Issue a KithMoot device credential",
+            21350 to "Revoke a KithMoot device", 27541 to "Grant access to a KithMoot group",
         )
         for ((kind, summary) in summaries) assertEquals(summary, RequestPresenter.describe(event(kind)).summary)
         assertEquals("Sign a Nostr event (kind 12345)", RequestPresenter.describe(event(12345)).summary)
