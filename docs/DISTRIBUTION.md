@@ -107,8 +107,8 @@ still carried the pairing secret from 2026-09-24, while the board had been re-pa
 had saved the newer pairing under its own application-support directory. Publishing with that
 saved pairing went through at once, and the keychain copy now holds it. The app, release and file
 event hashes and signatures verify under the publisher identity below. The file event carries
-versionCode 20, the 0.9.1 SHA-256, source commit and trust-root certificate; the CDN APK matches
-GitHub byte for byte.
+versionCode 20, the 0.9.1 SHA-256, both download URLs and the trust-root certificate hash; the CDN
+APK matches GitHub byte for byte.
 
 - App event: `d8c470fae7546f0b5341cdadaccbaf3b4b6b01834081d2911d493380d1b65e7f`
 - Release event: `195c3221639bb01a413dfea7d2c45bcab3d37ea3532a77948f9228f1c4aaf420`
