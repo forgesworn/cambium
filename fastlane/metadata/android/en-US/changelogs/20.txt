@@ -1,0 +1,1 @@
+A request approved late in Heartwood's 30-second on-device window now reaches the app that asked: a visible request waits 45 seconds instead of 20, so the board's own answer arrives before the phone gives up. Silent requests keep their 15-second bound and an unreachable signer is still reported within 20 seconds.
