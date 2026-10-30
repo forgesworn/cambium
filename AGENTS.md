@@ -710,8 +710,12 @@ Android apps              Websites
   endpoints, not the user's publishing/read relay list, so those lists must never be conflated.
 - The NIP-37 draft-decline (kind 31234) is a hardcoded constant in `ProviderGate`, not a user
   setting. `SessionRegistry`'s total/background/AUTH queue depths (3/2/1), timeouts (15s silent,
-  20s intent), stale-session threshold (5 minutes), exact-AUTH cache TTL (60 seconds), AUTH circuit
-  duration (60 seconds), and `DecryptCache`'s size (512 entries) are likewise hardcoded rather than
+  45s intent: past Heartwood's 30-second on-device approval window plus relay delivery, with
+  rust-nostr's per-call bound at 40s on the session so the board's own answer reaches the caller
+  first, while the connect handshake keeps a 20s probe so an unreachable board is still reported
+  quickly),
+  stale-session threshold (5 minutes), exact-AUTH cache TTL (60 seconds), AUTH circuit duration
+  (60 seconds), and `DecryptCache`'s size (512 entries) are likewise hardcoded rather than
   configurable. The rate-limited shed and AUTH-unavailable log lines exist to gather real data
   without reproducing the client-side burst in logcat.
 - The suspected root cause of the one observed process death (concurrent + cancelled rust-nostr

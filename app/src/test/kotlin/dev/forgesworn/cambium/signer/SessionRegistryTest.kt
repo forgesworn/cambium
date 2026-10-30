@@ -47,7 +47,7 @@ class SessionRegistryTest {
     private fun registry(
         factoryCalls: AtomicInteger = AtomicInteger(0),
         silentTimeoutMillis: Long = 15_000L,
-        intentTimeoutMillis: Long = 20_000L,
+        intentTimeoutMillis: Long = 45_000L,
         sessionMaxIdleMillis: Long = 5 * 60_000L,
         signCacheTtlMillis: Long = 60_000L,
         authCircuitBreakMillis: Long = 60_000L,
@@ -826,5 +826,16 @@ class SessionRegistryTest {
         } finally {
             registry.shutdownAll()
         }
+    }
+
+    // Heartwood's firmware holds an approval request for 30 seconds before answering "timeout"
+    // itself (APPROVAL_TIMEOUT_SECS). A visible request has to wait past that window, with room
+    // for relay delivery, or a press late in the window signs an event nobody is waiting for.
+    // The silent path stays short: a content-provider caller is blocked for the whole wait.
+    @Test
+    fun `a visible wait outlasts the board's approval window and the silent wait stays short`() {
+        assertEquals(30_000L, SessionRegistry.HEARTWOOD_APPROVAL_WINDOW_MILLIS)
+        assertTrue(SessionRegistry.INTENT_TIMEOUT_MILLIS >= SessionRegistry.HEARTWOOD_APPROVAL_WINDOW_MILLIS + 10_000L)
+        assertEquals(15_000L, SessionRegistry.SILENT_TIMEOUT_MILLIS)
     }
 }

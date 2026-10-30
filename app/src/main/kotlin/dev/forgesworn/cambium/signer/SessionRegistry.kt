@@ -752,14 +752,20 @@ class SessionRegistry(
         val fromCache: Boolean,
     )
 
-    private companion object {
+    internal companion object {
         const val MAX_QUEUED = 3
         const val MAX_NON_INTERACTIVE_QUEUED = MAX_QUEUED - 1
         const val MAX_AUTH_QUEUED = 1
         const val MAX_MAINTENANCE_QUEUED = 1
         const val INITIAL_QUEUE_CAPACITY = 4
         const val SILENT_TIMEOUT_MILLIS = 15_000L
-        const val INTENT_TIMEOUT_MILLIS = 20_000L
+        /** Heartwood's firmware shows an approval request for 30 seconds (`APPROVAL_TIMEOUT_SECS`)
+         * before answering "timeout" itself. A visible request waits past that window plus relay
+         * delivery, so a press late in the window still signs the caller in; at the former 20
+         * seconds the phone gave up while the board was still asking, and a signature pressed
+         * after that was wasted. */
+        const val HEARTWOOD_APPROVAL_WINDOW_MILLIS = 30_000L
+        const val INTENT_TIMEOUT_MILLIS = 45_000L
         const val SESSION_MAX_IDLE_MILLIS = 5 * 60_000L
         const val SIGN_CACHE_TTL_MILLIS = 60_000L
         const val AUTH_CIRCUIT_BREAK_MILLIS = 60_000L
