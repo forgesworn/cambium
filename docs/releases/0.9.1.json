@@ -36,8 +36,21 @@
     "verified_at": "2026-10-30T06:27:56Z"
   },
   "zapstore": {
-    "status": "pending",
-    "note": "publish needs the owner at the Heartwood; run `SIGN_WITH=<bunker> zsp publish --quiet --skip-preview zapstore.yaml`"
+    "version": "0.9.1",
+    "version_code": 20,
+    "publisher": "da19f1cd34beca44be74da4b306d9d1dd86b6343cef94ce22c49c6f59816e5bd",
+    "app_event_id": "d8c470fae7546f0b5341cdadaccbaf3b4b6b01834081d2911d493380d1b65e7f",
+    "release_event_id": "195c3221639bb01a413dfea7d2c45bcab3d37ea3532a77948f9228f1c4aaf420",
+    "asset_event_id": "3ccf7260bf49434a911fc6de782b8f47f95c34a9a626c332328a4a89f2160210",
+    "sha256": "b9f11de0969098a8a640dc425ea29760d8c9147082c8c7b9f4d21d004b8b3693",
+    "size": 19880268,
+    "cdn": "https://cdn.zapstore.dev/b9f11de0969098a8a640dc425ea29760d8c9147082c8c7b9f4d21d004b8b3693",
+    "byte_identical_to_github": true,
+    "certificate_matches": true,
+    "source_commit": "393be1e4d4cf657e77486b30da6146010beaa93c",
+    "event_hashes_and_signatures_verified": true,
+    "verified_at": "2026-10-30T07:45:20Z",
+    "note": "published 2026-10-30 ~06:53 UTC through the Heartwood bunker; the keychain copy of the bunker URI carried a stale pairing secret (unauthorised) and was replaced with the pairing zsp had saved"
   },
   "ci": {
     "run": "https://github.com/forgesworn/cambium/actions/runs/41013221332",
