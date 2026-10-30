@@ -106,6 +106,20 @@ object RequestPresenter {
         27235 -> "Authorise an HTTP request"
         30078 -> "Sign app-specific data"
         31234 -> "Save an encrypted draft"
+        // ForgeSworn's own kinds, so a request from V4V or KithMoot reads as the
+        // action it is rather than a number. The kind still shows in the details.
+        1311 -> "Send a live stage chat message"
+        20460 -> "Issue a KithMoot device credential"
+        21236 -> "Sign in to a site with your account"
+        21350 -> "Revoke a KithMoot device"
+        27117 -> "Authorise a V4V release's key deposit or price"
+        27118 -> "Release a V4V gated key to a public source"
+        27201 -> "Prove ownership of your V4V library"
+        27202 -> "Read or settle your V4V sales"
+        27541 -> "Grant access to a KithMoot group"
+        30003 -> "Update a bookmark set"
+        30315 -> "Update your listening status"
+        30808 -> "Publish a V4V gated release"
         else -> "Sign a Nostr event (kind $kind)"
     }
 
