@@ -33,6 +33,10 @@ description: |
   HTTPS callback or clipboard result. Per-identity bounded priority queues keep
   user work available during relay-authentication bursts.
 
+  Which signer to pick: if your keys live on a Heartwood and you only need
+  signing for Android apps, Cambium is the one. If your keys live in My Signet,
+  My Signet already signs for your other Android apps.
+
   No Google Play services, no Firebase, no analytics. Runs on any Android 8.1+
   device, including GrapheneOS.
 license: MIT
