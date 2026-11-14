@@ -28,6 +28,7 @@ import java.util.concurrent.atomic.AtomicLong
 /** Scheduling class for one identity's bounded Heartwood worker. */
 enum class HeartwoodRequestPriority(internal val rank: Int) {
     INTERACTIVE(0),
+    CEREMONY(0),
     AUTH(1),
     BACKGROUND(2),
     MAINTENANCE(3),
@@ -365,7 +366,7 @@ class SessionRegistry(
                 cacheable,
                 cacheableSign = null,
                 priority,
-                intentTimeoutMillis,
+                if (priority == HeartwoodRequestPriority.CEREMONY) 120_000L else intentTimeoutMillis,
                 operation,
                 requestedStatus,
             )
@@ -445,7 +446,7 @@ class SessionRegistry(
 
         private fun reserveSlot(priority: HeartwoodRequestPriority): Boolean {
             val limit = when (priority) {
-                HeartwoodRequestPriority.INTERACTIVE -> MAX_QUEUED
+                HeartwoodRequestPriority.INTERACTIVE, HeartwoodRequestPriority.CEREMONY -> MAX_QUEUED
                 HeartwoodRequestPriority.AUTH -> MAX_AUTH_QUEUED
                 HeartwoodRequestPriority.BACKGROUND -> MAX_NON_INTERACTIVE_QUEUED
                 HeartwoodRequestPriority.MAINTENANCE -> MAX_MAINTENANCE_QUEUED
@@ -577,7 +578,7 @@ class SessionRegistry(
                 openAuthCircuit(failure.error)
                 return failure
             }
-            if (!callerIsWaiting() || !retryable) return failure
+            if (priority == HeartwoodRequestPriority.CEREMONY || !callerIsWaiting() || !retryable) return failure
 
             val retried = when (val reconnected = reconnect(pairing)) {
                 is HeartwoodResult.Success -> reconnected.value

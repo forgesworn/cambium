@@ -71,6 +71,12 @@ sealed interface Nip55Request {
         val eventJson: String,
     ) : Nip55Request
 
+    data class ProvisionRendezvous(
+        override val id: String,
+        override val currentUser: String,
+        val provision: RendezvousProvisionRequest,
+    ) : Nip55Request
+
     companion object {
         const val TYPE_GET_PUBLIC_KEY = "get_public_key"
         const val TYPE_SIGN_EVENT = "sign_event"
@@ -83,6 +89,12 @@ sealed interface Nip55Request {
         /** Null when [raw]'s `type` is unrecognised or a required field (payload/pubkey) is missing. */
         fun from(raw: RawSignerIntent): Nip55Request? {
             return when (raw.type?.lowercase()) {
+                RendezvousProvisionRequest.TYPE -> {
+                    val id = raw.id?.takeIf { it.length in 16..128 && it.matches(Regex("[A-Za-z0-9_-]+")) } ?: return null
+                    val provision = raw.payload?.let { RendezvousProvisionRequest.read(it, System.currentTimeMillis() / 1000) } ?: return null
+                    if (raw.currentUser != provision.expectedPersona) return null
+                    ProvisionRendezvous(id, provision.expectedPersona, provision)
+                }
                 TYPE_GET_PUBLIC_KEY -> GetPublicKey(raw.id, raw.currentUser, parseRequestedPermissions(raw.permissions))
 
                 TYPE_SIGN_EVENT -> raw.payload?.takeIf { it.isNotBlank() }?.let { eventJson ->
