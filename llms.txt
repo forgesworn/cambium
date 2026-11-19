@@ -2,6 +2,13 @@
 
 > Android NIP-55 signer proxy that holds no user keys. It answers NIP-55 intents, content-provider queries and `nostrsigner:` web links by forwarding signing and encryption to a paired Heartwood hardware signer over NIP-46 (Nostr relays). Kotlin, Gradle, package `dev.forgesworn.cambium`, MIT licence.
 
+## ForgeSworn ecosystem
+
+- [ForgeSworn library guide](https://forgesworn.dev/llms.txt): Find related libraries, tools and integration guides by task and runtime.
+- [ForgeSworn on GitHub](https://github.com/forgesworn): Browse the organisation’s public repositories.
+- [Project source](https://github.com/forgesworn/cambium): Canonical source repository, documentation and release information.
+- [heartwood](https://github.com/forgesworn/heartwood): Connect the Android signer proxy to the hardware-signing bridge.
+
 ## Docs
 
 - [README](https://github.com/forgesworn/cambium/blob/main/README.md): what Cambium is, the security model, pairing from Sapwood, approval controls, phone unlock, install and build.
