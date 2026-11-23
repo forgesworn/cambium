@@ -55,9 +55,8 @@ identity, each dropped once its request expires (within ten minutes).
 
 **Setup:**
 
-- Install a Cambium debug APK built from PR #35. On 23 November that means branch
-  `fix/rendezvous-provision-review-20261123` at `e700904`: PR #35 (`e82a247`) merged with main at
-  `3985a3d`, plus two review fixes that are not on the PR yet.
+- Install a Cambium debug APK built from PR #35. On 23 November its head was `e700904`: the
+  original change (`e82a247`) merged with main at `3985a3d`, plus two review fixes.
   - A pairing with one unreachable relay no longer holds the request back for 120 seconds.
   - Cambium names the board's reason when it refuses.
 
