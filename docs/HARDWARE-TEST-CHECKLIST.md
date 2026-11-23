@@ -110,11 +110,11 @@ identity, each dropped once its request expires (within ten minutes).
 time from Approve to result for each run. Note whether each Cambium message could be read in
 full, because Android 12 and later cut a toast to two lines.
 
-**Unreachable relays:** before the review fixes, one unreachable relay in the pairing held the
-request back for the whole 120-second budget, so the board never showed its card. The
-instrumented test `Nip46TransportTest.provisionGetsPastAnUnreachableRelayInThePairing` failed
-after 120.2 seconds without the fix and passes in 10.5 seconds with it. Nothing needs checking on
-the board for this.
+**Unreachable relays:** before the review fixes, one unreachable relay in the pairing kept the
+request from being sent for the whole 120-second budget. Cambium also stops waiting for an answer
+at 120 seconds. The instrumented test
+`Nip46TransportTest.provisionGetsPastAnUnreachableRelayInThePairing` took 120.2 seconds without
+the fix and 10.5 seconds with it. Nothing needs checking on the board for this.
 
 ## 2. A press late in the board's 30-second window (PR #36)
 
