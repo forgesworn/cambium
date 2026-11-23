@@ -222,7 +222,7 @@ class RustNostrHeartwoodClient internal constructor(
                         val relays = remote.relays.take(RelaySwitch.MAX_RELAYS).map(RelayUrl::parse)
                         relays.forEach { relayClient.addRelay(it) }
                         relayClient.connect()
-                        relayClient.waitForConnection(Duration.ofMillis(waitMillis))
+                        relayClient.waitForConnection(Duration.ofMillis(minOf(waitMillis, RELAY_CONNECT_WAIT_MILLIS)))
                         val remoteKey = PublicKey.parse(remote.signerPubkeyHex)
                         val requestId = UUID.randomUUID().toString()
                         val response = CompletableDeferred<JsonObject>()
@@ -315,6 +315,13 @@ class RustNostrHeartwoodClient internal constructor(
          * own wait is [SessionRegistry.INTENT_TIMEOUT_MILLIS]; this stays just under it so the
          * board's own answer, a signature or its "timeout", reaches the caller first. */
         val CALL_TIMEOUT: Duration = Duration.ofSeconds(40)
+        /** Bounds [rawRpc]'s wait for its relays before it subscribes and sends. rust-nostr ends
+         * that wait only once every relay has connected, so without this bound one unreachable
+         * relay in a pairing held a rendezvous provision back for its whole 120 s before it was
+         * sent. A relay still connecting when the wait ends is not skipped: rust-nostr queues
+         * the subscription and then the request for it, and sends both once it connects. At
+         * least ping's 8 s, so ping and switch_relays keep their whole wait. */
+        const val RELAY_CONNECT_WAIT_MILLIS = 10_000L
     }
 }
 
