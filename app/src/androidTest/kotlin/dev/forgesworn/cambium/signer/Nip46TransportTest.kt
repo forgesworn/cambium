@@ -1,6 +1,7 @@
 package dev.forgesworn.cambium.signer
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import dev.forgesworn.cambium.nip55.RendezvousProvisionRequest
 import dev.forgesworn.cambium.pairing.BunkerUriParser
 import dev.forgesworn.cambium.pairing.BunkerUriResult
 import dev.forgesworn.cambium.pairing.Pairing
@@ -118,6 +119,33 @@ class Nip46TransportTest {
         }
     }
 
+    @Test fun provisionGetsPastAnUnreachableRelayInThePairing() = runBlocking {
+        LocalSignerRelay().use { relay ->
+            // Nothing listens on this port, so rust-nostr never reports the relay connected.
+            val unreachable = ServerSocket(0, 1, java.net.InetAddress.getByName("127.0.0.1")).use { "ws://127.0.0.1:${it.localPort}" }
+            val live = BunkerUri(relay.signer.publicKey().toHex(), listOf(relay.url), null)
+            // The handshake sees only the live relay; the provisioning transport lists both, as a
+            // pairing with one dead relay would.
+            val client = RustNostrHeartwoodClient { live.copy(relays = listOf(relay.url, unreachable)) }
+            try {
+                assertTrue(client.connect(live.toUriString(), Keys.generate().secretKey().toHex()) is HeartwoodResult.Success)
+                relay.provisionError = "user denied"
+                val now = System.currentTimeMillis() / 1000
+                val request = RendezvousProvisionRequest(relay.signer.publicKey().toHex(),
+                    Keys.generate().publicKey().toHex(), 7, "AAECAwQFBgcICQoLDA0ODw", now + 300)
+                val started = System.nanoTime()
+                val result = client.provisionRendezvous(request)
+                val elapsedMillis = (System.nanoTime() - started) / 1_000_000
+                // rust-nostr's connection wait ends only once every relay has connected. Uncapped,
+                // the unreachable relay holds the request back for the ceremony's whole 120 s.
+                assertTrue("provisioning took $elapsedMillis ms", elapsedMillis < 60_000)
+                assertTrue(relay.methods.contains(RendezvousProvisionRequest.TYPE))
+                // The board's own reason survives the raw RPC path to the message the owner sees.
+                assertEquals(HeartwoodResult.Failure(HeartwoodError.Protocol("Denied on Heartwood")), result)
+            } finally { client.disconnect() }
+        }
+    }
+
     private class Admission {
         val signer = Keys.generate()
         val secret = "single-use-fixture-token"
@@ -144,6 +172,8 @@ class Nip46TransportTest {
         val connectSecrets = CopyOnWriteArrayList<String>()
         @Volatile var relayProposal: List<String>? = listOf("wss://new.example")
         @Volatile var unsupported = false
+        /** The board's error text for a rendezvous provision, as heartwood-esp32 sends it. */
+        @Volatile var provisionError: String? = null
         @Volatile private var closed = false
         private val peers = CopyOnWriteArrayList<Peer>()
         private val executor = Executors.newCachedThreadPool()
@@ -256,6 +286,7 @@ class Nip46TransportTest {
                                 put("id", replyId)
                                 if (admissionError != null) put("error", admissionError)
                                 else if (unsupported && method == "switch_relays") put("error", "unsupported method")
+                                else if (method == RendezvousProvisionRequest.TYPE && provisionError != null) put("error", provisionError)
                                 else put("result", if (bad) JsonArray(listOf(JsonPrimitive("wss://attacker.example"))) else result)
                             }
                             return EventBuilder(Kind(24133u), nip44Encrypt(author.secretKey(), event.author(), body.toString(), Nip44Version.V2))

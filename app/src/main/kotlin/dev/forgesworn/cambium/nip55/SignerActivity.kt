@@ -45,6 +45,10 @@ import dev.forgesworn.cambium.signer.displayLabel
 import dev.forgesworn.cambium.signer.npubWire
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.isActive
+import dev.forgesworn.cambium.signer.HeartwoodRequestPriority
 import kotlinx.coroutines.delay
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import kotlin.math.roundToInt
@@ -117,6 +121,7 @@ class SignerActivity : AppCompatActivity() {
      * one-time decision, not on a field that stays constant for the rest of the instance's
      * lifetime.
      */
+    @Volatile private var provisionSequence = 0L
     private var silent = false
     private var batchEnabled = false
     private var resultRecipient: String? = null
@@ -271,6 +276,7 @@ class SignerActivity : AppCompatActivity() {
 
     private fun handleIncomingIntent(intent: Intent, precomputed: FirstIntent?) {
         requestSequence++
+        provisionSequence = requestSequence.toLong()
         waitingForApproval = false
         requestInProgress = true
         // A stray back-press must only ever be blocked while a forwarding call is actually in
@@ -293,6 +299,11 @@ class SignerActivity : AppCompatActivity() {
             if (context.web != null && !silent) {
                 Toast.makeText(this, R.string.error_invalid_web_request, Toast.LENGTH_LONG).show()
             }
+            rejectAndFinish(context)
+            return
+        }
+        if (parsed is Nip55Request.ProvisionRendezvous &&
+            (context.web != null || context.nativeCallingPackage == null || batchEnabled)) {
             rejectAndFinish(context)
             return
         }
@@ -408,7 +419,8 @@ class SignerActivity : AppCompatActivity() {
         if (kind != null) binding.kindValue.text = kind.toString()
     }
 
-    private fun showApprovalSheet(pairings: List<Pairing>, request: Nip55Request, context: RequestContext) {
+    private fun showApprovalSheet(availablePairings: List<Pairing>, request: Nip55Request, context: RequestContext) {
+        val pairings = if (request is Nip55Request.ProvisionRendezvous) availablePairings.filter { it.signerPubkeyHex == request.provision.expectedPersona } else availablePairings
         if (batchRecipientIsDenied()) {
             rejectAndFinish(context)
             return
@@ -422,8 +434,8 @@ class SignerActivity : AppCompatActivity() {
         val sheetSequence = requestSequence
         showRequestInformation(request, context)
         binding.webOneShotNote.isVisible = context.web != null
-        binding.nativeRememberNote.isVisible = context.nativeCallingPackage != null
-        binding.nativePermissionControls.isVisible = context.nativeCallingPackage != null
+        binding.nativeRememberNote.isVisible = context.nativeCallingPackage != null && request !is Nip55Request.ProvisionRendezvous
+        binding.nativePermissionControls.isVisible = context.nativeCallingPackage != null && request !is Nip55Request.ProvisionRendezvous
         val lifetimes = listOf(ApprovalLifetime.ONCE, ApprovalLifetime.HOUR, ApprovalLifetime.DAY, ApprovalLifetime.ALWAYS)
         binding.approvalLifetimePicker.adapter = ArrayAdapter(this, R.layout.item_identity_choice,
             listOf(R.string.approval_once, R.string.approval_hour, R.string.approval_day, R.string.approval_always).map(::getString))
@@ -539,7 +551,7 @@ class SignerActivity : AppCompatActivity() {
                     return@requireUnlockedThen
                 }
                 val chosen = pairings.getOrNull(binding.identityPicker.selectedItemPosition) ?: pairings.first()
-                val lifetime = if (context.nativeCallingPackage == null) ApprovalLifetime.ONCE
+                val lifetime = if (context.nativeCallingPackage == null || request is Nip55Request.ProvisionRendezvous) ApprovalLifetime.ONCE
                     else lifetimes[binding.approvalLifetimePicker.selectedItemPosition.coerceIn(lifetimes.indices)]
                 val saved = context.nativeCallingPackage?.let {
                     pairingStore.approveIfSheetCurrent(it, chosen, context.permission, lifetime, selectedScope)
@@ -590,6 +602,10 @@ class SignerActivity : AppCompatActivity() {
      * approved right now (visible, the user just tapped Approve on the sheet).
      */
     private fun handle(pairing: Pairing, request: Nip55Request, context: RequestContext) {
+        if (request is Nip55Request.ProvisionRendezvous) {
+            handleProvision(pairing, request, context)
+            return
+        }
         if (batchRecipientIsDenied()) {
             rejectAndFinish(context)
             return
@@ -641,6 +657,7 @@ class SignerActivity : AppCompatActivity() {
 
         submitAndRespond(pairing, request, context, cacheableFor(request)) { client ->
             when (request) {
+                is Nip55Request.ProvisionRendezvous -> error("handled by the one-shot provision path")
                 is Nip55Request.SignEvent -> client.signEvent(request.eventJson)
                 is Nip55Request.Nip04Encrypt -> client.nip04Encrypt(request.pubkeyHex, request.plaintext)
                 is Nip55Request.Nip04Decrypt -> client.nip04Decrypt(request.pubkeyHex, request.ciphertext)
@@ -648,6 +665,44 @@ class SignerActivity : AppCompatActivity() {
                 is Nip55Request.Nip44Decrypt -> client.nip44Decrypt(request.pubkeyHex, request.ciphertext)
                 is Nip55Request.GetPublicKey -> error("handled above without a relay round trip")
                 is Nip55Request.DecryptZapEvent -> error("handled separately, see handleDecryptZapEvent")
+            }
+        }
+    }
+
+    private fun handleProvision(pairing: Pairing, request: Nip55Request.ProvisionRendezvous, context: RequestContext) {
+        val caller = context.nativeCallingPackage
+        if (!context.userApproved || caller == null || context.web != null || batchEnabled ||
+            pairing.signerPubkeyHex != request.provision.expectedPersona) {
+            rejectAndFinish(context); return
+        }
+        val sequence = provisionSequence
+        val originalConnection = pairing.copy(label = null)
+        waitingForApproval = false
+        binding.decisionGroup.isVisible = false
+        binding.nativePermissionControls.isVisible = false
+        binding.progressGroup.isVisible = true
+        lifecycleScope.launch {
+            val requester = currentCoroutineContext()
+            val approval = ProvisionApproval(request.provision) {
+                requester.isActive && provisionSequence == sequence && !isFinishing && !isDestroyed &&
+                    resultRecipient == caller && pairingStore.permission(caller) == context.permission &&
+                    pairingStore.permission(caller)?.state != AppPermissionState.DENIED &&
+                    pairingStore.pairings().any { it.copy(label = null) == originalConnection }
+            }
+            requester.ensureActive()
+            val outcome = HeartwoodSession.withClient(pairing, null, HeartwoodRequestPriority.CEREMONY) { client ->
+                if (!approval.dispatch(System.currentTimeMillis() / 1000)) HeartwoodResult.Failure(HeartwoodError.InvalidInput("Provision approval is stale"))
+                else client.provisionRendezvous(request.provision) { approval.current(System.currentTimeMillis() / 1000) }
+            }
+            requester.ensureActive()
+            when (val result = outcome.result) {
+                is HeartwoodResult.Success -> {
+                    if (!approval.release(result.value, System.currentTimeMillis() / 1000)) { rejectAndFinish(context); return@launch }
+                    // Native ActivityResult only: never clipboard, browser callback, provider or cache.
+                    setResult(RESULT_OK, Intent().putExtra(EXTRA_ID, request.id).putExtra(EXTRA_PACKAGE, packageName).putExtra(EXTRA_RESULT, result.value))
+                    finish()
+                }
+                is HeartwoodResult.Failure -> showErrorAndReject(context, result.error)
             }
         }
     }
@@ -844,6 +899,7 @@ class SignerActivity : AppCompatActivity() {
 
     private fun methodLabel(request: Nip55Request): String = getString(
         when (request) {
+            is Nip55Request.ProvisionRendezvous -> R.string.method_provision_rendezvous
             is Nip55Request.GetPublicKey -> R.string.method_get_public_key
             is Nip55Request.SignEvent -> R.string.method_sign_event
             is Nip55Request.Nip04Encrypt -> R.string.method_nip04_encrypt
