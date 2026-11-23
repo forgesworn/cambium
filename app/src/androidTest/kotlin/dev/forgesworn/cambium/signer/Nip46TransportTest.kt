@@ -140,7 +140,8 @@ class Nip46TransportTest {
                 // the unreachable relay holds the request back for the ceremony's whole 120 s.
                 assertTrue("provisioning took $elapsedMillis ms", elapsedMillis < 60_000)
                 assertTrue(relay.methods.contains(RendezvousProvisionRequest.TYPE))
-                assertEquals(HeartwoodResult.Failure(HeartwoodError.Protocol("Heartwood refused rendezvous provisioning")), result)
+                // The board's own reason survives the raw RPC path to the message the owner sees.
+                assertEquals(HeartwoodResult.Failure(HeartwoodError.Protocol("Denied on Heartwood")), result)
             } finally { client.disconnect() }
         }
     }

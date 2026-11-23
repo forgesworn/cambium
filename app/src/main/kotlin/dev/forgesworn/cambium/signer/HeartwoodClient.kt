@@ -201,7 +201,7 @@ class RustNostrHeartwoodClient internal constructor(
         if (!current() || signerPubkeyHex != request.expectedPersona || !request.validAt(System.currentTimeMillis() / 1000)) return HeartwoodResult.Failure(HeartwoodError.InvalidInput("Provision identity or expiry changed"))
         if (runCatching { PublicKey.parse(request.targetDevice) }.isFailure) return HeartwoodResult.Failure(HeartwoodError.InvalidInput("Invalid target device"))
         val response = rawRpc(RendezvousProvisionRequest.TYPE, 120_000L, request.params()) { current() && signerPubkeyHex == request.expectedPersona && request.validAt(System.currentTimeMillis() / 1000) } ?: return HeartwoodResult.Failure(HeartwoodError.Timeout)
-        if (response["error"] != null && response["error"] != JsonNull) return HeartwoodResult.Failure(HeartwoodError.Protocol("Heartwood refused rendezvous provisioning"))
+        if (response["error"] != null && response["error"] != JsonNull) return HeartwoodResult.Failure(HeartwoodError.Protocol(ProvisionRefusal.messageFor(response["error"])))
         val result = (response["result"] as? JsonPrimitive)?.takeIf { it.isString }?.content
         return if (current() && result != null && request.acceptsEnvelope(result, System.currentTimeMillis() / 1000)) HeartwoodResult.Success(result)
         else HeartwoodResult.Failure(HeartwoodError.Protocol("Heartwood returned mismatched provision bindings"))
